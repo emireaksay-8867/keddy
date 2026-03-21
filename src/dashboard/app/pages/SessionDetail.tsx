@@ -108,30 +108,37 @@ function ExchangeBubble({ ex, openPanel }: { ex: Exchange; openPanel: (t: string
         </div>
       )}
 
-      {/* Tools */}
+      {/* Tools — shown inline like Claude Code */}
       {tools.length > 0 && (
-        <div className="flex justify-start mb-3 ml-8">
-          <div>
-            <button onClick={() => setToolsOpen(!toolsOpen)} className="text-[12px] flex items-center gap-1.5 py-1.5 px-3 rounded-lg hover:bg-[var(--bg-hover)] transition-colors" style={{ color: "var(--text-tertiary)", background: "var(--bg-elevated)" }}>
-              <span className="text-[10px]">{toolsOpen ? "▾" : "▸"}</span>
-              <span className="font-medium">{tools.length} tool{tools.length !== 1 ? "s" : ""}</span>
-              <span className="font-mono opacity-60 text-[11px]">{[...new Set(tools.map((t) => t.tool_name))].slice(0, 4).join(", ")}</span>
-            </button>
-            {toolsOpen && (
-              <div className="mt-1.5 space-y-1 max-w-lg">
-                {tools.map((tc) => (
-                  <button key={tc.id} onClick={() => {
-                    let c = `**Input:**\n\`\`\`json\n${(() => { try { return JSON.stringify(JSON.parse(tc.tool_input), null, 2); } catch { return tc.tool_input; } })()}\n\`\`\``;
-                    if (tc.tool_result) c += `\n\n**Result:**\n\`\`\`\n${tc.tool_result.substring(0, 5000)}\n\`\`\``;
-                    openPanel(tc.tool_name, c, tc.is_error ? "Error" : undefined);
-                  }} className="w-full text-left text-[12px] font-mono px-3 py-1.5 rounded flex items-center gap-2 hover:bg-[var(--bg-hover)] transition-colors" style={{ background: "var(--bg-elevated)" }}>
-                    <span className="font-semibold" style={{ color: tc.is_error ? SEGMENT_COLORS.debugging : "var(--accent)" }}>{tc.tool_name}</span>
-                    <span className="truncate flex-1 opacity-50">{toolSummary(tc.tool_input)}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+        <div className="mb-3 ml-7 mr-4">
+          {/* Always show first few tools visually */}
+          <div className="space-y-0.5">
+            {tools.slice(0, toolsOpen ? tools.length : Math.min(tools.length, 3)).map((tc) => {
+              const summary = toolSummary(tc.tool_input);
+              return (
+                <button key={tc.id} onClick={() => {
+                  let c = `**Input:**\n\`\`\`json\n${(() => { try { return JSON.stringify(JSON.parse(tc.tool_input), null, 2); } catch { return tc.tool_input; } })()}\n\`\`\``;
+                  if (tc.tool_result) c += `\n\n**Result:**\n\`\`\`\n${tc.tool_result.substring(0, 5000)}\n\`\`\``;
+                  openPanel(tc.tool_name, c, tc.is_error ? "Error" : undefined);
+                }} className="w-full text-left text-[12px] flex items-center gap-2 py-1 px-3 rounded-md hover:bg-[var(--bg-hover)] transition-colors group" style={{ color: "var(--text-tertiary)" }}>
+                  <span className="w-1 h-1 rounded-full shrink-0" style={{ background: tc.is_error ? SEGMENT_COLORS.debugging : "var(--accent)" }} />
+                  <span className="font-mono font-medium" style={{ color: tc.is_error ? SEGMENT_COLORS.debugging : "var(--accent)" }}>{tc.tool_name}</span>
+                  <span className="font-mono truncate flex-1 opacity-50">{summary}</span>
+                  {!!tc.is_error && <span className="text-[10px] px-1 rounded" style={{ background: `${SEGMENT_COLORS.debugging}20`, color: SEGMENT_COLORS.debugging }}>error</span>}
+                </button>
+              );
+            })}
           </div>
+          {tools.length > 3 && !toolsOpen && (
+            <button onClick={() => setToolsOpen(true)} className="text-[11px] mt-1 ml-3 hover:underline" style={{ color: "var(--text-muted)" }}>
+              +{tools.length - 3} more tools
+            </button>
+          )}
+          {toolsOpen && tools.length > 3 && (
+            <button onClick={() => setToolsOpen(false)} className="text-[11px] mt-1 ml-3 hover:underline" style={{ color: "var(--text-muted)" }}>
+              show less
+            </button>
+          )}
         </div>
       )}
 
