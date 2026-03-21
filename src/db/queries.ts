@@ -179,9 +179,17 @@ export function insertExchange(data: {
   metadata?: string | null;
 }): string {
   const db = getDb();
+
+  // Return existing exchange ID if already stored (idempotent)
+  const existing = db
+    .prepare("SELECT id FROM exchanges WHERE session_id = ? AND exchange_index = ?")
+    .get(data.session_id, data.exchange_index) as { id: string } | undefined;
+
+  if (existing) return existing.id;
+
   const id = randomUUID();
   db.prepare(`
-    INSERT OR IGNORE INTO exchanges (id, session_id, exchange_index, user_prompt, assistant_response, tool_call_count, timestamp, duration_ms, is_interrupt, is_compact_summary, metadata)
+    INSERT INTO exchanges (id, session_id, exchange_index, user_prompt, assistant_response, tool_call_count, timestamp, duration_ms, is_interrupt, is_compact_summary, metadata)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
@@ -223,7 +231,7 @@ export function insertToolCall(data: {
   const db = getDb();
   const id = randomUUID();
   db.prepare(`
-    INSERT INTO tool_calls (id, exchange_id, session_id, tool_name, tool_input, tool_result, tool_use_id, is_error, duration_ms)
+    INSERT OR IGNORE INTO tool_calls (id, exchange_id, session_id, tool_name, tool_input, tool_result, tool_use_id, is_error, duration_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,

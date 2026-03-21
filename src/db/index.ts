@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { initSchema } from "./schema.js";
@@ -14,7 +14,7 @@ export function initDb(dbPath?: string): Database.Database {
   const path = dbPath || process.env.KEDDY_DB || getDefaultDbPath();
 
   // Ensure directory exists
-  const dir = path.substring(0, path.lastIndexOf("/"));
+  const dir = dirname(path);
   mkdirSync(dir, { recursive: true });
 
   db = new Database(path);

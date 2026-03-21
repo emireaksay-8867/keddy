@@ -41,7 +41,7 @@ export function initSchema(db: Database.Database): void {
       tool_name TEXT NOT NULL,
       tool_input TEXT NOT NULL DEFAULT '{}',
       tool_result TEXT,
-      tool_use_id TEXT NOT NULL,
+      tool_use_id TEXT NOT NULL UNIQUE,
       is_error INTEGER NOT NULL DEFAULT 0,
       duration_ms INTEGER
     );
