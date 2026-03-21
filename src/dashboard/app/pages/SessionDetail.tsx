@@ -307,38 +307,80 @@ function TimelineView({ session, exchanges, openPanel }: {
               const range = seg.exchange_index_start === seg.exchange_index_end ? `#${seg.exchange_index_start}` : `#${seg.exchange_index_start}–${seg.exchange_index_end}`;
 
               // Get a one-line summary from the first meaningful user prompt
-              const firstPrompt = segEx.map(e => cleanText(e.user_prompt).cleaned).find(t => t.length > 10) || "";
-              const summary = trunc(firstPrompt, 100);
+              // Build conversation flow preview (user→claude pairs)
+              const flowPairs: Array<{ user: string; claude: string; tools: number }> = [];
+              for (const e of segEx) {
+                const { cleaned: u } = cleanText(e.user_prompt);
+                const { cleaned: c } = cleanText(e.assistant_response || "");
+                if (u || c) flowPairs.push({ user: u, claude: c, tools: e.tool_call_count });
+              }
               const toolSummaryLine = Object.entries(tools).slice(0, 3).map(([k, v]) => `${v} ${k}`).join(" · ");
               const fileCount = files.length;
 
               return (
-                <div key={`s${i}`} className="relative pb-3">
+                <div key={`s${i}`} className="relative pb-4">
                   <div className="absolute left-[-27px] top-[14px] w-[10px] h-[10px] rounded-full" style={{ background: color }} />
                   <button
                     onClick={() => openPanel(`${label} — ${range}`, "", `${segEx.length} exchanges${segDur ? ` · ${segDur}` : ""}`, segEx)}
-                    className="w-full text-left rounded-xl border px-5 py-3.5 hover:border-[var(--border-bright)] transition-all group"
+                    className="w-full text-left rounded-xl border hover:border-[var(--border-bright)] transition-all group overflow-hidden"
                     style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}
                   >
-                    {/* Compact header */}
-                    <div className="flex items-center gap-2 mb-1">
+                    {/* Header */}
+                    <div className="flex items-center gap-2 px-5 pt-4 pb-3">
                       <span className="text-[12px] font-semibold px-2.5 py-0.5 rounded-full" style={{ background: `${color}12`, color }}>{label}</span>
                       <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
                         {segEx.length} exchange{segEx.length !== 1 ? "s" : ""}{segDur ? ` · ${segDur}` : ""}{ts ? ` · ${fmtShortTime(ts)}` : ""}
                       </span>
-                      <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View →</span>
+                      <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View conversation →</span>
                     </div>
 
-                    {/* One-line summary */}
-                    {summary && (
-                      <p className="text-[13px] mb-1.5 truncate" style={{ color: "var(--text-secondary)" }}>{summary}</p>
-                    )}
+                    {/* Conversation flow — threaded style with left accent border */}
+                    <div className="mx-5 mb-4 rounded-lg overflow-hidden" style={{ background: "var(--bg-elevated)" }}>
+                      {flowPairs.slice(0, 3).map((pair, j) => (
+                        <div key={j} className="border-b last:border-b-0" style={{ borderColor: "var(--border)" }}>
+                          {/* User turn */}
+                          {pair.user && (
+                            <div className="px-4 py-2.5 flex gap-3 items-start" style={{ borderLeft: `3px solid var(--user-accent)` }}>
+                              <span className="text-[11px] font-semibold shrink-0 mt-0.5 w-6" style={{ color: "var(--user-accent)" }}>You</span>
+                              <p className="text-[13px] leading-[1.6]" style={{ color: "var(--text-primary)" }}>
+                                {trunc(pair.user, 250)}
+                              </p>
+                            </div>
+                          )}
+                          {/* Claude turn */}
+                          {pair.claude && (
+                            <div className="px-4 py-2.5 flex gap-3 items-start" style={{ borderLeft: `3px solid var(--claude-accent)` }}>
+                              <span className="shrink-0 mt-0.5 w-6 flex justify-center"><ClaudeIcon size={14} /></span>
+                              <p className="text-[13px] leading-[1.6]" style={{ color: "var(--text-secondary)" }}>
+                                {trunc(pair.claude, 200)}
+                              </p>
+                            </div>
+                          )}
+                          {/* Tools indicator */}
+                          {pair.tools > 0 && (
+                            <div className="px-4 py-1.5 flex gap-3 items-center" style={{ borderLeft: "3px solid var(--border)" }}>
+                              <span className="w-6" />
+                              <span className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }}>{pair.tools} tool{pair.tools !== 1 ? "s" : ""} used</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {flowPairs.length > 3 && (
+                        <div className="px-4 py-2 text-center" style={{ borderTop: "1px solid var(--border)" }}>
+                          <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>+{flowPairs.length - 3} more exchange{flowPairs.length - 3 !== 1 ? "s" : ""}</span>
+                        </div>
+                      )}
+                    </div>
 
-                    {/* Compact tool + file summary */}
+                    {/* Tool + file footer */}
                     {(toolSummaryLine || fileCount > 0) && (
-                      <div className="flex items-center gap-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
+                      <div className="flex items-center flex-wrap gap-2 text-[11px] px-5 pb-3.5 pt-0" style={{ color: "var(--text-muted)" }}>
                         {toolSummaryLine && <span className="font-mono">{toolSummaryLine}</span>}
                         {fileCount > 0 && <span>· {fileCount} file{fileCount !== 1 ? "s" : ""}</span>}
+                        {files.slice(0, 3).map(f => (
+                          <span key={f} className="font-mono px-1.5 py-0.5 rounded" style={{ background: "var(--bg-root)" }}>{f.split("/").pop()}</span>
+                        ))}
+                        {files.length > 3 && <span>+{files.length - 3}</span>}
                       </div>
                     )}
                   </button>
