@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { plansRoutes } from "./routes/plans.js";
 import { statsRoutes } from "./routes/stats.js";
@@ -29,14 +30,9 @@ app.use(
 
 // SPA fallback
 app.get("*", (c) => {
-  try {
-    const fs = require("fs");
-    const indexPath = join(__dirname, "public", "index.html");
-    if (fs.existsSync(indexPath)) {
-      return c.html(fs.readFileSync(indexPath, "utf8"));
-    }
-  } catch {
-    // ignore
+  const indexPath = join(__dirname, "public", "index.html");
+  if (existsSync(indexPath)) {
+    return c.html(readFileSync(indexPath, "utf8"));
   }
   return c.text("Keddy Dashboard — build frontend with: npm run build:dashboard", 200);
 });
@@ -48,10 +44,11 @@ export function startServer(port: number = 3737) {
   });
 }
 
-// Direct execution
-if (require.main === module) {
-  const { initDb } = require("../db/index.js");
-  initDb();
-  startServer();
-  console.log("Keddy dashboard running at http://localhost:3737");
+// Direct execution (works in CJS bundled output)
+if (typeof require !== "undefined" && require.main === module) {
+  import("../db/index.js").then(({ initDb }) => {
+    initDb();
+    startServer();
+    console.log("Keddy dashboard running at http://localhost:3737");
+  });
 }

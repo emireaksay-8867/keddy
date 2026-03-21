@@ -45,7 +45,7 @@ async function readStdin(): Promise<HookStdin> {
 async function handleSessionStart(input: HookStdin): Promise<void> {
   if (!input.session_id || !input.cwd) return;
 
-  const db = initDb();
+  initDb();
   try {
     upsertSession({
       session_id: input.session_id,
@@ -72,7 +72,7 @@ async function handleSessionStart(input: HookStdin): Promise<void> {
 async function handleStop(input: HookStdin): Promise<void> {
   if (!input.session_id || !input.transcript_path) return;
 
-  const db = initDb();
+  initDb();
   try {
     const session = getSession(input.session_id);
     if (!session) {
@@ -124,7 +124,7 @@ async function handleStop(input: HookStdin): Promise<void> {
 async function handlePostCompact(input: HookStdin): Promise<void> {
   if (!input.session_id) return;
 
-  const db = initDb();
+  initDb();
   try {
     const session = getSession(input.session_id);
     if (!session) return;
@@ -142,10 +142,10 @@ async function handlePostCompact(input: HookStdin): Promise<void> {
 async function handleSessionEnd(input: HookStdin): Promise<void> {
   if (!input.session_id || !input.transcript_path) return;
 
-  const db = initDb();
+  initDb();
   try {
     // Ensure session exists
-    const sessionId = upsertSession({
+    upsertSession({
       session_id: input.session_id,
       project_path: input.cwd ?? "",
       jsonl_path: input.transcript_path,

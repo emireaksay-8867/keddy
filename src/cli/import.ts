@@ -81,7 +81,7 @@ export async function runImport(): Promise<void> {
       }
 
       // Import session
-      const sessionId = upsertSession({
+      upsertSession({
         session_id: transcript.session_id,
         project_path: transcript.project_path || deriveProjectPath(filePath),
         git_branch: transcript.git_branch,

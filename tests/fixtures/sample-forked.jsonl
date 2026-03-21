@@ -1,0 +1,5 @@
+{"type":"summary","sessionId":"sess-006","cwd":"/Users/test/project","gitBranch":"main","version":"1.0.0","timestamp":"2024-01-06T00:00:00Z","forkedFrom":"sess-005"}
+{"type":"user","message":{"role":"user","content":"Continue from where we left off with the auth module"},"timestamp":"2024-01-06T00:01:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll continue working on the auth module. Let me check the current state."},{"type":"tool_use","name":"Read","input":{"file_path":"/Users/test/project/src/auth.ts"},"id":"tool-060"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-060","content":"export async function login(credentials: Credentials) { ... }"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"The auth module looks good. What would you like me to do next?"}]}}
