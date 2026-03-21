@@ -205,18 +205,25 @@ export function Sessions() {
           </div>
         ) : (
           <>
-            {Array.from(grouped.entries()).map(([date, dateSessions]) => (
+            {Array.from(grouped.entries()).map(([date, dateSessions], groupIdx) => (
               <div key={date}>
                 <div
-                  className="px-5 py-2 text-xs uppercase tracking-wider sticky top-0 z-10"
+                  className="px-5 py-3 text-xs tracking-wider sticky top-0 z-10 flex items-center gap-3"
                   style={{
-                    color: "var(--text-tertiary)",
+                    color: "var(--text-secondary)",
                     background: "var(--bg-root)",
                     borderBottom: "1px solid var(--border)",
-                    fontSize: 10,
+                    borderTop: groupIdx > 0 ? "1px solid var(--border-bright)" : undefined,
+                    marginTop: groupIdx > 0 ? 8 : 0,
+                    fontSize: 11,
+                    fontWeight: 500,
                   }}
                 >
-                  {date}
+                  <span>{date}</span>
+                  <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}>
+                    {dateSessions.length} {dateSessions.length === 1 ? "session" : "sessions"}
+                  </span>
+                  <div className="flex-1 h-px ml-2" style={{ background: "var(--border)" }} />
                 </div>
                 {dateSessions.map((session) => (
                   <SessionRow key={session.id} session={session} />

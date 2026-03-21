@@ -31,7 +31,11 @@ sessionsRoutes.get("/", (c) => {
       limit: limitVal,
     });
   } else {
-    sessions = getRecentSessions(daysVal ?? 30, limitVal);
+    sessions = getRecentSessions(daysVal ?? 365, limitVal);
+    // Apply project filter
+    if (project) {
+      sessions = sessions.filter((s) => s.project_path === project);
+    }
   }
 
   // Enrich with segment data

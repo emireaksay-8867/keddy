@@ -27,8 +27,11 @@ function findJsonlFiles(dir: string): string[] {
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
+        // Skip subagents directory — those are sub-sessions with limited context
+        if (entry.name === "subagents") continue;
         files.push(...findJsonlFiles(fullPath));
-      } else if (entry.name.endsWith(".jsonl")) {
+      } else if (entry.name.endsWith(".jsonl") && !entry.name.startsWith("agent-")) {
+        // Skip agent-*.jsonl files (subagent transcripts)
         files.push(fullPath);
       }
     }
