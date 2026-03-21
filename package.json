@@ -9,9 +9,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/emireaksay-8867/keddy"
+    "url": "git+https://github.com/emireaksay-8867/keddy.git"
   },
-  "homepage": "https://keddy.ai",
+  "homepage": "https://github.com/emireaksay-8867/keddy#readme",
   "bugs": "https://github.com/emireaksay-8867/keddy/issues",
   "keywords": [
     "claude-code",
@@ -26,8 +26,7 @@
   "bin": {
     "keddy": "./dist/cli/index.js"
   },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/cli/index.js",
   "files": [
     "dist",
     ".claude-plugin",
@@ -47,15 +46,13 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm test && npm run build"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "better-sqlite3": "^11.7.0",
     "hono": "^4.6.0",
-    "lightningcss": "^1.32.0",
-    "lightningcss-darwin-arm64": "^1.32.0",
     "open": "^10.1.0",
     "zod": "^3.25.0"
   },

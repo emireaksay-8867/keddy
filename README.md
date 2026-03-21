@@ -1,91 +1,159 @@
-# keddy
+<p align="center">
+  <h1 align="center">keddy</h1>
+  <p align="center">
+    <strong>Session intelligence for Claude Code</strong>
+  </p>
+  <p align="center">
+    Navigable timelines &bull; Plan version tracking &bull; Past session search
+  </p>
+  <p align="center">
+    <a href="https://github.com/emireaksay-8867/keddy/actions/workflows/ci.yml"><img src="https://github.com/emireaksay-8867/keddy/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="https://www.npmjs.com/package/keddy"><img src="https://img.shields.io/npm/v/keddy.svg" alt="npm version"></a>
+    <a href="https://github.com/emireaksay-8867/keddy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
+    <a href="https://www.npmjs.com/package/keddy"><img src="https://img.shields.io/npm/dm/keddy.svg" alt="Downloads"></a>
+  </p>
+</p>
 
-**Session intelligence for Claude Code** — navigable timelines, plan tracking, and past session search.
+---
 
-Claude Code sessions generate rich context — plans, revisions, architectural decisions, direction changes — that vanishes when the session ends. JSONL transcripts are unreadable. Compaction loses context.
+Claude Code sessions generate rich context — plans, architectural decisions, direction changes, debugging journeys — that **vanishes when the session ends**. JSONL transcripts are unreadable. Compaction loses context.
 
-Keddy auto-captures sessions via hooks, extracts structure programmatically, stores everything in SQLite, and surfaces it via a dashboard and MCP tools.
+**Keddy captures every session automatically**, extracts structure programmatically, and surfaces it through a dashboard and MCP tools — so Claude can learn from your past sessions.
 
-## Features
+## Why Keddy?
 
-- **Auto-capture** — 4 Claude Code hooks capture every session automatically
-- **Navigable timelines** — Sessions organized into typed segments (implementing, debugging, exploring, etc.)
-- **Plan version tracking** — Every plan version with approval/rejection status and user feedback
-- **Milestone detection** — Git commits, pushes, PRs, branches, test runs extracted automatically
-- **Full-text search** — FTS5 search across all session prompts
-- **MCP tools** — 4 tools for Claude to search past sessions and plans
-- **Dashboard** — React-based web UI on port 3737
-- **AI analysis** (optional) — Session titles, segment summaries, decision extraction via Anthropic API
-- **Local-first** — Everything stays in `~/.keddy/keddy.db`. No cloud. No telemetry.
+| Without Keddy | With Keddy |
+|---|---|
+| Sessions disappear after closing | Every session captured and searchable |
+| Raw JSONL transcripts are unreadable | Navigable timelines with typed segments |
+| Plan iterations are lost | Full plan version history with feedback |
+| No way to reference past decisions | FTS5 search + MCP tools for Claude |
+| Compaction destroys context | Compaction events tracked with summaries |
 
 ## Quick Start
 
 ```bash
-# Install
+# Install globally
 npm install -g keddy
 
-# Initialize (installs hooks, creates DB, registers MCP)
+# Initialize — installs hooks, creates DB, registers MCP
 keddy init
 
-# Start coding with Claude Code — sessions are auto-captured
+# Start coding with Claude Code — sessions are captured automatically
 
-# Open the dashboard
+# View your sessions
 keddy open
 
-# Import historical sessions
+# Import historical sessions from ~/.claude/projects/
 keddy import
-
-# Check status
-keddy status
 ```
 
-## Architecture
+That's it. Every Claude Code session is now captured, analyzed, and searchable.
+
+## How It Works
 
 ```
-Hooks → Parser → Analyzer → SQLite ← MCP Server
-                                    ← Dashboard API ← React UI
+Claude Code Session
+    │
+    ├── SessionStart ──────► Register session
+    ├── Stop (each turn) ──► Capture exchange + tool calls
+    ├── PostCompact ───────► Record compaction event
+    └── SessionEnd ────────► Full analysis pipeline
+                                    │
+                              ┌─────┼─────┐
+                              ▼     ▼     ▼
+                           Plans Segments Milestones
+                              │     │     │
+                              └─────┼─────┘
+                                    ▼
+                               SQLite DB
+                              ┌─────┼─────┐
+                              ▼           ▼
+                         Dashboard    MCP Server
+                        (port 3737)  (4 tools for Claude)
 ```
 
-**4 Claude Code hooks:**
-| Hook | Mode | Purpose |
-|------|------|---------|
-| SessionStart | sync | Register session, inject context |
-| Stop | async | Capture latest exchange |
-| PostCompact | async | Record compaction event |
-| SessionEnd | async | Full parse + analysis |
+### Programmatic Analysis (No AI Required)
 
-**Programmatic analysis** (no AI needed):
-- **Segments**: planning, implementing, testing, debugging, exploring, discussion, pivot, deploying
-- **Plans**: version tracking with approval/rejection/feedback
-- **Milestones**: git commit, push, PR, branch, test pass/fail
+All core features work without any AI API calls:
 
-## MCP Tools
+**Segments** — Each exchange is classified into one of 8 types based on tool usage patterns:
 
-When registered via `keddy init`, Claude can use these tools:
+| Segment | Detection |
+|---------|-----------|
+| `planning` | EnterPlanMode / ExitPlanMode tools |
+| `implementing` | 50%+ Edit/Write tool calls |
+| `testing` | Bash with test/jest/vitest/pytest commands |
+| `debugging` | Tool errors + subsequent edits |
+| `exploring` | Mostly Read/Grep/Glob, no edits |
+| `discussion` | No tool calls |
+| `pivot` | User interrupt + direction change |
+| `deploying` | git push / deploy commands |
 
-| Tool | Description |
-|------|-------------|
-| `keddy_search_sessions` | Full-text search across sessions |
-| `keddy_get_session` | Get full session details with timeline |
-| `keddy_get_plans` | Get plan versions with text and feedback |
-| `keddy_recent_activity` | Summary of recent sessions |
+**Plans** — Every EnterPlanMode/ExitPlanMode pair is tracked with:
+- Full plan text
+- Approval / rejection / superseded status
+- User feedback from rejections
+- Sequential version numbers
 
-## Configuration
+**Milestones** — Automatically detected from Bash tool inputs:
+- Git commits (with message), pushes, branch creation
+- PR creation via `gh pr create`
+- Test pass/fail detection
+
+### MCP Tools
+
+When registered via `keddy init`, Claude gets 4 tools to search your history:
+
+```
+keddy_search_sessions    — Full-text search across all sessions
+keddy_get_session        — Get full session with timeline, plans, milestones
+keddy_get_plans          — Get plan versions with text and feedback
+keddy_recent_activity    — Summary of recent sessions
+```
+
+### Optional AI Analysis
+
+Enable AI-powered enhancements with your Anthropic API key:
 
 ```bash
-# View all config
-keddy config
-
-# Enable AI analysis
 keddy config set analysis.enabled true
 keddy config set analysis.apiKey sk-ant-...
-
-# Per-feature control
-keddy config set analysis.features.sessionTitles.enabled true
-keddy config set analysis.features.decisionExtraction.enabled false
 ```
 
-Config stored at `~/.keddy/config.json`.
+| Feature | Model | Description |
+|---------|-------|-------------|
+| Session Titles | Haiku | Generate descriptive session titles |
+| Segment Summaries | Haiku | Summarize what happened in each segment |
+| Decision Extraction | Haiku | Identify key technical decisions |
+| Plan Diff Analysis | Sonnet | Analyze changes between plan versions |
+| Session Notes | Sonnet | Generate session retrospective notes |
+
+Each feature can be individually enabled/disabled and uses the model of your choice.
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `keddy init` | Install hooks, create DB, register MCP |
+| `keddy open` | Launch dashboard in browser (port 3737) |
+| `keddy status` | Show hook status, session count, DB size |
+| `keddy config` | View/edit configuration |
+| `keddy import` | Import historical sessions from `~/.claude/` |
+| `keddy help` | Show help |
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Runtime | Node.js 18+ |
+| Language | TypeScript (strict mode) |
+| Database | SQLite via better-sqlite3 (WAL mode, FTS5) |
+| CLI Build | tsup |
+| API Server | Hono |
+| Frontend | React 19, Tailwind CSS v4, Vite |
+| MCP | @modelcontextprotocol/sdk |
+| Tests | vitest (178 tests) |
 
 ## Development
 
@@ -93,22 +161,37 @@ Config stored at `~/.keddy/config.json`.
 git clone https://github.com/emireaksay-8867/keddy.git
 cd keddy
 npm install
-npm run build:cli   # Build CLI + server
-npm test            # Run tests
-npm run dev         # Watch mode (CLI + dashboard)
+
+npm test              # Run 178 tests
+npm run typecheck     # TypeScript strict check
+npm run build         # Build CLI + dashboard
+npm run dev           # Watch mode
 ```
 
-## Tech Stack
+## Architecture
 
-- **Runtime**: Node.js 18+
-- **Language**: TypeScript (strict, NodeNext modules)
-- **Database**: SQLite via better-sqlite3 (WAL mode, FTS5)
-- **Build**: tsup (CLI/server), Vite (dashboard)
-- **API**: Hono
-- **Frontend**: React 19, Tailwind CSS v4, React Router v7
-- **MCP**: @modelcontextprotocol/sdk
-- **Tests**: vitest
+```
+src/
+├── types.ts              # Shared TypeScript interfaces
+├── db/                   # SQLite — schema, queries, FTS5
+├── capture/              # JSONL parser, hooks, analyzers
+│   ├── parser.ts         # Multi-turn exchange extraction
+│   ├── handler.ts        # 4 hook entry points
+│   ├── plans.ts          # Plan version tracking
+│   ├── segments.ts       # Segment classification
+│   └── milestones.ts     # Milestone regex detection
+├── mcp/server.ts         # 4 MCP tools via StdioServerTransport
+├── cli/                  # init, open, status, config, import
+├── dashboard/            # Hono API + React SPA
+└── analysis/             # Optional AI layer
+```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/DECISIONS.md](docs/DECISIONS.md) for detailed design documentation.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and PR process.
 
 ## License
 
-Apache-2.0
+[Apache-2.0](LICENSE) — Emir Enes Aksay
