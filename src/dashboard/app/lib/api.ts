@@ -11,6 +11,20 @@ async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json();
 }
 
+export async function getProjects() {
+  return fetchJson<
+    Array<{
+      project_path: string;
+      session_count: number;
+      last_activity: string;
+      exchange_count: number;
+      org: string;
+      repo: string;
+      short_path: string;
+    }>
+  >("/projects");
+}
+
 export async function getSessions(params?: {
   q?: string;
   project?: string;
@@ -22,6 +36,8 @@ export async function getSessions(params?: {
   if (params?.project) searchParams.set("project", params.project);
   if (params?.days) searchParams.set("days", String(params.days));
   if (params?.limit) searchParams.set("limit", String(params.limit));
+  else searchParams.set("limit", "200");
+  searchParams.set("days", String(params?.days ?? 365));
   const qs = searchParams.toString();
   return fetchJson(`/sessions${qs ? `?${qs}` : ""}`);
 }

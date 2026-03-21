@@ -203,7 +203,7 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
     }
 
     // Mark session ended
-    updateSessionEnd(input.session_id, transcript.exchanges.length);
+    updateSessionEnd(input.session_id, transcript.exchanges.length, transcript.ended_at ?? undefined);
 
     // Run programmatic analysis
     const plans = extractPlans(transcript.exchanges);

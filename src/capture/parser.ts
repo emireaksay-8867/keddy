@@ -123,6 +123,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
   let claudeVersion: string | null = null;
   let slug: string | null = null;
   let forkedFrom: string | null = null;
+  let startedAt: string | null = null;
   const exchanges: ParsedExchange[] = [];
   const compactionBoundaries: number[] = [];
 
@@ -145,6 +146,10 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     if (entry.version && !claudeVersion) claudeVersion = entry.version;
     if (entry.slug && !slug) slug = entry.slug;
     if (entry.forkedFrom && !forkedFrom) forkedFrom = entry.forkedFrom as string;
+    if (entry.timestamp) {
+      if (!startedAt) startedAt = entry.timestamp;
+      // Always update — last one wins for ended_at
+    }
 
     // Compaction boundary
     if (entry.type === "system" && entry.subtype === "compact_boundary") {
@@ -274,6 +279,10 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     });
   }
 
+  // Derive timestamps from exchanges if not captured from metadata
+  const firstTs = startedAt || exchanges[0]?.timestamp || null;
+  const lastTs = exchanges.length > 0 ? exchanges[exchanges.length - 1].timestamp : firstTs;
+
   return {
     session_id: sessionId,
     project_path: projectPath,
@@ -281,6 +290,8 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     claude_version: claudeVersion,
     slug,
     forked_from: forkedFrom,
+    started_at: firstTs,
+    ended_at: lastTs,
     exchanges,
     compaction_boundaries: compactionBoundaries,
   };

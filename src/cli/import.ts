@@ -89,6 +89,7 @@ export async function runImport(): Promise<void> {
         slug: transcript.slug,
         jsonl_path: filePath,
         forked_from: transcript.forked_from,
+        started_at: transcript.started_at,
         title: transcript.exchanges[0]?.user_prompt.substring(0, 80) ?? null,
       });
 
@@ -165,7 +166,7 @@ export async function runImport(): Promise<void> {
         });
       }
 
-      updateSessionEnd(transcript.session_id, transcript.exchanges.length);
+      updateSessionEnd(transcript.session_id, transcript.exchanges.length, transcript.ended_at ?? undefined);
 
       imported++;
       process.stdout.write(`\r  Imported: ${imported} | Skipped: ${skipped} | Errors: ${errors}`);

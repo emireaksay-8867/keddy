@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "keddy": {
+      "command": "node",
+      "args": [
+        "/Users/hasanberaaksay/Documents/GitHub/keddy/dist/mcp/server.js"
+      ]
+    }
+  }
+}

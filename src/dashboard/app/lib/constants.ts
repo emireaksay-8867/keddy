@@ -1,40 +1,40 @@
 export const SEGMENT_COLORS: Record<string, string> = {
-  planning: "#8B5CF6",     // violet
-  implementing: "#3B82F6", // blue
-  testing: "#10B981",      // emerald
-  debugging: "#EF4444",    // red
-  exploring: "#F59E0B",    // amber
-  discussion: "#6B7280",   // gray
-  pivot: "#EC4899",        // pink
-  deploying: "#06B6D4",    // cyan
+  planning: "#a78bfa",
+  implementing: "#60a5fa",
+  testing: "#34d399",
+  debugging: "#f87171",
+  exploring: "#fbbf24",
+  discussion: "#9ca3af",
+  pivot: "#f472b6",
+  deploying: "#22d3ee",
 };
 
 export const SEGMENT_LABELS: Record<string, string> = {
-  planning: "Planning",
-  implementing: "Implementing",
-  testing: "Testing",
-  debugging: "Debugging",
-  exploring: "Exploring",
-  discussion: "Discussion",
-  pivot: "Pivot",
-  deploying: "Deploying",
+  planning: "plan",
+  implementing: "impl",
+  testing: "test",
+  debugging: "debug",
+  exploring: "explore",
+  discussion: "discuss",
+  pivot: "pivot",
+  deploying: "deploy",
 };
 
 export const MILESTONE_ICONS: Record<string, string> = {
-  commit: "⊙",
-  push: "↑",
-  pr: "⑂",
-  branch: "⑃",
-  test_pass: "✓",
-  test_fail: "✗",
+  commit: "\u25CB",
+  push: "\u2191",
+  pr: "\u2442",
+  branch: "\u2443",
+  test_pass: "\u2713",
+  test_fail: "\u2717",
 };
 
-export const TOOL_ICONS: Record<string, string> = {
-  Read: "📖",
-  Edit: "✏️",
-  Write: "📝",
-  Bash: "⌨️",
-  Grep: "🔍",
-  Glob: "📂",
-  Agent: "🤖",
+export const TOOL_LABELS: Record<string, string> = {
+  Read: "read",
+  Edit: "edit",
+  Write: "write",
+  Bash: "bash",
+  Grep: "grep",
+  Glob: "glob",
+  Agent: "agent",
 };

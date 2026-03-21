@@ -8,6 +8,7 @@ import { sessionsRoutes } from "./routes/sessions.js";
 import { plansRoutes } from "./routes/plans.js";
 import { statsRoutes } from "./routes/stats.js";
 import { configRoutes } from "./routes/config.js";
+import { projectsRoutes } from "./routes/projects.js";
 
 const app = new Hono();
 
@@ -19,6 +20,7 @@ app.route("/api/sessions", sessionsRoutes);
 app.route("/api", plansRoutes);
 app.route("/api", statsRoutes);
 app.route("/api", configRoutes);
+app.route("/api", projectsRoutes);
 
 // Static files (built dashboard)
 app.use(

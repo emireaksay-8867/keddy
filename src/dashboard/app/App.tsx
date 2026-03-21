@@ -1,56 +1,74 @@
-import { BrowserRouter, Routes, Route, Link, useLocation } from "react-router";
+import { BrowserRouter, Routes, Route } from "react-router";
+import { useState, useEffect, createContext, useContext } from "react";
 import { Sessions } from "./pages/Sessions.js";
 import { SessionDetail } from "./pages/SessionDetail.js";
-import { PlanViewer } from "./pages/PlanViewer.js";
 import { Settings } from "./pages/Settings.js";
+import { Sidebar } from "./components/Sidebar.js";
+import { getProjects, getStats } from "./lib/api.js";
+import type { Stats } from "./lib/types.js";
 
-function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
-  const location = useLocation();
-  const active = location.pathname === to || (to !== "/" && location.pathname.startsWith(to));
-  return (
-    <Link
-      to={to}
-      className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
-        active
-          ? "bg-[var(--color-accent)] text-white"
-          : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]"
-      }`}
-    >
-      {children}
-    </Link>
-  );
+interface AppContextType {
+  projects: Array<{
+    project_path: string;
+    session_count: number;
+    last_activity: string;
+    exchange_count: number;
+    org: string;
+    repo: string;
+    short_path: string;
+  }>;
+  stats: Stats | null;
+  selectedProject: string | null;
+  setSelectedProject: (p: string | null) => void;
+  searchQuery: string;
+  setSearchQuery: (q: string) => void;
 }
 
-function Layout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen">
-      <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <Link to="/" className="text-lg font-semibold tracking-tight">
-            keddy
-          </Link>
-          <nav className="flex gap-1">
-            <NavLink to="/">Sessions</NavLink>
-            <NavLink to="/settings">Settings</NavLink>
-          </nav>
-        </div>
-      </header>
-      <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>
-    </div>
-  );
-}
+export const AppContext = createContext<AppContextType>({
+  projects: [],
+  stats: null,
+  selectedProject: null,
+  setSelectedProject: () => {},
+  searchQuery: "",
+  setSearchQuery: () => {},
+});
+
+export const useAppContext = () => useContext(AppContext);
 
 export function App() {
+  const [projects, setProjects] = useState<AppContextType["projects"]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    getProjects().then(setProjects).catch(console.error);
+    (getStats() as Promise<Stats>).then(setStats).catch(console.error);
+  }, []);
+
   return (
-    <BrowserRouter>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<Sessions />} />
-          <Route path="/sessions/:id" element={<SessionDetail />} />
-          <Route path="/sessions/:id/plans" element={<PlanViewer />} />
-          <Route path="/settings" element={<Settings />} />
-        </Routes>
-      </Layout>
-    </BrowserRouter>
+    <AppContext.Provider
+      value={{
+        projects,
+        stats,
+        selectedProject,
+        setSelectedProject,
+        searchQuery,
+        setSearchQuery,
+      }}
+    >
+      <BrowserRouter>
+        <div className="flex h-full">
+          <Sidebar />
+          <main className="flex-1 overflow-y-auto">
+            <Routes>
+              <Route path="/" element={<Sessions />} />
+              <Route path="/sessions/:id" element={<SessionDetail />} />
+              <Route path="/settings" element={<Settings />} />
+            </Routes>
+          </main>
+        </div>
+      </BrowserRouter>
+    </AppContext.Provider>
   );
 }

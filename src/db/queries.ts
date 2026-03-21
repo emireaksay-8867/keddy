@@ -23,13 +23,14 @@ export function insertSession(data: {
   claude_version?: string | null;
   jsonl_path?: string | null;
   forked_from?: string | null;
+  started_at?: string | null;
   metadata?: string | null;
 }): string {
   const db = getDb();
   const id = randomUUID();
   db.prepare(`
-    INSERT INTO sessions (id, session_id, project_path, git_branch, title, slug, claude_version, jsonl_path, forked_from, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO sessions (id, session_id, project_path, git_branch, title, slug, claude_version, jsonl_path, forked_from, started_at, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.session_id,
@@ -40,6 +41,7 @@ export function insertSession(data: {
     data.claude_version ?? null,
     data.jsonl_path ?? null,
     data.forked_from ?? null,
+    data.started_at ?? new Date().toISOString(),
     data.metadata ?? null,
   );
   return id;
@@ -54,6 +56,7 @@ export function upsertSession(data: {
   claude_version?: string | null;
   jsonl_path?: string | null;
   forked_from?: string | null;
+  started_at?: string | null;
   metadata?: string | null;
 }): string {
   const db = getDb();
@@ -90,11 +93,11 @@ export function upsertSession(data: {
   return insertSession(data);
 }
 
-export function updateSessionEnd(sessionId: string, exchangeCount: number): void {
+export function updateSessionEnd(sessionId: string, exchangeCount: number, endedAt?: string): void {
   const db = getDb();
   db.prepare(`
-    UPDATE sessions SET ended_at = datetime('now'), exchange_count = ? WHERE session_id = ?
-  `).run(exchangeCount, sessionId);
+    UPDATE sessions SET ended_at = COALESCE(?, datetime('now')), exchange_count = ? WHERE session_id = ?
+  `).run(endedAt ?? null, exchangeCount, sessionId);
 }
 
 export function getSession(sessionId: string): Session | undefined {
@@ -109,16 +112,32 @@ export function getSessionById(id: string): Session | undefined {
   return db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as Session | undefined;
 }
 
-export function getRecentSessions(days: number = 7, limit: number = 50): Session[] {
+export function getRecentSessions(days: number = 7, limit: number = 50, offset: number = 0): Session[] {
   const db = getDb();
   return db
     .prepare(
       `SELECT * FROM sessions
        WHERE started_at >= datetime('now', ?)
-       ORDER BY started_at DESC
-       LIMIT ?`,
+       ORDER BY COALESCE(ended_at, started_at) DESC
+       LIMIT ? OFFSET ?`,
     )
-    .all(`-${days} days`, limit) as Session[];
+    .all(`-${days} days`, limit, offset) as Session[];
+}
+
+export function getProjects(): Array<{ project_path: string; session_count: number; last_activity: string; exchange_count: number }> {
+  const db = getDb();
+  return db
+    .prepare(
+      `SELECT
+        project_path,
+        COUNT(*) as session_count,
+        MAX(COALESCE(ended_at, started_at)) as last_activity,
+        SUM(exchange_count) as exchange_count
+       FROM sessions
+       GROUP BY project_path
+       ORDER BY last_activity DESC`,
+    )
+    .all() as Array<{ project_path: string; session_count: number; last_activity: string; exchange_count: number }>;
 }
 
 function sanitizeFtsQuery(query: string): string {
