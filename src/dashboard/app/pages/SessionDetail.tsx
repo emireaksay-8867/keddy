@@ -196,7 +196,7 @@ function TranscriptView({ exchanges, segments, milestones, compactionEvents, ope
   items.sort((a, b) => a.idx - b.idx);
 
   return (
-    <div className="py-4 px-5 max-w-4xl mx-auto">
+    <div className="py-4 px-8">
       {items.map((item, i) => {
         if (item.kind === "segment") return <InlineSegmentMarker key={`seg-${i}`} seg={item.data as Segment} exchanges={exchanges} />;
         if (item.kind === "milestones") {
@@ -240,7 +240,7 @@ function TimelineView({ session, exchanges, openPanel }: {
   if (pendingMs.length) items.push({ kind: "milestones", data: pendingMs, idx: pendingMs[0].exchange_index });
 
   return (
-    <div className="py-4 px-6 max-w-3xl">
+    <div className="py-4 px-8">
       {/* Plans */}
       {plans.length > 0 && (
         <div className="mb-6 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>

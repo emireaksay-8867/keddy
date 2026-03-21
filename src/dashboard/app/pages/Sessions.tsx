@@ -64,40 +64,44 @@ function SessionRow({ session }: { session: SessionListItem }) {
   const lastActivity = session.ended_at || session.started_at;
   const duration = formatDuration(session.started_at, session.ended_at);
 
+  // Deduplicate segment types for badges
+  const segTypes = [...new Set(session.segments.map(s => s.type))];
+
   return (
     <Link
       to={`/sessions/${session.session_id}`}
-      className="block px-5 py-3 border-b transition-colors hover:bg-[var(--bg-hover)] animate-in"
+      className="block px-5 py-3.5 border-b transition-colors hover:bg-[var(--bg-hover)] animate-in"
       style={{ borderColor: "var(--border)" }}
     >
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <p className="text-[14px] font-medium truncate mb-1" style={{ color: "var(--text-primary)" }}>
+          <p className="text-[14px] font-medium truncate mb-1.5" style={{ color: "var(--text-primary)" }}>
             {title}
           </p>
-          <div className="flex items-center gap-2.5 text-[12px]" style={{ color: "var(--text-tertiary)" }}>
+          <div className="flex items-center gap-2 text-[12px] flex-wrap" style={{ color: "var(--text-tertiary)" }}>
             <span>{project}</span>
             {session.git_branch && (
-              <span
-                className="px-1.5 py-0.5 rounded font-mono text-[11px]"
-                style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}
-              >
+              <span className="px-1.5 py-0.5 rounded font-mono text-[11px]" style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}>
                 {session.git_branch}
               </span>
             )}
             {duration && <span>{duration}</span>}
             <span>{session.exchange_count} exchanges</span>
             {session.milestone_count > 0 && <span>{session.milestone_count} milestones</span>}
+            {segTypes.length > 0 && (
+              <span className="flex gap-1 ml-1">
+                {segTypes.slice(0, 3).map(type => (
+                  <span key={type} className="w-1.5 h-1.5 rounded-full" style={{ background: SEGMENT_COLORS[type] || "#555" }} title={SEGMENT_LABELS[type] || type} />
+                ))}
+              </span>
+            )}
           </div>
         </div>
         <div className="text-right shrink-0">
-          <span className="text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+          <span className="text-[12px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
             {formatRelative(lastActivity)}
           </span>
         </div>
-      </div>
-      <div className="mt-2">
-        <SegmentBar segments={session.segments} total={session.exchange_count} />
       </div>
     </Link>
   );
