@@ -72,14 +72,14 @@ function SessionRow({ session }: { session: SessionListItem }) {
     >
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <p className="text-sm truncate mb-1" style={{ color: "var(--text-primary)" }}>
+          <p className="text-[14px] font-medium truncate mb-1" style={{ color: "var(--text-primary)" }}>
             {title}
           </p>
-          <div className="flex items-center gap-3 text-xs" style={{ color: "var(--text-tertiary)" }}>
+          <div className="flex items-center gap-2.5 text-[12px]" style={{ color: "var(--text-tertiary)" }}>
             <span>{project}</span>
             {session.git_branch && (
               <span
-                className="px-1.5 py-0.5 rounded"
+                className="px-1.5 py-0.5 rounded font-mono text-[11px]"
                 style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}
               >
                 {session.git_branch}
