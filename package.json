@@ -54,6 +54,8 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "better-sqlite3": "^11.7.0",
     "hono": "^4.6.0",
+    "lightningcss": "^1.32.0",
+    "lightningcss-darwin-arm64": "^1.32.0",
     "open": "^10.1.0",
     "zod": "^3.25.0"
   },
@@ -64,6 +66,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "concurrently": "^9.1.0",
+    "dotenv": "^17.3.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router": "^7.0.0",
