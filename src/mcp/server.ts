@@ -98,12 +98,18 @@ server.tool(
         feedback: p.user_feedback,
         text: p.plan_text.substring(0, 500),
       })),
-      segments: segments.map((s) => ({
-        type: s.segment_type,
-        range: `${s.exchange_index_start}-${s.exchange_index_end}`,
-        files: JSON.parse(s.files_touched),
-        tools: JSON.parse(s.tool_counts),
-      })),
+      segments: segments.map((s) => {
+        let files: unknown = [];
+        let tools: unknown = {};
+        try { files = JSON.parse(s.files_touched); } catch { /* use default */ }
+        try { tools = JSON.parse(s.tool_counts); } catch { /* use default */ }
+        return {
+          type: s.segment_type,
+          range: `${s.exchange_index_start}-${s.exchange_index_end}`,
+          files,
+          tools,
+        };
+      }),
       milestones: milestones.map((m) => ({
         type: m.milestone_type,
         index: m.exchange_index,

@@ -180,12 +180,16 @@ export async function runImport(): Promise<void> {
 }
 
 function deriveProjectPath(jsonlPath: string): string {
-  // ~/.claude/projects/-Users-foo-project/session.jsonl → /Users/foo/project
+  // Fallback: extract encoded project path from the directory name.
+  // Claude Code encodes paths as: /Users/foo/project → -Users-foo-project
+  // Note: This is lossy — hyphens in real directory names are ambiguous.
+  // The transcript's cwd field is always preferred over this fallback.
   const parts = jsonlPath.split("/");
   const projectsIdx = parts.indexOf("projects");
   if (projectsIdx >= 0 && projectsIdx + 1 < parts.length) {
     const encoded = parts[projectsIdx + 1];
-    return encoded.replace(/-/g, "/").replace(/^\//, "");
+    // Only replace leading dash (path separator), preserve internal structure
+    return "/" + encoded.replace(/^-/, "").replace(/-/g, "/");
   }
   return jsonlPath;
 }

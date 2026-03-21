@@ -26,7 +26,20 @@ export function loadConfig(): KeddyConfig {
   if (!existsSync(CONFIG_PATH)) return getDefaultConfig();
   try {
     const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
-    return { ...getDefaultConfig(), ...raw };
+    const defaults = getDefaultConfig();
+    // Deep merge to preserve nested defaults (especially analysis.features)
+    return {
+      ...defaults,
+      ...raw,
+      analysis: {
+        ...defaults.analysis,
+        ...(raw.analysis ?? {}),
+        features: {
+          ...defaults.analysis.features,
+          ...(raw.analysis?.features ?? {}),
+        },
+      },
+    };
   } catch {
     return getDefaultConfig();
   }

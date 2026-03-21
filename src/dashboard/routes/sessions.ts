@@ -18,21 +18,20 @@ export const sessionsRoutes = new Hono();
 sessionsRoutes.get("/", (c) => {
   const query = c.req.query("q");
   const project = c.req.query("project");
-  const days = c.req.query("days");
-  const limit = c.req.query("limit");
+  const parsedDays = parseInt(c.req.query("days") ?? "", 10);
+  const parsedLimit = parseInt(c.req.query("limit") ?? "", 10);
+  const daysVal = !isNaN(parsedDays) && parsedDays > 0 ? parsedDays : undefined;
+  const limitVal = !isNaN(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50;
 
   let sessions;
   if (query) {
     sessions = searchSessions(query, {
       project: project ?? undefined,
-      days: days ? parseInt(days) : undefined,
-      limit: limit ? parseInt(limit) : 50,
+      days: daysVal,
+      limit: limitVal,
     });
   } else {
-    sessions = getRecentSessions(
-      days ? parseInt(days) : 30,
-      limit ? parseInt(limit) : 50,
-    );
+    sessions = getRecentSessions(daysVal ?? 30, limitVal);
   }
 
   // Enrich with segment data
@@ -105,7 +104,15 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
 // POST /api/sessions/:id/title — rename
 sessionsRoutes.post("/:id/title", async (c) => {
   const id = c.req.param("id");
-  const body = await c.req.json<{ title: string }>();
+  let body: { title?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  if (typeof body.title !== "string" || body.title.length === 0) {
+    return c.json({ error: "title must be a non-empty string" }, 400);
+  }
   const session = getSession(id) ?? getSessionById(id);
   if (!session) {
     return c.json({ error: "Session not found" }, 404);

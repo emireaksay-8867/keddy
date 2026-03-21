@@ -9,6 +9,7 @@ import {
   insertSegment,
   insertMilestone,
   getSession,
+  getSessionExchanges,
   getRecentSessions,
   insertSessionLink,
 } from "../db/queries.js";
@@ -83,13 +84,17 @@ async function handleStop(input: HookStdin): Promise<void> {
       });
     }
 
-    // Parse latest exchange
+    // Parse latest exchange — use actual exchange count from DB, not session.exchange_count
+    // (which is only updated at SessionEnd)
     const sessionRow = getSession(input.session_id);
     if (!sessionRow) return;
 
+    const existingExchanges = getSessionExchanges(sessionRow.id);
+    const sinceIndex = existingExchanges.length;
+
     const latestExchanges = parseLatestExchanges(
       input.transcript_path,
-      sessionRow.exchange_count,
+      sinceIndex,
     );
 
     for (const exchange of latestExchanges) {
