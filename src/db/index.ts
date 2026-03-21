@@ -3,6 +3,7 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { initSchema } from "./schema.js";
+import { runMigrations } from "./migrations.js";
 
 let db: Database.Database | null = null;
 
@@ -27,6 +28,9 @@ export function initDb(dbPath?: string): Database.Database {
 
   // Initialize schema
   initSchema(db);
+
+  // Run migrations for existing databases
+  runMigrations(db);
 
   return db;
 }

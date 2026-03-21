@@ -13,6 +13,8 @@ import {
   getRecentSessions,
   getRecentPlans,
   getStats,
+  searchByFile,
+  getSessionTranscript,
 } from "../db/queries.js";
 
 function textResult(text: string) {
@@ -88,7 +90,8 @@ server.tool(
       },
       exchanges: exchanges.map((e) => ({
         index: e.exchange_index,
-        prompt: e.user_prompt.substring(0, 200),
+        prompt: e.user_prompt.substring(0, 500),
+        response_preview: (e.assistant_response || "").substring(0, 300),
         tools: e.tool_call_count,
         is_interrupt: !!e.is_interrupt,
       })),
@@ -185,6 +188,71 @@ server.tool(
       stats,
       sessions: summary,
     });
+  },
+);
+
+// Tool 5: Get transcript
+server.tool(
+  "keddy_get_transcript",
+  "Get the full conversation transcript for a session — includes both user prompts and Claude's responses. Use exchange range to get a specific portion.",
+  {
+    session_id: z.string().describe("The session ID"),
+    from: z.number().optional().describe("Start exchange index (inclusive)"),
+    to: z.number().optional().describe("End exchange index (inclusive)"),
+  },
+  async ({ session_id, from, to }) => {
+    const session = getSession(session_id);
+    if (!session) return textResult(`Session not found: ${session_id}`);
+
+    const exchanges = getSessionTranscript(session.id, { from, to });
+    if (exchanges.length === 0) return textResult("No exchanges in range.");
+
+    const transcript = exchanges.map((e) => {
+      let text = `--- Exchange #${e.exchange_index} ---\n`;
+      text += `**User:** ${e.user_prompt}\n`;
+      if (e.assistant_response) text += `\n**Claude:** ${e.assistant_response}\n`;
+      if (e.tool_call_count > 0) text += `\n(${e.tool_call_count} tool calls)\n`;
+      if (e.is_interrupt) text += `\n[INTERRUPTED]\n`;
+      return text;
+    }).join("\n");
+
+    return textResult(transcript);
+  },
+);
+
+// Tool 6: Search by file
+server.tool(
+  "keddy_search_by_file",
+  "Find all sessions that touched a specific file. Useful for understanding the history of changes to a file across sessions.",
+  {
+    file_path: z.string().describe("The file path to search for (can be partial, e.g. 'src/auth.ts')"),
+    limit: z.number().optional().describe("Max results (default 20)"),
+  },
+  async ({ file_path, limit }) => {
+    const results = searchByFile(file_path, limit ?? 20);
+    if (results.length === 0) {
+      return textResult(`No sessions found that touched: ${file_path}`);
+    }
+
+    // Group by session
+    const bySession = new Map<string, typeof results>();
+    for (const r of results) {
+      if (!bySession.has(r.session_id)) bySession.set(r.session_id, []);
+      bySession.get(r.session_id)!.push(r);
+    }
+
+    const formatted = Array.from(bySession.entries()).map(([sid, ops]) => ({
+      session_id: sid,
+      title: ops[0].title,
+      project: ops[0].project_path,
+      started: ops[0].started_at,
+      operations: ops.map((o) => ({
+        exchange: o.exchange_index,
+        tool: o.tool_name,
+      })),
+    }));
+
+    return jsonResult({ file: file_path, sessions: formatted });
   },
 );
 

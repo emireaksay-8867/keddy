@@ -518,6 +518,76 @@ export function getStats(): {
   };
 }
 
+// --- Search by file ---
+
+export function searchByFile(filePath: string, limit: number = 20): Array<{
+  session_id: string;
+  project_path: string;
+  title: string | null;
+  started_at: string;
+  exchange_index: number;
+  tool_name: string;
+}> {
+  const db = getDb();
+  return db.prepare(`
+    SELECT DISTINCT s.session_id, s.project_path, s.title, s.started_at,
+           e.exchange_index, tc.tool_name
+    FROM tool_calls tc
+    JOIN exchanges e ON e.id = tc.exchange_id
+    JOIN sessions s ON s.id = tc.session_id
+    WHERE tc.tool_input LIKE ?
+    ORDER BY s.started_at DESC
+    LIMIT ?
+  `).all(`%${filePath}%`, limit) as Array<{
+    session_id: string;
+    project_path: string;
+    title: string | null;
+    started_at: string;
+    exchange_index: number;
+    tool_name: string;
+  }>;
+}
+
+// --- Get transcript ---
+
+export function getSessionTranscript(
+  sessionId: string,
+  options?: { from?: number; to?: number },
+): Array<{
+  exchange_index: number;
+  user_prompt: string;
+  assistant_response: string;
+  tool_call_count: number;
+  is_interrupt: number;
+  timestamp: string;
+}> {
+  const db = getDb();
+  let sql = `
+    SELECT exchange_index, user_prompt, assistant_response, tool_call_count, is_interrupt, timestamp
+    FROM exchanges WHERE session_id = ?
+  `;
+  const params: unknown[] = [sessionId];
+
+  if (options?.from !== undefined) {
+    sql += " AND exchange_index >= ?";
+    params.push(options.from);
+  }
+  if (options?.to !== undefined) {
+    sql += " AND exchange_index <= ?";
+    params.push(options.to);
+  }
+
+  sql += " ORDER BY exchange_index";
+  return db.prepare(sql).all(...params) as Array<{
+    exchange_index: number;
+    user_prompt: string;
+    assistant_response: string;
+    tool_call_count: number;
+    is_interrupt: number;
+    timestamp: string;
+  }>;
+}
+
 // --- Config ---
 
 export function getConfig(key: string): string | undefined {

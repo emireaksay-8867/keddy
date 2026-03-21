@@ -89,17 +89,18 @@ export async function runImport(): Promise<void> {
         continue;
       }
 
-      // Import session
+      // Import session — ensure all values are strings or null (never undefined)
       upsertSession({
         session_id: transcript.session_id,
         project_path: transcript.project_path || deriveProjectPath(filePath),
-        git_branch: transcript.git_branch,
-        claude_version: transcript.claude_version,
-        slug: transcript.slug,
+        git_branch: transcript.git_branch || null,
+        claude_version: transcript.claude_version || null,
+        slug: transcript.slug || null,
         jsonl_path: filePath,
-        forked_from: transcript.forked_from,
-        started_at: transcript.started_at,
-        title: transcript.exchanges[0]?.user_prompt.substring(0, 80) ?? null,
+        forked_from: transcript.forked_from || null,
+        started_at: transcript.started_at || null,
+        title: transcript.exchanges[0]?.user_prompt.substring(0, 80) || null,
+        metadata: null,
       });
 
       const session = getSession(transcript.session_id);

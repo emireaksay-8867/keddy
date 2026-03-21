@@ -145,7 +145,11 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     if (entry.gitBranch && !gitBranch) gitBranch = entry.gitBranch;
     if (entry.version && !claudeVersion) claudeVersion = entry.version;
     if (entry.slug && !slug) slug = entry.slug;
-    if (entry.forkedFrom && !forkedFrom) forkedFrom = entry.forkedFrom as string;
+    if (entry.forkedFrom && !forkedFrom) {
+      forkedFrom = typeof entry.forkedFrom === "string"
+        ? entry.forkedFrom
+        : JSON.stringify(entry.forkedFrom);
+    }
     if (entry.timestamp) {
       if (!startedAt) startedAt = entry.timestamp;
       // Always update — last one wins for ended_at

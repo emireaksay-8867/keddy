@@ -41,9 +41,10 @@ export function initSchema(db: Database.Database): void {
       tool_name TEXT NOT NULL,
       tool_input TEXT NOT NULL DEFAULT '{}',
       tool_result TEXT,
-      tool_use_id TEXT NOT NULL UNIQUE,
+      tool_use_id TEXT NOT NULL,
       is_error INTEGER NOT NULL DEFAULT 0,
-      duration_ms INTEGER
+      duration_ms INTEGER,
+      UNIQUE(session_id, tool_use_id)
     );
 
     CREATE TABLE IF NOT EXISTS plans (
@@ -121,10 +122,11 @@ export function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
   `);
 
-  // FTS5 virtual table for full-text search
+  // FTS5 virtual table for full-text search (both prompts and responses)
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS exchanges_fts USING fts5(
       user_prompt,
+      assistant_response,
       content=exchanges,
       content_rowid=rowid
     );
@@ -133,16 +135,16 @@ export function initSchema(db: Database.Database): void {
   // Triggers to keep FTS in sync
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS exchanges_fts_insert AFTER INSERT ON exchanges BEGIN
-      INSERT INTO exchanges_fts(rowid, user_prompt) VALUES (NEW.rowid, NEW.user_prompt);
+      INSERT INTO exchanges_fts(rowid, user_prompt, assistant_response) VALUES (NEW.rowid, NEW.user_prompt, NEW.assistant_response);
     END;
 
     CREATE TRIGGER IF NOT EXISTS exchanges_fts_delete AFTER DELETE ON exchanges BEGIN
-      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_prompt) VALUES ('delete', OLD.rowid, OLD.user_prompt);
+      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_prompt, assistant_response) VALUES ('delete', OLD.rowid, OLD.user_prompt, OLD.assistant_response);
     END;
 
     CREATE TRIGGER IF NOT EXISTS exchanges_fts_update AFTER UPDATE ON exchanges BEGIN
-      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_prompt) VALUES ('delete', OLD.rowid, OLD.user_prompt);
-      INSERT INTO exchanges_fts(rowid, user_prompt) VALUES (NEW.rowid, NEW.user_prompt);
+      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_prompt, assistant_response) VALUES ('delete', OLD.rowid, OLD.user_prompt, OLD.assistant_response);
+      INSERT INTO exchanges_fts(rowid, user_prompt, assistant_response) VALUES (NEW.rowid, NEW.user_prompt, NEW.assistant_response);
     END;
   `);
 
