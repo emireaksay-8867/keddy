@@ -15,11 +15,11 @@ describe("config deep merge behavior", () => {
         provider: "anthropic" as const,
         apiKey: "",
         features: {
-          sessionTitles: { enabled: true, model: "claude-haiku-4-5-20251001" },
-          segmentSummaries: { enabled: true, model: "claude-haiku-4-5-20251001" },
-          decisionExtraction: { enabled: false, model: "claude-haiku-4-5-20251001" },
-          planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-6" },
-          sessionNotes: { enabled: false, model: "claude-sonnet-4-6" },
+          sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
+          segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
+          decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
+          planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
+          sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
         },
       },
     };
@@ -44,7 +44,7 @@ describe("config deep merge behavior", () => {
     expect(merged.analysis.apiKey).toBe("sk-ant-test");
     // Features should be preserved from defaults
     expect(merged.analysis.features.sessionTitles.enabled).toBe(true);
-    expect(merged.analysis.features.sessionTitles.model).toBe("claude-haiku-4-5-20251001");
+    expect(merged.analysis.features.sessionTitles.model).toBe("claude-haiku-4-5-latest");
     expect(merged.analysis.features.decisionExtraction.enabled).toBe(false);
   });
 
@@ -55,11 +55,11 @@ describe("config deep merge behavior", () => {
         provider: "anthropic" as const,
         apiKey: "",
         features: {
-          sessionTitles: { enabled: true, model: "claude-haiku-4-5-20251001" },
-          segmentSummaries: { enabled: true, model: "claude-haiku-4-5-20251001" },
-          decisionExtraction: { enabled: false, model: "claude-haiku-4-5-20251001" },
-          planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-6" },
-          sessionNotes: { enabled: false, model: "claude-sonnet-4-6" },
+          sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
+          segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
+          decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
+          planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
+          sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
         },
       },
     };
@@ -68,7 +68,7 @@ describe("config deep merge behavior", () => {
       analysis: {
         enabled: true,
         features: {
-          decisionExtraction: { enabled: true, model: "claude-sonnet-4-6" },
+          decisionExtraction: { enabled: true, model: "claude-sonnet-4-5-latest" },
         },
       },
     };
@@ -89,7 +89,7 @@ describe("config deep merge behavior", () => {
     expect(merged.analysis.enabled).toBe(true);
     // Overridden feature
     expect(merged.analysis.features.decisionExtraction.enabled).toBe(true);
-    expect(merged.analysis.features.decisionExtraction.model).toBe("claude-sonnet-4-6");
+    expect(merged.analysis.features.decisionExtraction.model).toBe("claude-sonnet-4-5-latest");
     // Preserved defaults
     expect(merged.analysis.features.sessionTitles.enabled).toBe(true);
   });
@@ -101,11 +101,11 @@ describe("config deep merge behavior", () => {
         provider: "anthropic" as const,
         apiKey: "",
         features: {
-          sessionTitles: { enabled: true, model: "claude-haiku-4-5-20251001" },
-          segmentSummaries: { enabled: true, model: "claude-haiku-4-5-20251001" },
-          decisionExtraction: { enabled: false, model: "claude-haiku-4-5-20251001" },
-          planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-6" },
-          sessionNotes: { enabled: false, model: "claude-sonnet-4-6" },
+          sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
+          segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
+          decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
+          planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
+          sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
         },
       },
     };

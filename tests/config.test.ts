@@ -17,7 +17,7 @@ describe("config module", () => {
     expect(config.analysis.provider).toBe("anthropic");
     expect(config.analysis.features.sessionTitles).toBeDefined();
     expect(config.analysis.features.sessionTitles.enabled).toBe(true);
-    expect(config.analysis.features.sessionTitles.model).toBe("claude-haiku-4-5-20251001");
+    expect(config.analysis.features.sessionTitles.model).toBe("claude-haiku-4-5-latest");
   });
 
   it("should have all expected feature flags in default config", () => {

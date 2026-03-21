@@ -1,5 +1,16 @@
 import type { AnalysisConfig } from "../types.js";
 
+// Map friendly model names to actual Anthropic API model IDs
+const MODEL_ALIASES: Record<string, string> = {
+  "claude-haiku-4-5-latest": "claude-haiku-4-5-20251001",
+  "claude-sonnet-4-5-latest": "claude-sonnet-4-5-20250514",
+  "claude-opus-4-6": "claude-opus-4-6-20250610",
+};
+
+function resolveModel(model: string): string {
+  return MODEL_ALIASES[model] || model;
+}
+
 export interface LLMProvider {
   complete(prompt: string, model: string): Promise<string>;
 }
@@ -16,7 +27,7 @@ class AnthropicProvider implements LLMProvider {
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
       const client = new Anthropic({ apiKey: this.apiKey });
       const response = await client.messages.create({
-        model,
+        model: resolveModel(model),
         max_tokens: 1024,
         messages: [{ role: "user", content: prompt }],
       });

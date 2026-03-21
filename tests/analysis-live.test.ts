@@ -17,11 +17,11 @@ describe.skipIf(!hasApiKey)("AI Analysis — live API tests", () => {
       provider: "anthropic",
       apiKey: apiKey!,
       features: {
-        sessionTitles: { enabled: true, model: "claude-haiku-4-5-20251001" },
-        segmentSummaries: { enabled: true, model: "claude-haiku-4-5-20251001" },
-        decisionExtraction: { enabled: false, model: "claude-haiku-4-5-20251001" },
-        planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-6" },
-        sessionNotes: { enabled: false, model: "claude-sonnet-4-6" },
+        sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
+        segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
+        decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
+        planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
+        sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
       },
     };
 
@@ -55,7 +55,7 @@ describe.skipIf(!hasApiKey)("AI Analysis — live API tests", () => {
     const title = await generateTitle(
       provider,
       exchanges,
-      "claude-haiku-4-5-20251001",
+      "claude-haiku-4-5-latest",
     );
 
     expect(title).toBeTruthy();
@@ -71,11 +71,11 @@ describe.skipIf(!hasApiKey)("AI Analysis — live API tests", () => {
       provider: "anthropic",
       apiKey: apiKey!,
       features: {
-        sessionTitles: { enabled: true, model: "claude-haiku-4-5-20251001" },
-        segmentSummaries: { enabled: true, model: "claude-haiku-4-5-20251001" },
-        decisionExtraction: { enabled: false, model: "claude-haiku-4-5-20251001" },
-        planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-6" },
-        sessionNotes: { enabled: false, model: "claude-sonnet-4-6" },
+        sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
+        segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
+        decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
+        planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
+        sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
       },
     };
 
@@ -83,7 +83,7 @@ describe.skipIf(!hasApiKey)("AI Analysis — live API tests", () => {
 
     const result = await provider.complete(
       "Reply with exactly the word: KEDDY_TEST_OK",
-      "claude-haiku-4-5-20251001",
+      "claude-haiku-4-5-latest",
     );
 
     expect(result).toContain("KEDDY_TEST_OK");

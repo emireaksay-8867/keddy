@@ -9,11 +9,11 @@ describe("createProvider", () => {
       provider: "anthropic",
       apiKey: "",
       features: {
-        sessionTitles: { enabled: true, model: "claude-haiku-4-5-20251001" },
-        segmentSummaries: { enabled: true, model: "claude-haiku-4-5-20251001" },
-        decisionExtraction: { enabled: false, model: "claude-haiku-4-5-20251001" },
-        planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-6" },
-        sessionNotes: { enabled: false, model: "claude-sonnet-4-6" },
+        sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
+        segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
+        decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
+        planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
+        sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
       },
     };
     expect(createProvider(config)).toBeNull();
@@ -25,11 +25,11 @@ describe("createProvider", () => {
       provider: "anthropic",
       apiKey: "sk-ant-test-key",
       features: {
-        sessionTitles: { enabled: true, model: "claude-haiku-4-5-20251001" },
-        segmentSummaries: { enabled: true, model: "claude-haiku-4-5-20251001" },
-        decisionExtraction: { enabled: false, model: "claude-haiku-4-5-20251001" },
-        planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-6" },
-        sessionNotes: { enabled: false, model: "claude-sonnet-4-6" },
+        sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
+        segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
+        decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
+        planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
+        sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
       },
     };
     const provider = createProvider(config);

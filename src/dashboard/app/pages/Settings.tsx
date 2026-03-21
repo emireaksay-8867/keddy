@@ -12,6 +12,14 @@ interface ConfigData {
   };
 }
 
+const FEATURE_INFO: Record<string, { name: string; description: string; tier: "fast" | "smart" }> = {
+  sessionTitles: { name: "Session Titles", description: "Generate descriptive titles for each session based on the conversation content", tier: "fast" },
+  segmentSummaries: { name: "Segment Summaries", description: "Summarize what happened in each timeline segment", tier: "fast" },
+  decisionExtraction: { name: "Decision Extraction", description: "Identify key technical decisions and their rationale", tier: "fast" },
+  planDiffAnalysis: { name: "Plan Diff Analysis", description: "Analyze changes between plan versions and why they evolved", tier: "smart" },
+  sessionNotes: { name: "Session Notes", description: "Generate retrospective notes for completed sessions", tier: "smart" },
+};
+
 export function Settings() {
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -19,10 +27,7 @@ export function Settings() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      getConfig() as Promise<ConfigData>,
-      getStats() as Promise<Stats>,
-    ])
+    Promise.all([getConfig() as Promise<ConfigData>, getStats() as Promise<Stats>])
       .then(([c, s]) => { setConfig(c); setStats(s); })
       .catch(console.error);
   }, []);
@@ -34,159 +39,135 @@ export function Settings() {
     try {
       await updateConfig(config);
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSaving(false);
-    }
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err) { console.error(err); }
+    finally { setSaving(false); }
   }
 
-  if (!config) {
-    return (
-      <div className="p-8 text-xs" style={{ color: "var(--text-tertiary)" }}>
-        loading...
-      </div>
-    );
-  }
-
-  const inputStyle = {
-    background: "var(--bg-elevated)",
-    border: "1px solid var(--border)",
-    color: "var(--text-primary)",
-  };
+  if (!config) return <div className="p-8 text-[14px]" style={{ color: "var(--text-muted)" }}>Loading...</div>;
 
   return (
     <div className="h-full flex flex-col">
-      <div
-        className="px-5 py-3 border-b flex items-center gap-3"
-        style={{ background: "var(--bg-surface)", borderColor: "var(--border)" }}
-      >
-        <Link
-          to="/"
-          className="text-xs transition-colors hover:text-[var(--text-primary)]"
-          style={{ color: "var(--text-tertiary)" }}
-        >
-          ← back
-        </Link>
-        <h1 className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-          settings
-        </h1>
+      {/* Header */}
+      <div className="px-6 py-4 border-b" style={{ background: "var(--bg-surface)", borderColor: "var(--border)" }}>
+        <Link to="/" className="text-[12px] mb-2 flex items-center gap-1 hover:text-[var(--text-primary)] transition-colors" style={{ color: "var(--text-muted)" }}>← Sessions</Link>
+        <h1 className="text-[17px] font-semibold">Settings</h1>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5 max-w-xl">
-        {/* Stats */}
-        {stats && (
-          <div className="mb-6 rounded border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
-            <div className="text-xs mb-3 font-medium" style={{ color: "var(--text-tertiary)" }}>
-              database
-            </div>
-            <div className="grid grid-cols-3 gap-4 text-xs">
-              <div>
-                <span style={{ color: "var(--text-tertiary)" }}>size</span>
-                <p style={{ color: "var(--text-primary)" }}>{stats.db_size_mb} MB</p>
-              </div>
-              <div>
-                <span style={{ color: "var(--text-tertiary)" }}>sessions</span>
-                <p style={{ color: "var(--text-primary)" }}>{stats.total_sessions}</p>
-              </div>
-              <div>
-                <span style={{ color: "var(--text-tertiary)" }}>exchanges</span>
-                <p style={{ color: "var(--text-primary)" }}>{stats.total_exchanges}</p>
-              </div>
-            </div>
-          </div>
-        )}
+      <div className="flex-1 overflow-y-auto px-8 py-6">
+        <div className="max-w-2xl space-y-8">
 
-        {/* AI Analysis */}
-        <div className="rounded border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
-          <div className="text-xs mb-3 font-medium" style={{ color: "var(--text-tertiary)" }}>
-            ai analysis
-          </div>
-
-          <label className="flex items-center gap-2 mb-4 cursor-pointer text-xs">
-            <input
-              type="checkbox"
-              checked={config.analysis.enabled}
-              onChange={(e) =>
-                setConfig({ ...config, analysis: { ...config.analysis, enabled: e.target.checked } })
-              }
-            />
-            <span style={{ color: "var(--text-primary)" }}>enable ai analysis</span>
-          </label>
-
-          {config.analysis.enabled && (
-            <div className="space-y-3 pl-5">
-              <div>
-                <label className="text-xs block mb-1" style={{ color: "var(--text-tertiary)" }}>provider</label>
-                <select
-                  value={config.analysis.provider}
-                  onChange={(e) =>
-                    setConfig({ ...config, analysis: { ...config.analysis, provider: e.target.value } })
-                  }
-                  className="w-full px-3 py-1.5 rounded text-xs outline-none"
-                  style={inputStyle}
-                >
-                  <option value="anthropic">anthropic</option>
-                  <option value="openai-compatible">openai-compatible</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs block mb-1" style={{ color: "var(--text-tertiary)" }}>api key</label>
-                <input
-                  type="password"
-                  value={config.analysis.apiKey}
-                  onChange={(e) =>
-                    setConfig({ ...config, analysis: { ...config.analysis, apiKey: e.target.value } })
-                  }
-                  className="w-full px-3 py-1.5 rounded text-xs outline-none"
-                  style={inputStyle}
-                  placeholder="sk-ant-..."
-                />
-              </div>
-
-              <div className="space-y-1.5 pt-2">
-                <div className="text-xs" style={{ color: "var(--text-tertiary)" }}>features</div>
-                {Object.entries(config.analysis.features).map(([key, feature]) => (
-                  <label key={key} className="flex items-center gap-2 cursor-pointer text-xs">
-                    <input
-                      type="checkbox"
-                      checked={feature.enabled}
-                      onChange={(e) => {
-                        const features = { ...config.analysis.features };
-                        features[key] = { ...feature, enabled: e.target.checked };
-                        setConfig({ ...config, analysis: { ...config.analysis, features } });
-                      }}
-                    />
-                    <span style={{ color: "var(--text-secondary)" }}>
-                      {key.replace(/([A-Z])/g, " $1").toLowerCase().trim()}
-                    </span>
-                    <span className="ml-auto" style={{ color: "var(--text-tertiary)" }}>
-                      {feature.model.split("-").pop()}
-                    </span>
-                  </label>
+          {/* Database Stats */}
+          {stats && (
+            <section>
+              <h2 className="text-[14px] font-semibold mb-4">Database</h2>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                {[
+                  { label: "Sessions", value: stats.total_sessions },
+                  { label: "Exchanges", value: stats.total_exchanges.toLocaleString() },
+                  { label: "Projects", value: stats.projects },
+                  { label: "Size", value: `${stats.db_size_mb} MB` },
+                ].map(s => (
+                  <div key={s.label} className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
+                    <div className="text-[20px] font-semibold mb-0.5">{s.value}</div>
+                    <div className="text-[12px]" style={{ color: "var(--text-muted)" }}>{s.label}</div>
+                  </div>
                 ))}
               </div>
-            </div>
+            </section>
           )}
 
-          <div className="mt-4 flex items-center gap-3">
+          {/* AI Analysis */}
+          <section>
+            <div className="flex items-center gap-3 mb-4">
+              <h2 className="text-[14px] font-semibold">AI Analysis</h2>
+              <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: config.analysis.enabled ? "#10b98115" : "var(--bg-elevated)", color: config.analysis.enabled ? "#10b981" : "var(--text-muted)" }}>
+                {config.analysis.enabled ? "Enabled" : "Disabled"}
+              </span>
+            </div>
+
+            <div className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
+              {/* Enable toggle */}
+              <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: "var(--border)" }}>
+                <div>
+                  <div className="text-[14px] font-medium">Enable AI-powered analysis</div>
+                  <div className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>Uses Claude to generate titles, summaries, and extract decisions from your sessions</div>
+                </div>
+                <button
+                  onClick={() => setConfig({ ...config, analysis: { ...config.analysis, enabled: !config.analysis.enabled } })}
+                  className="relative w-10 h-5 rounded-full transition-colors"
+                  style={{ background: config.analysis.enabled ? "var(--accent)" : "var(--bg-active)" }}
+                >
+                  <div className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform" style={{ left: config.analysis.enabled ? 21 : 2 }} />
+                </button>
+              </div>
+
+              {config.analysis.enabled && (
+                <>
+                  {/* API Key */}
+                  <div className="px-5 py-4 border-b" style={{ borderColor: "var(--border)" }}>
+                    <label className="text-[13px] font-medium block mb-2">Anthropic API Key</label>
+                    <input
+                      type="password"
+                      value={config.analysis.apiKey}
+                      onChange={(e) => setConfig({ ...config, analysis: { ...config.analysis, apiKey: e.target.value } })}
+                      className="w-full px-4 py-2.5 rounded-lg text-[13px] outline-none transition-colors focus:border-[var(--accent)]"
+                      style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+                      placeholder="sk-ant-api03-..."
+                    />
+                    <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+                      Your key is stored locally at ~/.keddy/config.json
+                    </p>
+                  </div>
+
+                  {/* Features */}
+                  <div className="px-5 py-4">
+                    <div className="text-[13px] font-medium mb-3">Features</div>
+                    <div className="space-y-1">
+                      {Object.entries(config.analysis.features).map(([key, feature]) => {
+                        const info = FEATURE_INFO[key];
+                        if (!info) return null;
+                        return (
+                          <div key={key} className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-[var(--bg-hover)] transition-colors">
+                            <button
+                              onClick={() => {
+                                const features = { ...config.analysis.features };
+                                features[key] = { ...feature, enabled: !feature.enabled };
+                                setConfig({ ...config, analysis: { ...config.analysis, features } });
+                              }}
+                              className="relative w-8 h-4 rounded-full transition-colors shrink-0"
+                              style={{ background: feature.enabled ? "var(--accent)" : "var(--bg-active)" }}
+                            >
+                              <div className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform" style={{ left: feature.enabled ? 17 : 2 }} />
+                            </button>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[13px] font-medium">{info.name}</div>
+                              <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{info.description}</div>
+                            </div>
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0" style={{ background: "var(--bg-elevated)", color: "var(--text-muted)" }}>
+                              {info.tier === "fast" ? "Haiku" : "Sonnet"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+
+          {/* Save */}
+          <div className="flex items-center gap-3">
             <button
               onClick={handleSave}
               disabled={saving}
-              className="text-xs px-4 py-1.5 rounded transition-colors"
-              style={{
-                background: "var(--accent)",
-                color: "white",
-                opacity: saving ? 0.5 : 1,
-              }}
+              className="text-[13px] font-medium px-6 py-2.5 rounded-lg transition-all"
+              style={{ background: "var(--accent)", color: "white", opacity: saving ? 0.5 : 1 }}
             >
-              {saving ? "saving..." : "save"}
+              {saving ? "Saving..." : "Save Changes"}
             </button>
-            {saved && (
-              <span className="text-xs" style={{ color: "#34d399" }}>saved</span>
-            )}
+            {saved && <span className="text-[13px] font-medium" style={{ color: "#10b981" }}>Saved successfully</span>}
           </div>
         </div>
       </div>
