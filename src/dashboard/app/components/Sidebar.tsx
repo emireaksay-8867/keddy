@@ -63,7 +63,7 @@ export function Sidebar() {
         {personalRepos.length > 0 && (
           <div className="mt-4">
             <div className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-              Repositories
+              Personal
             </div>
             {personalRepos.map((p) => <Item key={p.project_path} active={isSelected(p)} onClick={() => select(p)} label={p.repo} count={p.session_count} />)}
           </div>
