@@ -1,14 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router";
 import { getSession, getSessionExchanges } from "../lib/api.js";
 import { SEGMENT_COLORS, SEGMENT_LABELS } from "../lib/constants.js";
 import { ContentPanel } from "../components/ContentPanel.js";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { SessionDetail as SessionDetailType, Exchange, Segment, Milestone, Plan, CompactionEvent } from "../lib/types.js";
 
 // ── Helpers ────────────────────────────────────────────────────
 function fmtTime(d: string) { return new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+function fmtShortTime(d: string) { return new Date(d).toLocaleString("en-US", { hour: "numeric", minute: "2-digit" }); }
 function fmtDuration(a: string, b: string | null) {
   if (!b) return "";
   const m = Math.floor((new Date(b).getTime() - new Date(a).getTime()) / 60000);
@@ -19,76 +18,102 @@ function safeJson<T>(s: string, d: T): T { try { return JSON.parse(s); } catch {
 function trunc(s: string, n: number) { return s.length > n ? s.substring(0, n) + "..." : s; }
 function toolSummary(input: string) { try { const o = JSON.parse(input); return o.file_path || o.command || o.pattern || o.query || input.substring(0, 60); } catch { return input.substring(0, 60); } }
 
-type PanelContent = { title: string; content: string; subtitle?: string } | null;
+/** Strip noise from displayed text */
+function cleanText(text: string): { cleaned: string; wasInterrupted: boolean } {
+  let wasInterrupted = false;
+  let cleaned = text;
 
-// ── Transcript ─────────────────────────────────────────────────
-function TranscriptView({ exchanges, openPanel }: { exchanges: Exchange[]; openPanel: (t: string, c: string, s?: string) => void }) {
+  // Detect interrupts
+  if (/\[Request interrupted by user\]/.test(cleaned) || /\[Request interrupted by user for tool use\]/.test(cleaned)) {
+    wasInterrupted = true;
+    cleaned = cleaned.replace(/\[Request interrupted by user(?:\s+for tool use)?\]/g, "").trim();
+  }
+
+  // Strip XML noise tags
+  cleaned = cleaned.replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, "");
+  cleaned = cleaned.replace(/<task-notification>[\s\S]*?<\/task-notification>/g, "");
+  cleaned = cleaned.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "");
+
+  return { cleaned: cleaned.trim(), wasInterrupted };
+}
+
+type PanelContent = { title: string; content: string; subtitle?: string; exchanges?: Exchange[] } | null;
+
+// ── Chat Bubble Transcript ──────────────────────────────────────
+function ChatTranscriptView({ exchanges, openPanel }: { exchanges: Exchange[]; openPanel: (t: string, c: string, s?: string) => void }) {
   if (!exchanges.length) return <div className="p-12 text-center text-sm" style={{ color: "var(--text-muted)" }}>No exchanges</div>;
   return (
-    <div className="divide-y" style={{ borderColor: "var(--border)" }}>
-      {exchanges.map((ex) => <ExchangeRow key={ex.id} ex={ex} openPanel={openPanel} />)}
+    <div className="chat-transcript py-4 px-4 space-y-1">
+      {exchanges.map((ex) => <ChatExchangeRow key={ex.id} ex={ex} openPanel={openPanel} />)}
     </div>
   );
 }
 
-function ExchangeRow({ ex, openPanel }: { ex: Exchange; openPanel: (t: string, c: string, s?: string) => void }) {
+function ChatExchangeRow({ ex, openPanel }: { ex: Exchange; openPanel: (t: string, c: string, s?: string) => void }) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const tools = ex.tool_calls || [];
-  const longPrompt = ex.user_prompt.length > 280;
-  const longResponse = (ex.assistant_response || "").length > 400;
-  const hasMarkdown = /^#{1,6}\s|^\*\*|^-\s|```/m.test(ex.assistant_response || "");
+
+  const { cleaned: userText, wasInterrupted: userInterrupted } = cleanText(ex.user_prompt);
+  const { cleaned: claudeText, wasInterrupted: claudeInterrupted } = cleanText(ex.assistant_response || "");
+  const isInterrupted = !!ex.is_interrupt || userInterrupted || claudeInterrupted;
+
+  const longPrompt = userText.length > 300;
+  const longResponse = claudeText.length > 300;
 
   return (
     <div id={`exchange-${ex.exchange_index}`} className="scroll-mt-16 animate-in">
+      {/* Compaction divider */}
       {!!ex.is_compact_summary && (
-        <div className="flex items-center gap-3 px-6 py-2">
+        <div className="flex items-center gap-3 px-2 py-2 my-2">
           <div className="h-px flex-1" style={{ background: "var(--border-bright)" }} />
           <span className="text-[11px] font-medium" style={{ color: SEGMENT_COLORS.exploring }}>Context Compacted</span>
           <div className="h-px flex-1" style={{ background: "var(--border-bright)" }} />
         </div>
       )}
 
-      {/* User */}
-      {ex.user_prompt && !ex.is_compact_summary && (
-        <div className="px-6 py-4" style={{ background: "var(--user-bg)" }}>
-          <div className="max-w-3xl flex gap-3">
-            <div className="shrink-0 mt-0.5 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold" style={{ background: "var(--user-accent)", color: "white" }}>Y</div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[13px] font-semibold">You</span>
-                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>#{ex.exchange_index}</span>
-                {!!ex.is_interrupt && <span className="text-[11px] font-medium px-1.5 py-0.5 rounded" style={{ background: `${SEGMENT_COLORS.pivot}15`, color: SEGMENT_COLORS.pivot }}>interrupted</span>}
-              </div>
-              <div className="text-[13px] leading-[1.7]">
-                {longPrompt ? (
-                  <><span>{trunc(ex.user_prompt, 280)}</span>{" "}<button onClick={() => openPanel("Your Message", ex.user_prompt, `Exchange #${ex.exchange_index}`)} className="text-[12px] font-medium hover:underline" style={{ color: "var(--accent)" }}>Show full →</button></>
-                ) : <pre className="whitespace-pre-wrap font-[inherit]">{ex.user_prompt}</pre>}
-              </div>
+      {/* User message — right-aligned bubble */}
+      {userText && !ex.is_compact_summary && (
+        <div className="flex justify-end mb-2">
+          <div className="chat-bubble-user max-w-[75%]">
+            <div className="rounded-2xl rounded-br-md px-4 py-3" style={{ background: "var(--user-bubble-bg)" }}>
+              {longPrompt ? (
+                <div className="text-[13px] leading-[1.7]" style={{ color: "var(--text-primary)" }}>
+                  <span>{trunc(userText, 300)}</span>{" "}
+                  <button onClick={() => openPanel("Your Message", ex.user_prompt, `Exchange #${ex.exchange_index}`)} className="text-[12px] font-medium hover:underline" style={{ color: "var(--accent-hover)" }}>Show more</button>
+                </div>
+              ) : (
+                <pre className="text-[13px] leading-[1.7] whitespace-pre-wrap font-[inherit]" style={{ color: "var(--text-primary)" }}>{userText}</pre>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-1 px-1">
+              <span className="text-[10px] tabular-nums" style={{ color: "var(--text-muted)" }}>#{ex.exchange_index}</span>
+              {ex.timestamp && <span className="text-[10px] tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtShortTime(ex.timestamp)}</span>}
+              {isInterrupted && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{ background: `${SEGMENT_COLORS.pivot}15`, color: SEGMENT_COLORS.pivot }}>interrupted</span>}
             </div>
           </div>
         </div>
       )}
 
-      {/* Tools */}
+      {/* Tool calls — compact chips */}
       {tools.length > 0 && (
-        <div className="px-6 py-2 border-y" style={{ borderColor: "var(--border)", background: "var(--bg-root)" }}>
-          <div className="max-w-3xl ml-10">
-            <button onClick={() => setToolsOpen(!toolsOpen)} className="text-[12px] flex items-center gap-1.5 py-0.5 hover:text-[var(--text-primary)] transition-colors" style={{ color: "var(--text-tertiary)" }}>
-              <span className="text-[10px]">{toolsOpen ? "▾" : "▸"}</span>
-              <span className="font-medium">{tools.length} tool {tools.length === 1 ? "call" : "calls"}</span>
-              <span className="font-mono opacity-60 text-[11px]">{[...new Set(tools.map((t) => t.tool_name))].join(", ")}</span>
+        <div className="flex justify-start mb-2 ml-8">
+          <div className="max-w-[75%]">
+            <button onClick={() => setToolsOpen(!toolsOpen)} className="text-[11px] flex items-center gap-1.5 py-1 px-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors" style={{ color: "var(--text-tertiary)" }}>
+              <span className="text-[9px]">{toolsOpen ? "▾" : "▸"}</span>
+              <span className="font-medium">{tools.length} tool{tools.length !== 1 ? "s" : ""}</span>
+              <span className="font-mono opacity-60 text-[10px]">{[...new Set(tools.map((t) => t.tool_name))].slice(0, 4).join(", ")}{tools.length > 4 ? "..." : ""}</span>
             </button>
             {toolsOpen && (
-              <div className="mt-1.5 space-y-1">
+              <div className="mt-1 space-y-0.5">
                 {tools.map((tc) => (
                   <button key={tc.id} onClick={() => {
                     let c = `**Input:**\n\`\`\`json\n${(() => { try { return JSON.stringify(JSON.parse(tc.tool_input), null, 2); } catch { return tc.tool_input; } })()}\n\`\`\``;
                     if (tc.tool_result) c += `\n\n**Result:**\n\`\`\`\n${tc.tool_result.substring(0, 3000)}\n\`\`\``;
                     openPanel(tc.tool_name, c, tc.is_error ? "Error" : undefined);
-                  }} className="w-full text-left text-[12px] font-mono px-3 py-1.5 rounded flex items-center gap-2 hover:bg-[var(--bg-hover)] transition-colors" style={{ background: "var(--bg-elevated)" }}>
+                  }} className="w-full text-left text-[11px] font-mono px-2.5 py-1 rounded flex items-center gap-2 hover:bg-[var(--bg-hover)] transition-colors" style={{ background: "var(--bg-elevated)" }}>
                     <span className="font-semibold" style={{ color: tc.is_error ? SEGMENT_COLORS.debugging : "var(--accent)" }}>{tc.tool_name}</span>
                     <span className="truncate flex-1 opacity-50">{toolSummary(tc.tool_input)}</span>
-                    {!!tc.is_error && <span className="text-[10px] px-1 rounded" style={{ background: `${SEGMENT_COLORS.debugging}20`, color: SEGMENT_COLORS.debugging }}>err</span>}
+                    {!!tc.is_error && <span className="text-[9px] px-1 rounded" style={{ background: `${SEGMENT_COLORS.debugging}20`, color: SEGMENT_COLORS.debugging }}>err</span>}
                   </button>
                 ))}
               </div>
@@ -97,24 +122,19 @@ function ExchangeRow({ ex, openPanel }: { ex: Exchange; openPanel: (t: string, c
         </div>
       )}
 
-      {/* Claude */}
-      {ex.assistant_response && (
-        <div className="px-6 py-4">
-          <div className="max-w-3xl flex gap-3">
-            <div className="shrink-0 mt-0.5 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold" style={{ background: `${SEGMENT_COLORS.testing}20`, color: "var(--claude-accent)" }}>C</div>
+      {/* Claude message — left-aligned, no bubble, with sparkle icon */}
+      {claudeText && (
+        <div className="flex justify-start mb-3">
+          <div className="flex gap-2.5 max-w-[85%]">
+            <span className="shrink-0 mt-1 text-[16px] leading-none select-none" style={{ color: "var(--claude-accent)" }}>✦</span>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[13px] font-semibold" style={{ color: "var(--claude-accent)" }}>Claude</span>
-              </div>
               {longResponse ? (
                 <div className="text-[13px] leading-[1.7]" style={{ color: "var(--text-secondary)" }}>
-                  {trunc(ex.assistant_response, 400)}{" "}
-                  <button onClick={() => openPanel("Claude's Response", ex.assistant_response, `Exchange #${ex.exchange_index}`)} className="text-[12px] font-medium hover:underline" style={{ color: "var(--accent)" }}>Show full →</button>
+                  <span>{trunc(claudeText, 300)}</span>{" "}
+                  <button onClick={() => openPanel("Claude's Response", ex.assistant_response, `Exchange #${ex.exchange_index}`)} className="text-[12px] font-medium hover:underline" style={{ color: "var(--accent)" }}>Show more</button>
                 </div>
-              ) : hasMarkdown ? (
-                <div className="md-content text-[13px]"><Markdown remarkPlugins={[remarkGfm]}>{ex.assistant_response}</Markdown></div>
               ) : (
-                <pre className="text-[13px] leading-[1.7] whitespace-pre-wrap font-[inherit]" style={{ color: "var(--text-secondary)" }}>{ex.assistant_response}</pre>
+                <pre className="text-[13px] leading-[1.7] whitespace-pre-wrap font-[inherit]" style={{ color: "var(--text-secondary)" }}>{claudeText}</pre>
               )}
             </div>
           </div>
@@ -152,7 +172,7 @@ function PlanVersions({ plans, openPanel }: { plans: Plan[]; openPanel: (t: stri
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-[14px] font-semibold">Version {plan.version}</span>
                 <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ background: st.bg, color: st.fg }}>{st.label}</span>
-                <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View plan →</span>
+                <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View plan</span>
               </div>
               <p className="text-[13px] leading-relaxed" style={{ color: "var(--text-tertiary)" }}>{trunc(plan.plan_text, 150)}</p>
               {plan.user_feedback && <p className="text-[12px] mt-1 italic" style={{ color: "#ef4444" }}>"{trunc(plan.user_feedback, 80)}"</p>}
@@ -166,7 +186,6 @@ function PlanVersions({ plans, openPanel }: { plans: Plan[]; openPanel: (t: stri
 
 // ── Timeline ───────────────────────────────────────────────────
 
-// Milestone icons and labels
 const MS_CONFIG: Record<string, { icon: string; label: string; color: string }> = {
   commit: { icon: "●", label: "Commit", color: "#818cf8" },
   push: { icon: "↑", label: "Push", color: "#60a5fa" },
@@ -178,7 +197,7 @@ const MS_CONFIG: Record<string, { icon: string; label: string; color: string }> 
 
 function TimelineView({ segments, milestones, compactionEvents, exchanges, plans, openPanel }: {
   segments: Segment[]; milestones: Milestone[]; compactionEvents: CompactionEvent[]; exchanges: Exchange[]; plans: Plan[];
-  openPanel: (t: string, c: string, s?: string) => void;
+  openPanel: (t: string, c: string, s?: string, exs?: Exchange[]) => void;
 }) {
   // Build timeline items, grouping consecutive milestones
   type TI =
@@ -186,7 +205,6 @@ function TimelineView({ segments, milestones, compactionEvents, exchanges, plans
     | { kind: "milestones"; data: Milestone[]; idx: number }
     | { kind: "compaction"; data: CompactionEvent; idx: number };
 
-  // First, create raw sorted items
   const raw: Array<{ kind: "segment" | "milestone" | "compaction"; data: any; idx: number }> = [];
   segments.forEach((s) => raw.push({ kind: "segment", data: s, idx: s.exchange_index_start }));
   milestones.forEach((m) => raw.push({ kind: "milestone", data: m, idx: m.exchange_index }));
@@ -210,14 +228,23 @@ function TimelineView({ segments, milestones, compactionEvents, exchanges, plans
   }
   if (pendingMs.length > 0) items.push({ kind: "milestones", data: pendingMs, idx: pendingMs[0].exchange_index });
 
+  // Reverse for most-recent-first
+  const reversedItems = [...items].reverse();
+
+  // Helper to find the timestamp of an exchange index
+  const getTimestamp = (idx: number) => {
+    const ex = exchanges.find((e) => e.exchange_index === idx);
+    return ex?.timestamp ? fmtShortTime(ex.timestamp) : null;
+  };
+
   return (
     <div className="space-y-4 py-4">
       {plans.length > 0 && <PlanVersions plans={plans} openPanel={openPanel} />}
 
-      {items.length > 0 ? (
+      {reversedItems.length > 0 ? (
         <div className="relative pl-7">
           <div className="absolute left-[7px] top-3 bottom-3 w-px" style={{ background: "var(--border)" }} />
-          {items.map((item, i) => {
+          {reversedItems.map((item, i) => {
             if (item.kind === "segment") {
               const seg = item.data as Segment;
               const color = SEGMENT_COLORS[seg.segment_type] || "#555";
@@ -226,36 +253,28 @@ function TimelineView({ segments, milestones, compactionEvents, exchanges, plans
               const tools = safeJson<Record<string, number>>(seg.tool_counts || "{}", {});
               const segEx = exchanges.filter((e) => e.exchange_index >= seg.exchange_index_start && e.exchange_index <= seg.exchange_index_end);
               const range = seg.exchange_index_start === seg.exchange_index_end ? `#${seg.exchange_index_start}` : `#${seg.exchange_index_start}–${seg.exchange_index_end}`;
-
-              // Build panel content for this segment
-              const buildSegmentContent = () => {
-                let content = "";
-                for (const e of segEx) {
-                  content += `### Exchange #${e.exchange_index}\n\n`;
-                  content += `**You:** ${e.user_prompt}\n\n`;
-                  if (e.assistant_response) content += `**Claude:** ${e.assistant_response}\n\n`;
-                  if (e.tool_call_count > 0) content += `*${e.tool_call_count} tool calls*\n\n`;
-                  content += "---\n\n";
-                }
-                return content;
-              };
+              const timestamp = getTimestamp(seg.exchange_index_start);
 
               return (
                 <div key={`s${i}`} className="relative pb-4 animate-in" style={{ animationDelay: `${i * 20}ms` }}>
                   <div className="absolute -left-[20px] top-3 w-[9px] h-[9px] rounded-full" style={{ background: color }} />
-                  <button onClick={() => openPanel(`${label} — ${range}`, buildSegmentContent(), `${segEx.length} exchanges · ${Object.entries(tools).map(([k,v])=>`${v} ${k}`).join(", ")}`)}
+                  <button onClick={() => openPanel(`${label} — ${range}`, "", `${segEx.length} exchanges · ${Object.entries(tools).map(([k,v])=>`${v} ${k}`).join(", ")}`, segEx)}
                     className="w-full text-left rounded-lg border p-4 hover:border-[var(--border-bright)] transition-all group" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-[13px] font-semibold px-2.5 py-1 rounded-full" style={{ background: `${color}15`, color }}>{label}</span>
                       <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>{range} · {segEx.length} exchange{segEx.length !== 1 ? "s" : ""}</span>
-                      <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View details →</span>
+                      {timestamp && <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>{timestamp}</span>}
+                      <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View details</span>
                     </div>
-                    {segEx.slice(0, 3).map((e) => (
-                      <div key={e.id} className="text-[13px] rounded px-3 py-2 mb-1 truncate" style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}>
-                        {trunc(e.user_prompt, 100)}
-                        {e.tool_call_count > 0 && <span className="ml-2 text-[11px]" style={{ color: "var(--text-muted)" }}>({e.tool_call_count} tools)</span>}
-                      </div>
-                    ))}
+                    {segEx.slice(0, 3).map((e) => {
+                      const { cleaned } = cleanText(e.user_prompt);
+                      return (
+                        <div key={e.id} className="text-[13px] rounded px-3 py-2 mb-1 truncate" style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}>
+                          {trunc(cleaned, 100)}
+                          {e.tool_call_count > 0 && <span className="ml-2 text-[11px]" style={{ color: "var(--text-muted)" }}>({e.tool_call_count} tools)</span>}
+                        </div>
+                      );
+                    })}
                     {segEx.length > 3 && <span className="text-[12px] px-3 block mt-1" style={{ color: "var(--text-muted)" }}>+{segEx.length - 3} more exchanges</span>}
                     {files.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
@@ -270,30 +289,28 @@ function TimelineView({ segments, milestones, compactionEvents, exchanges, plans
 
             if (item.kind === "milestones") {
               const group = item.data as Milestone[];
-              // Summarize the group
               const summary = new Map<string, number>();
               for (const m of group) {
-                const key = m.milestone_type;
-                summary.set(key, (summary.get(key) || 0) + 1);
+                summary.set(m.milestone_type, (summary.get(m.milestone_type) || 0) + 1);
               }
+              const timestamp = getTimestamp(group[0].exchange_index);
 
               return (
                 <div key={`mg${i}`} className="relative pb-3 animate-in" style={{ animationDelay: `${i * 20}ms` }}>
                   <div className="absolute -left-[20px] top-2 w-[5px] h-[5px] rounded-full" style={{ background: "var(--accent)" }} />
                   <div className="rounded-lg border p-3" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
-                    {/* Summary badges */}
                     <div className="flex flex-wrap gap-2 mb-2">
                       {Array.from(summary.entries()).map(([type, count]) => {
                         const cfg = MS_CONFIG[type] || { icon: "·", label: type, color: "#888" };
                         return (
                           <span key={type} className="text-[12px] font-medium px-2 py-0.5 rounded-full flex items-center gap-1.5" style={{ background: `${cfg.color}12`, color: cfg.color }}>
                             <span>{cfg.icon}</span>
-                            {count > 1 ? `${count}× ${cfg.label}` : cfg.label}
+                            {count > 1 ? `${count}x ${cfg.label}` : cfg.label}
                           </span>
                         );
                       })}
+                      {timestamp && <span className="text-[11px] tabular-nums ml-auto self-center" style={{ color: "var(--text-muted)" }}>{timestamp}</span>}
                     </div>
-                    {/* Individual items — collapsed if > 4 */}
                     <MilestoneList milestones={group} openPanel={openPanel} />
                   </div>
                 </div>
@@ -302,12 +319,14 @@ function TimelineView({ segments, milestones, compactionEvents, exchanges, plans
 
             // compaction
             const ce = item.data as CompactionEvent;
+            const ceTimestamp = ce.timestamp ? fmtShortTime(ce.timestamp) : null;
             return (
               <div key={`c${i}`} className="relative pb-3">
                 <div className="absolute -left-[20px] top-2 w-[5px] h-[5px] rounded-full" style={{ background: SEGMENT_COLORS.exploring }} />
                 <div className="flex items-center gap-3 py-1">
                   <div className="h-px flex-1" style={{ background: SEGMENT_COLORS.exploring + "30" }} />
-                  <span className="text-[12px] font-medium" style={{ color: SEGMENT_COLORS.exploring }}>Context compacted ({ce.exchanges_before} → {ce.exchanges_after} exchanges)</span>
+                  <span className="text-[12px] font-medium" style={{ color: SEGMENT_COLORS.exploring }}>Context compacted ({ce.exchanges_before} → {ce.exchanges_after})</span>
+                  {ceTimestamp && <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>{ceTimestamp}</span>}
                   <div className="h-px flex-1" style={{ background: SEGMENT_COLORS.exploring + "30" }} />
                 </div>
               </div>
@@ -345,6 +364,58 @@ function MilestoneList({ milestones, openPanel }: { milestones: Milestone[]; ope
   );
 }
 
+// ── Chat Bubble Panel Content ──────────────────────────────────
+function ChatBubblePanelContent({ exchanges }: { exchanges: Exchange[] }) {
+  return (
+    <div className="chat-transcript space-y-1">
+      {exchanges.map((ex) => {
+        const { cleaned: userText, wasInterrupted: userInt } = cleanText(ex.user_prompt);
+        const { cleaned: claudeText, wasInterrupted: claudeInt } = cleanText(ex.assistant_response || "");
+        const isInterrupted = !!ex.is_interrupt || userInt || claudeInt;
+
+        return (
+          <div key={ex.id} className="mb-3">
+            {/* User bubble */}
+            {userText && !ex.is_compact_summary && (
+              <div className="flex justify-end mb-2">
+                <div className="max-w-[80%]">
+                  <div className="rounded-2xl rounded-br-md px-4 py-3" style={{ background: "var(--user-bubble-bg)" }}>
+                    <pre className="text-[13px] leading-[1.7] whitespace-pre-wrap font-[inherit]" style={{ color: "var(--text-primary)" }}>{userText}</pre>
+                  </div>
+                  <div className="flex items-center justify-end gap-2 mt-1 px-1">
+                    <span className="text-[10px] tabular-nums" style={{ color: "var(--text-muted)" }}>#{ex.exchange_index}</span>
+                    {ex.timestamp && <span className="text-[10px] tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtShortTime(ex.timestamp)}</span>}
+                    {isInterrupted && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{ background: `${SEGMENT_COLORS.pivot}15`, color: SEGMENT_COLORS.pivot }}>interrupted</span>}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Tool calls */}
+            {(ex.tool_calls || []).length > 0 && (
+              <div className="flex justify-start mb-2 ml-8">
+                <span className="text-[11px] font-mono px-2 py-1 rounded-lg" style={{ color: "var(--text-muted)", background: "var(--bg-elevated)" }}>
+                  {(ex.tool_calls || []).length} tool{(ex.tool_calls || []).length !== 1 ? "s" : ""}: {[...new Set((ex.tool_calls || []).map((t) => t.tool_name))].slice(0, 3).join(", ")}
+                </span>
+              </div>
+            )}
+
+            {/* Claude response */}
+            {claudeText && (
+              <div className="flex justify-start mb-2">
+                <div className="flex gap-2.5 max-w-[85%]">
+                  <span className="shrink-0 mt-1 text-[16px] leading-none select-none" style={{ color: "var(--claude-accent)" }}>✦</span>
+                  <pre className="text-[13px] leading-[1.7] whitespace-pre-wrap font-[inherit] flex-1 min-w-0" style={{ color: "var(--text-secondary)" }}>{claudeText}</pre>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Main Component ─────────────────────────────────────────────
 export function SessionDetail() {
   const { id } = useParams();
@@ -354,16 +425,28 @@ export function SessionDetail() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"timeline" | "transcript">("timeline");
   const [panel, setPanel] = useState<PanelContent>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
+  const fetchData = useCallback((isInitial = false) => {
     if (!id) return;
-    setLoading(true); setTab("timeline");
+    if (isInitial) { setLoading(true); setTab("timeline"); }
     Promise.all([getSession(id) as Promise<SessionDetailType>, getSessionExchanges(id, true) as Promise<Exchange[]>])
       .then(([s, e]) => { setSession(s); setExchanges(e); })
-      .catch(console.error).finally(() => setLoading(false));
+      .catch(console.error).finally(() => { if (isInitial) setLoading(false); });
   }, [id]);
 
-  const openPanel = (title: string, content: string, subtitle?: string) => setPanel({ title, content, subtitle });
+  // Initial fetch
+  useEffect(() => {
+    fetchData(true);
+  }, [fetchData]);
+
+  // 15-second polling for auto-refresh
+  useEffect(() => {
+    pollRef.current = setInterval(() => fetchData(false), 15000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [fetchData]);
+
+  const openPanel = (title: string, content: string, subtitle?: string, exs?: Exchange[]) => setPanel({ title, content, subtitle, exchanges: exs });
 
   if (loading) return <div className="p-8 text-sm" style={{ color: "var(--text-muted)" }}>Loading...</div>;
   if (!session) return <div className="p-8 text-sm" style={{ color: "var(--text-muted)" }}>Session not found</div>;
@@ -401,11 +484,19 @@ export function SessionDetail() {
         {tab === "timeline" ? (
           <div className="px-6"><TimelineView segments={session.segments} milestones={session.milestones} compactionEvents={session.compaction_events} exchanges={exchanges} plans={session.plans} openPanel={openPanel} /></div>
         ) : (
-          <TranscriptView exchanges={exchanges} openPanel={openPanel} />
+          <ChatTranscriptView exchanges={exchanges} openPanel={openPanel} />
         )}
       </div>
 
-      {panel && <ContentPanel title={panel.title} content={panel.content} subtitle={panel.subtitle} onClose={() => setPanel(null)} />}
+      {panel && (
+        <ContentPanel
+          title={panel.title}
+          content={panel.content}
+          subtitle={panel.subtitle}
+          onClose={() => setPanel(null)}
+          chatExchanges={panel.exchanges}
+        />
+      )}
     </div>
   );
 }

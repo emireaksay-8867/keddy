@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link } from "react-router";
 import { useAppContext } from "../App.js";
 import { getSessions } from "../lib/api.js";
@@ -109,20 +109,50 @@ export function Sessions() {
   const [loading, setLoading] = useState(true);
   const [visibleCount, setVisibleCount] = useState(50);
   const [localSearch, setLocalSearch] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [updateAgo, setUpdateAgo] = useState("");
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    setLoading(true);
+  const fetchSessions = useCallback((isInitial = false) => {
+    if (isInitial) setLoading(true);
     const params: Record<string, string | number> = { days: 365, limit: 500 };
     if (selectedProject) params.project = selectedProject;
     if (searchQuery) params.q = searchQuery;
     getSessions(params as any)
       .then((data) => {
         setSessions(data as SessionListItem[]);
-        setVisibleCount(50);
+        if (isInitial) setVisibleCount(50);
+        setLastUpdated(new Date());
       })
       .catch(console.error)
-      .finally(() => setLoading(false));
+      .finally(() => { if (isInitial) setLoading(false); });
   }, [selectedProject, searchQuery]);
+
+  // Initial fetch + refetch on filter changes
+  useEffect(() => {
+    fetchSessions(true);
+  }, [fetchSessions]);
+
+  // 30-second polling
+  useEffect(() => {
+    intervalRef.current = setInterval(() => fetchSessions(false), 30000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [fetchSessions]);
+
+  // Update "Updated X ago" text every 5 seconds
+  useEffect(() => {
+    const tick = () => {
+      if (!lastUpdated) return;
+      const secs = Math.floor((Date.now() - lastUpdated.getTime()) / 1000);
+      if (secs < 5) setUpdateAgo("Updated just now");
+      else if (secs < 60) setUpdateAgo(`Updated ${secs}s ago`);
+      else setUpdateAgo(`Updated ${Math.floor(secs / 60)}m ago`);
+    };
+    tick();
+    tickRef.current = setInterval(tick, 5000);
+    return () => { if (tickRef.current) clearInterval(tickRef.current); };
+  }, [lastUpdated]);
 
   const filtered = useMemo(() => {
     if (!localSearch) return sessions;
@@ -175,6 +205,11 @@ export function Sessions() {
         <span className="text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>
           {filtered.length} sessions
         </span>
+        {updateAgo && (
+          <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+            {updateAgo}
+          </span>
+        )}
         <div className="flex-1" />
         <input
           type="text"
