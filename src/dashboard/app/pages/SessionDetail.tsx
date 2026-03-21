@@ -300,18 +300,19 @@ function TimelineView({ session, exchanges, openPanel }: {
                       <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View conversation →</span>
                     </div>
 
-                    {/* Exchange previews */}
+                    {/* Exchange previews — skip empty ones */}
                     <div className="space-y-2">
-                      {segEx.slice(0, 3).map(e => {
+                      {segEx.slice(0, 5).map(e => {
                         const { cleaned } = cleanText(e.user_prompt);
+                        if (!cleaned) return null;
                         return (
                           <div key={e.id} className="text-[13px] rounded-lg px-4 py-2.5" style={{ background: "var(--bg-elevated)" }}>
-                            <span style={{ color: "var(--text-primary)" }}>{trunc(cleaned, 120)}</span>
+                            <span style={{ color: "var(--text-primary)" }}>{trunc(cleaned, 150)}</span>
                             {e.tool_call_count > 0 && <span className="ml-2 text-[11px]" style={{ color: "var(--text-muted)" }}>· {e.tool_call_count} tools</span>}
                           </div>
                         );
-                      })}
-                      {segEx.length > 3 && <span className="text-[12px] px-4 block" style={{ color: "var(--text-muted)" }}>+{segEx.length - 3} more</span>}
+                      }).filter(Boolean)}
+                      {segEx.length > 5 && <span className="text-[12px] px-4 block" style={{ color: "var(--text-muted)" }}>+{segEx.length - 5} more</span>}
                     </div>
 
                     {/* Files & tools */}
