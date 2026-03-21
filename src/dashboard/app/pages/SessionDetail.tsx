@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { getSession, getSessionExchanges } from "../lib/api.js";
 import { SEGMENT_COLORS, SEGMENT_LABELS } from "../lib/constants.js";
 import { ContentPanel } from "../components/ContentPanel.js";
@@ -32,6 +34,12 @@ function cleanText(text: string): { cleaned: string; wasInterrupted: boolean } {
   cleaned = cleaned.replace(/<bash-input>[\s\S]*?<\/bash-input>/g, "");
   cleaned = cleaned.replace(/<bash-stdout>[\s\S]*?<\/bash-stdout>/g, "");
   cleaned = cleaned.replace(/<bash-stderr>[\s\S]*?<\/bash-stderr>/g, "");
+  // Strip image references with local paths
+  cleaned = cleaned.replace(/\[Image:\s*source:\s*\/var\/folders\/[^\]]*\]/g, "(attached image)");
+  // Strip /private/tmp/claude-501/... paths — show just the filename
+  cleaned = cleaned.replace(/\/private\/tmp\/claude-\d+\/[^\s)]*\/([^\s/)]+)/g, "$1");
+  // Strip "Read the output file to retrieve the result: /private/tmp/..."
+  cleaned = cleaned.replace(/Read the output file to retrieve the result:\s*\/private\/tmp\/[^\s]*/g, "(reading agent output)");
   return { cleaned: cleaned.trim(), wasInterrupted };
 }
 
@@ -60,8 +68,9 @@ function ExchangeBubble({ ex, openPanel }: { ex: Exchange; openPanel: (t: string
   const { cleaned: userText, wasInterrupted: userInt } = cleanText(ex.user_prompt);
   const { cleaned: claudeText, wasInterrupted: claudeInt } = cleanText(ex.assistant_response || "");
   const isInterrupted = !!ex.is_interrupt || userInt || claudeInt;
-  // Show much more text before truncating
-  const PREVIEW_LEN = 1200;
+  // Different preview lengths: user messages are shorter, Claude responses longer
+  const USER_PREVIEW_LEN = 1200;
+  const CLAUDE_PREVIEW_LEN = 2000;
 
   return (
     <div id={`exchange-${ex.exchange_index}`} className="scroll-mt-16">
@@ -79,9 +88,9 @@ function ExchangeBubble({ ex, openPanel }: { ex: Exchange; openPanel: (t: string
           <div className="max-w-[78%]">
             <div className="rounded-2xl rounded-br-sm px-5 py-3.5" style={{ background: "var(--user-bubble-bg)" }}>
               <div className="text-[14px] leading-[1.75]" style={{ color: "var(--text-primary)" }}>
-                {userText.length > PREVIEW_LEN ? (
+                {userText.length > USER_PREVIEW_LEN ? (
                   <>
-                    <pre className="whitespace-pre-wrap font-[inherit]">{userText.substring(0, PREVIEW_LEN)}</pre>
+                    <pre className="whitespace-pre-wrap font-[inherit]">{userText.substring(0, USER_PREVIEW_LEN)}</pre>
                     <button onClick={() => openPanel("Your Message", ex.user_prompt, `Exchange #${ex.exchange_index}`)} className="text-[13px] font-medium hover:underline mt-2 block" style={{ color: "var(--accent-hover)" }}>
                       Show full message ({Math.ceil(userText.length / 1000)}k chars)
                     </button>
@@ -132,13 +141,17 @@ function ExchangeBubble({ ex, openPanel }: { ex: Exchange; openPanel: (t: string
           <div className="flex gap-3 max-w-[85%]">
             <div className="shrink-0 mt-1"><ClaudeIcon size={20} /></div>
             <div className="flex-1 min-w-0 text-[14px] leading-[1.8]" style={{ color: "var(--text-secondary)" }}>
-              {claudeText.length > PREVIEW_LEN ? (
+              {claudeText.length > CLAUDE_PREVIEW_LEN ? (
                 <>
-                  <pre className="whitespace-pre-wrap font-[inherit]">{claudeText.substring(0, PREVIEW_LEN)}</pre>
+                  <pre className="whitespace-pre-wrap font-[inherit]">{claudeText.substring(0, CLAUDE_PREVIEW_LEN)}</pre>
                   <button onClick={() => openPanel("Claude's Response", ex.assistant_response, `Exchange #${ex.exchange_index}`)} className="text-[13px] font-medium hover:underline mt-2 block" style={{ color: "var(--accent)" }}>
                     Show full response ({Math.ceil(claudeText.length / 1000)}k chars)
                   </button>
                 </>
+              ) : /^#{1,6}\s|^\*\*|^-\s|^\d+\.\s|```/m.test(claudeText) ? (
+                <div className="md-content">
+                  <Markdown remarkPlugins={[remarkGfm]}>{claudeText}</Markdown>
+                </div>
               ) : (
                 <pre className="whitespace-pre-wrap font-[inherit]">{claudeText}</pre>
               )}
@@ -271,8 +284,8 @@ function TimelineView({ session, exchanges, openPanel }: {
 
       {/* Timeline */}
       {items.length > 0 && (
-        <div className="relative pl-8">
-          <div className="absolute left-[8px] top-4 bottom-4 w-px" style={{ background: "var(--border)" }} />
+        <div className="relative pl-9">
+          <div className="absolute left-[14px] top-4 bottom-4 w-px" style={{ background: "var(--border)" }} />
           {items.map((item, i) => {
             if (item.kind === "segment") {
               const seg = item.data as Segment;
@@ -282,11 +295,13 @@ function TimelineView({ session, exchanges, openPanel }: {
               const tools = safeJson<Record<string, number>>(seg.tool_counts || "{}", {});
               const segEx = exchanges.filter(e => e.exchange_index >= seg.exchange_index_start && e.exchange_index <= seg.exchange_index_end);
               const ts = segEx[0]?.timestamp;
+              const tsEnd = segEx[segEx.length - 1]?.timestamp;
+              const segDur = ts && tsEnd ? fmtDuration(ts, tsEnd) : "";
               const range = seg.exchange_index_start === seg.exchange_index_end ? `#${seg.exchange_index_start}` : `#${seg.exchange_index_start}–${seg.exchange_index_end}`;
 
               return (
                 <div key={`s${i}`} className="relative pb-5">
-                  <div className="absolute -left-[21px] top-[14px] w-[10px] h-[10px] rounded-full border-2" style={{ borderColor: color, background: color }} />
+                  <div className="absolute left-[-27px] top-[18px] w-[10px] h-[10px] rounded-full" style={{ background: color }} />
                   <button
                     onClick={() => openPanel(`${label} — ${range}`, "", `${segEx.length} exchanges`, segEx)}
                     className="w-full text-left rounded-xl border p-5 hover:border-[var(--border-bright)] transition-all group"
@@ -295,8 +310,7 @@ function TimelineView({ session, exchanges, openPanel }: {
                     {/* Header */}
                     <div className="flex items-center gap-2 mb-3">
                       <span className="text-[13px] font-semibold px-3 py-1 rounded-full" style={{ background: `${color}12`, color }}>{label}</span>
-                      <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>{segEx.length} exchange{segEx.length !== 1 ? "s" : ""}</span>
-                      {ts && <span className="text-[12px] tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtShortTime(ts)}</span>}
+                      <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>{segEx.length} exchange{segEx.length !== 1 ? "s" : ""}{segDur ? ` · ${segDur}` : ""}{ts ? ` · ${fmtShortTime(ts)}` : ""}</span>
                       <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View conversation →</span>
                     </div>
 
@@ -319,11 +333,12 @@ function TimelineView({ session, exchanges, openPanel }: {
                     {(files.length > 0 || Object.keys(tools).length > 0) && (
                       <div className="flex items-center flex-wrap gap-1.5 mt-3 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
                         {Object.entries(tools).slice(0, 5).map(([k, v]) => (
-                          <span key={k} className="text-[11px] font-mono px-2 py-0.5 rounded" style={{ background: "var(--bg-elevated)", color: "var(--text-muted)" }}>{k}:{v}</span>
+                          <span key={k} className="text-[11px] font-mono px-2 py-0.5 rounded" style={{ background: "var(--bg-elevated)", color: "var(--text-muted)" }}>{v} {k}</span>
                         ))}
-                        {files.slice(0, 4).map(f => (
-                          <span key={f} className="text-[11px] font-mono px-2 py-0.5 rounded" style={{ background: "var(--bg-elevated)", color: "var(--text-muted)" }}>{f.split("/").pop()}</span>
-                        ))}
+                        {files.slice(0, 4).map(f => {
+                          const basename = f.split("/").pop() || f;
+                          return <span key={f} className="text-[11px] font-mono px-2 py-0.5 rounded" style={{ background: "var(--bg-elevated)", color: "var(--text-muted)" }}>{basename}</span>;
+                        })}
                         {files.length > 4 && <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>+{files.length - 4}</span>}
                       </div>
                     )}
@@ -337,15 +352,39 @@ function TimelineView({ session, exchanges, openPanel }: {
               const summary = new Map<string, number>();
               for (const m of group) summary.set(m.milestone_type, (summary.get(m.milestone_type) || 0) + 1);
 
+              const handleMilestoneClick = () => {
+                const grouped = new Map<string, Milestone[]>();
+                for (const m of group) {
+                  const list = grouped.get(m.milestone_type) || [];
+                  list.push(m);
+                  grouped.set(m.milestone_type, list);
+                }
+                const lines: string[] = [];
+                for (const [type, ms] of grouped.entries()) {
+                  const cfg = MS_CONFIG[type] || { icon: "·", label: type, color: "#888" };
+                  lines.push(`## ${cfg.icon} ${cfg.label}${ms.length > 1 ? ` (${ms.length})` : ""}\n`);
+                  for (const m of ms) {
+                    lines.push(`- ${m.description}`);
+                  }
+                  lines.push("");
+                }
+                openPanel("Milestones", lines.join("\n"), `${group.length} milestone${group.length !== 1 ? "s" : ""}`);
+              };
+
               return (
                 <div key={`mg${i}`} className="relative pb-4">
-                  <div className="absolute -left-[21px] top-[10px] w-[6px] h-[6px] rounded-full" style={{ background: "var(--accent)" }} />
-                  <div className="rounded-xl border p-4" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
+                  <div className="absolute left-[-25px] top-[12px] w-[6px] h-[6px] rounded-full" style={{ background: "var(--accent)" }} />
+                  <button
+                    onClick={handleMilestoneClick}
+                    className="w-full text-left rounded-xl border p-4 hover:border-[var(--border-bright)] transition-all group"
+                    style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}
+                  >
                     <div className="flex flex-wrap gap-2">
                       {Array.from(summary.entries()).map(([type, count]) => {
                         const cfg = MS_CONFIG[type] || { icon: "·", label: type, color: "#888" };
                         return <span key={type} className="text-[12px] font-medium px-2.5 py-1 rounded-full" style={{ background: `${cfg.color}10`, color: cfg.color }}>{cfg.icon} {count > 1 ? `${count}× ${cfg.label}` : cfg.label}</span>;
                       })}
+                      <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity self-center" style={{ color: "var(--accent)" }}>View details →</span>
                     </div>
                     {group.length <= 4 && (
                       <div className="mt-2 space-y-0.5">
@@ -354,7 +393,7 @@ function TimelineView({ session, exchanges, openPanel }: {
                         ))}
                       </div>
                     )}
-                  </div>
+                  </button>
                 </div>
               );
             }
@@ -363,7 +402,7 @@ function TimelineView({ session, exchanges, openPanel }: {
             const ce = item.data as CompactionEvent;
             return (
               <div key={`c${i}`} className="relative pb-4">
-                <div className="absolute -left-[21px] top-[10px] w-[6px] h-[6px] rounded-full" style={{ background: SEGMENT_COLORS.exploring }} />
+                <div className="absolute left-[-25px] top-[12px] w-[6px] h-[6px] rounded-full" style={{ background: SEGMENT_COLORS.exploring }} />
                 <div className="flex items-center gap-3 py-2">
                   <div className="h-px flex-1" style={{ background: SEGMENT_COLORS.exploring + "25" }} />
                   <span className="text-[12px] font-medium" style={{ color: SEGMENT_COLORS.exploring }}>Context compacted ({ce.exchanges_before} → {ce.exchanges_after})</span>

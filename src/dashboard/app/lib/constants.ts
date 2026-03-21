@@ -10,14 +10,14 @@ export const SEGMENT_COLORS: Record<string, string> = {
 };
 
 export const SEGMENT_LABELS: Record<string, string> = {
-  planning: "plan",
-  implementing: "impl",
-  testing: "test",
-  debugging: "debug",
-  exploring: "explore",
-  discussion: "discuss",
-  pivot: "pivot",
-  deploying: "deploy",
+  planning: "Planning",
+  implementing: "Implementation",
+  testing: "Testing",
+  debugging: "Debugging",
+  exploring: "Exploration",
+  discussion: "Discussion",
+  pivot: "Direction Change",
+  deploying: "Deployment",
 };
 
 export const MILESTONE_ICONS: Record<string, string> = {
