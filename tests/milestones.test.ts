@@ -102,6 +102,6 @@ describe("extractMilestones", () => {
     ]);
     const pr = milestones.find((m) => m.milestone_type === "pr");
     expect(pr).toBeDefined();
-    expect(pr!.description).toContain("pull request");
+    expect(pr!.description).toContain("PR:");
   });
 });

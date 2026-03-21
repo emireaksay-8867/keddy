@@ -71,9 +71,15 @@ export async function runImport(): Promise<void> {
     try {
       const transcript = parseTranscript(filePath);
 
+      // Use filename as session ID fallback (filenames are UUIDs)
       if (!transcript.session_id) {
-        skipped++;
-        continue;
+        const fileName = filePath.split("/").pop()?.replace(".jsonl", "") || "";
+        if (fileName && /^[0-9a-f]{8}-/.test(fileName)) {
+          transcript.session_id = fileName;
+        } else {
+          skipped++;
+          continue;
+        }
       }
 
       // Check if already imported
@@ -175,6 +181,9 @@ export async function runImport(): Promise<void> {
       process.stdout.write(`\r  Imported: ${imported} | Skipped: ${skipped} | Errors: ${errors}`);
     } catch (err) {
       errors++;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack?.split("\n").slice(0, 4).join("\n") : "";
+      process.stderr.write(`\n  Error importing ${filePath.split("/").pop()}: ${errMsg.substring(0, 100)}\n  ${stack}\n`);
       process.stdout.write(`\r  Imported: ${imported} | Skipped: ${skipped} | Errors: ${errors}`);
     }
   }
