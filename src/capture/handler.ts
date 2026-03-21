@@ -1,4 +1,4 @@
-import { initDb, closeDb } from "../db/index.js";
+import { initDb, closeDb, getDb } from "../db/index.js";
 import {
   upsertSession,
   updateSessionEnd,
@@ -204,6 +204,12 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
 
     // Mark session ended
     updateSessionEnd(input.session_id, transcript.exchanges.length, transcript.ended_at ?? undefined);
+
+    // Clear previous analysis (SessionEnd does a full re-parse, so old data should be replaced)
+    const db = getDb();
+    db.prepare("DELETE FROM segments WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);
 
     // Run programmatic analysis
     const plans = extractPlans(transcript.exchanges);

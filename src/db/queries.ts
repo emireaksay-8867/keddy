@@ -323,7 +323,7 @@ export function insertSegment(data: {
   const db = getDb();
   const id = randomUUID();
   db.prepare(`
-    INSERT INTO segments (id, session_id, segment_type, exchange_index_start, exchange_index_end, files_touched, tool_counts, summary)
+    INSERT OR IGNORE INTO segments (id, session_id, segment_type, exchange_index_start, exchange_index_end, files_touched, tool_counts, summary)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,

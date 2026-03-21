@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { initDb, closeDb } from "../db/index.js";
+import { initDb, closeDb, getDb } from "../db/index.js";
 import {
   upsertSession,
   insertExchange,
@@ -131,6 +131,12 @@ export async function runImport(): Promise<void> {
           });
         }
       }
+
+      // Clear any previous analysis data (prevents duplicates on re-import)
+      const db = getDb();
+      db.prepare("DELETE FROM segments WHERE session_id = ?").run(session.id);
+      db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
+      db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);
 
       // Run analysis
       const plans = extractPlans(transcript.exchanges);

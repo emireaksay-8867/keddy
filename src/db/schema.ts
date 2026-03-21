@@ -68,7 +68,8 @@ export function initSchema(db: Database.Database): void {
       exchange_index_end INTEGER NOT NULL,
       files_touched TEXT NOT NULL DEFAULT '[]',
       tool_counts TEXT NOT NULL DEFAULT '{}',
-      summary TEXT
+      summary TEXT,
+      UNIQUE(session_id, exchange_index_start, exchange_index_end)
     );
 
     CREATE TABLE IF NOT EXISTS milestones (
