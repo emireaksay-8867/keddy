@@ -1,0 +1,15 @@
+{"type":"summary","sessionId":"sess-004","cwd":"/Users/test/project","gitBranch":"feature/api","version":"1.0.0","timestamp":"2024-01-04T00:00:00Z"}
+{"type":"user","message":{"role":"user","content":"Build a REST API for user management"},"timestamp":"2024-01-04T00:01:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll start building the REST API."},{"type":"tool_use","name":"Write","input":{"file_path":"/Users/test/project/src/api/users.ts","content":"export function getUsers() {}"},"id":"tool-030"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-030","content":"File written"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"[Request interrupted by user]"}]}}
+{"type":"user","message":{"role":"user","content":"Stop, I want to use GraphQL instead"},"timestamp":"2024-01-04T00:02:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Got it! Let me switch to GraphQL. I'll create a GraphQL schema instead."},{"type":"tool_use","name":"Write","input":{"file_path":"/Users/test/project/src/graphql/schema.ts","content":"export const typeDefs = `type User { id: ID! }`"},"id":"tool-031"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-031","content":"File written"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I've created the GraphQL schema. Let me add resolvers next."},{"type":"tool_use","name":"Write","input":{"file_path":"/Users/test/project/src/graphql/resolvers.ts","content":"export const resolvers = { Query: { users: () => [] } }"},"id":"tool-032"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-032","content":"File written"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"GraphQL resolvers created."}]}}
+{"type":"user","message":{"role":"user","content":"Now add a mutation for creating users"},"timestamp":"2024-01-04T00:03:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Adding the createUser mutation."},{"type":"tool_use","name":"Edit","input":{"file_path":"/Users/test/project/src/graphql/schema.ts","old_string":"type User { id: ID! }","new_string":"type User { id: ID!, name: String! }\ntype Mutation { createUser(name: String!): User! }"},"id":"tool-033"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-033","content":"File edited"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Mutation added to the schema."}]}}

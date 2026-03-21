@@ -1,0 +1,16 @@
+{"type":"summary","sessionId":"sess-003","cwd":"/Users/test/project","gitBranch":"main","version":"1.0.0","timestamp":"2024-01-03T00:00:00Z"}
+{"type":"user","message":{"role":"user","content":"Help me refactor the database module"},"timestamp":"2024-01-03T00:01:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll help you refactor the database module. Let me start by reading the current code."},{"type":"tool_use","name":"Read","input":{"file_path":"/Users/test/project/src/db.ts"},"id":"tool-020"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-020","content":"export function query() { ... }"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I see the current structure. Let me refactor it."}]}}
+{"type":"user","message":{"role":"user","content":"Continue with the migration layer"},"timestamp":"2024-01-03T00:02:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Working on the migration layer now."},{"type":"tool_use","name":"Write","input":{"file_path":"/Users/test/project/src/migrations.ts","content":"export function migrate() {}"},"id":"tool-021"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-021","content":"File written"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Migration layer created."}]}}
+{"type":"system","subtype":"compact_boundary","compactMetadata":{"exchangesBefore":20,"exchangesAfter":5}}
+{"type":"user","message":{"role":"user","content":"Here is the context from our conversation so far..."},"isCompactSummary":true,"timestamp":"2024-01-03T00:10:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Thanks for the context. Let me continue with the refactoring."}]}}
+{"type":"user","message":{"role":"user","content":"Now add connection pooling"},"timestamp":"2024-01-03T00:11:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll add connection pooling to the database module."},{"type":"tool_use","name":"Edit","input":{"file_path":"/Users/test/project/src/db.ts","old_string":"export function query()","new_string":"const pool = createPool();\nexport function query()"},"id":"tool-022"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-022","content":"File edited"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Connection pooling added successfully."}]}}

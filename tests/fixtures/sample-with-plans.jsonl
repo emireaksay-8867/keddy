@@ -1,0 +1,19 @@
+{"type":"summary","sessionId":"sess-002","cwd":"/Users/test/project","gitBranch":"feature/auth","version":"1.0.0","timestamp":"2024-01-02T00:00:00Z"}
+{"type":"user","message":{"role":"user","content":"I need to add authentication to the app"},"timestamp":"2024-01-02T00:01:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Let me create a plan for this."},{"type":"tool_use","name":"EnterPlanMode","input":{},"id":"tool-010"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-010","content":"Entered plan mode"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Here's my plan."},{"type":"tool_use","name":"ExitPlanMode","input":{"plan":"## Auth Implementation Plan v1\n1. Add JWT middleware\n2. Create login endpoint\n3. Add user model\n4. Write tests"},"id":"tool-011"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-011","content":"User has approved your plan"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Great, the plan is approved. Let me start implementing."}]}}
+{"type":"user","message":{"role":"user","content":"Actually, I want OAuth instead of JWT"},"timestamp":"2024-01-02T00:02:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Let me revise the plan."},{"type":"tool_use","name":"EnterPlanMode","input":{},"id":"tool-012"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-012","content":"Entered plan mode"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Here's the revised plan."},{"type":"tool_use","name":"ExitPlanMode","input":{"plan":"## Auth Implementation Plan v2\n1. Set up OAuth 2.0 provider\n2. Add Google/GitHub login\n3. Create session management\n4. Write integration tests"},"id":"tool-013"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-013","content":"The user doesn't want to proceed with this plan. Here's what the user said:\nI want to use Passport.js instead of raw OAuth"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Got it, let me revise to use Passport.js."}]}}
+{"type":"user","message":{"role":"user","content":"Yes, use Passport.js with Google and GitHub strategies"},"timestamp":"2024-01-02T00:03:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Let me create the final plan."},{"type":"tool_use","name":"EnterPlanMode","input":{},"id":"tool-014"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-014","content":"Entered plan mode"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Here's the final plan."},{"type":"tool_use","name":"ExitPlanMode","input":{"plan":"## Auth Implementation Plan v3\n1. Install passport, passport-google-oauth20, passport-github2\n2. Configure Passport strategies\n3. Add session middleware\n4. Create auth routes\n5. Write tests"},"id":"tool-015"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-015","content":"User has approved your plan"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Plan approved. Let me start implementing with Passport.js."}]}}

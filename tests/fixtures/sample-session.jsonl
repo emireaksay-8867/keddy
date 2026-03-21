@@ -1,0 +1,21 @@
+{"type":"summary","sessionId":"sess-001","cwd":"/Users/test/project","gitBranch":"main","version":"1.0.0","slug":"test-project","timestamp":"2024-01-01T00:00:00Z"}
+{"type":"user","message":{"role":"user","content":"Read the package.json file"},"timestamp":"2024-01-01T00:01:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll read the file for you."},{"type":"tool_use","name":"Read","input":{"file_path":"/Users/test/project/package.json"},"id":"tool-001"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-001","content":"{ \"name\": \"test\" }"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"The package.json contains a project named 'test'."}]}}
+{"type":"user","message":{"role":"user","content":"Now edit the description field"},"timestamp":"2024-01-01T00:02:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll update the description."},{"type":"tool_use","name":"Edit","input":{"file_path":"/Users/test/project/package.json","old_string":"\"name\": \"test\"","new_string":"\"name\": \"test\",\n  \"description\": \"A test project\""},"id":"tool-002"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-002","content":"File edited successfully"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done! I've added the description field."}]}}
+{"type":"user","message":{"role":"user","content":"Run the tests"},"timestamp":"2024-01-01T00:03:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Running the tests now."},{"type":"tool_use","name":"Bash","input":{"command":"npm test"},"id":"tool-003"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-003","content":"All 5 tests passed"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"All 5 tests passed successfully!"}]}}
+{"type":"user","message":{"role":"user","content":"Commit the changes"},"timestamp":"2024-01-01T00:04:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll commit the changes."},{"type":"tool_use","name":"Bash","input":{"command":"git commit -m 'feat: add description to package.json'"},"id":"tool-004"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-004","content":"[main abc1234] feat: add description to package.json"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Changes committed successfully."}]}}
+{"type":"user","message":{"role":"user","content":"Push to remote"},"timestamp":"2024-01-01T00:05:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Pushing now."},{"type":"tool_use","name":"Bash","input":{"command":"git push origin main"},"id":"tool-005"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-005","content":"Everything up-to-date"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Pushed to origin/main."}]}}

@@ -1,0 +1,156 @@
+import type Database from "better-sqlite3";
+
+export function initSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT UNIQUE NOT NULL,
+      project_path TEXT NOT NULL,
+      git_branch TEXT,
+      title TEXT,
+      slug TEXT,
+      claude_version TEXT,
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      ended_at TEXT,
+      exchange_count INTEGER NOT NULL DEFAULT 0,
+      compaction_count INTEGER NOT NULL DEFAULT 0,
+      jsonl_path TEXT,
+      forked_from TEXT,
+      metadata TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS exchanges (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      exchange_index INTEGER NOT NULL,
+      user_prompt TEXT NOT NULL,
+      assistant_response TEXT NOT NULL DEFAULT '',
+      tool_call_count INTEGER NOT NULL DEFAULT 0,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+      duration_ms INTEGER,
+      is_interrupt INTEGER NOT NULL DEFAULT 0,
+      is_compact_summary INTEGER NOT NULL DEFAULT 0,
+      metadata TEXT,
+      UNIQUE(session_id, exchange_index)
+    );
+
+    CREATE TABLE IF NOT EXISTS tool_calls (
+      id TEXT PRIMARY KEY,
+      exchange_id TEXT NOT NULL REFERENCES exchanges(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      tool_name TEXT NOT NULL,
+      tool_input TEXT NOT NULL DEFAULT '{}',
+      tool_result TEXT,
+      tool_use_id TEXT NOT NULL,
+      is_error INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS plans (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      version INTEGER NOT NULL,
+      plan_text TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'drafted',
+      user_feedback TEXT,
+      exchange_index_start INTEGER NOT NULL,
+      exchange_index_end INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(session_id, version)
+    );
+
+    CREATE TABLE IF NOT EXISTS segments (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      segment_type TEXT NOT NULL,
+      exchange_index_start INTEGER NOT NULL,
+      exchange_index_end INTEGER NOT NULL,
+      files_touched TEXT NOT NULL DEFAULT '[]',
+      tool_counts TEXT NOT NULL DEFAULT '{}',
+      summary TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS milestones (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      milestone_type TEXT NOT NULL,
+      exchange_index INTEGER NOT NULL,
+      description TEXT NOT NULL,
+      metadata TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS decisions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      exchange_index INTEGER NOT NULL,
+      decision_text TEXT NOT NULL,
+      context TEXT,
+      alternatives TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS compaction_events (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      exchange_index INTEGER NOT NULL,
+      summary TEXT,
+      exchanges_before INTEGER NOT NULL DEFAULT 0,
+      exchanges_after INTEGER NOT NULL DEFAULT 0,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS session_links (
+      id TEXT PRIMARY KEY,
+      source_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      target_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      link_type TEXT NOT NULL,
+      shared_files TEXT NOT NULL DEFAULT '[]'
+    );
+
+    -- Indexes
+    CREATE INDEX IF NOT EXISTS idx_exchanges_session ON exchanges(session_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_exchange ON tool_calls(exchange_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
+    CREATE INDEX IF NOT EXISTS idx_plans_session ON plans(session_id);
+    CREATE INDEX IF NOT EXISTS idx_segments_session ON segments(session_id);
+    CREATE INDEX IF NOT EXISTS idx_milestones_session ON milestones(session_id);
+    CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id);
+    CREATE INDEX IF NOT EXISTS idx_compaction_events_session ON compaction_events(session_id);
+    CREATE INDEX IF NOT EXISTS idx_session_links_source ON session_links(source_session_id);
+    CREATE INDEX IF NOT EXISTS idx_session_links_target ON session_links(target_session_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_path);
+    CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
+  `);
+
+  // FTS5 virtual table for full-text search
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS exchanges_fts USING fts5(
+      user_prompt,
+      content=exchanges,
+      content_rowid=rowid
+    );
+  `);
+
+  // Triggers to keep FTS in sync
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_insert AFTER INSERT ON exchanges BEGIN
+      INSERT INTO exchanges_fts(rowid, user_prompt) VALUES (NEW.rowid, NEW.user_prompt);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_delete AFTER DELETE ON exchanges BEGIN
+      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_prompt) VALUES ('delete', OLD.rowid, OLD.user_prompt);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_update AFTER UPDATE ON exchanges BEGIN
+      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_prompt) VALUES ('delete', OLD.rowid, OLD.user_prompt);
+      INSERT INTO exchanges_fts(rowid, user_prompt) VALUES (NEW.rowid, NEW.user_prompt);
+    END;
+  `);
+
+  // Config table (key-value store)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+}
