@@ -127,6 +127,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
   const compactionBoundaries: number[] = [];
 
   let currentUserPrompt = "";
+  let currentAssistantText = "";
   let currentTimestamp = "";
   let currentIsCompactSummary = false;
   let pendingToolCalls: ParsedToolCall[] = [];
@@ -167,7 +168,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
         exchanges.push({
           index: exchangeIndex,
           user_prompt: currentUserPrompt,
-          assistant_response: "",
+          assistant_response: currentAssistantText,
           tool_calls: pendingToolCalls,
           timestamp: currentTimestamp,
           is_interrupt: false,
@@ -175,6 +176,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
         });
         exchangeIndex++;
         pendingToolCalls = [];
+        currentAssistantText = "";
       }
 
       currentUserPrompt = extractText(msgContent);
@@ -191,7 +193,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
         exchanges.push({
           index: exchangeIndex,
           user_prompt: currentUserPrompt,
-          assistant_response: "",
+          assistant_response: currentAssistantText,
           tool_calls: pendingToolCalls,
           timestamp: currentTimestamp,
           is_interrupt: false,
@@ -199,6 +201,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
         });
         exchangeIndex++;
         pendingToolCalls = [];
+        currentAssistantText = "";
       }
 
       currentUserPrompt = extractText(msgContent);
@@ -214,18 +217,20 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       const toolUses = extractToolUses(msgContent);
       const interrupt = isInterrupt(msgContent);
 
+      // Accumulate assistant text across multi-turn tool exchanges
+      if (assistantText) {
+        currentAssistantText += (currentAssistantText ? "\n" : "") + assistantText;
+      }
+
       // Collect tool calls from this assistant message
       pendingToolCalls.push(...toolUses);
 
-      // If we have a pending user prompt, check if this is a "final" assistant response
-      // (i.e., it doesn't end with tool_use that needs results)
-      // We only finalize the exchange when we see the next user text prompt or at EOF
-      // But if there are no tool uses, this is a final response
+      // If there are no tool uses, this is the final response — finalize exchange
       if (inExchange && toolUses.length === 0) {
         exchanges.push({
           index: exchangeIndex,
           user_prompt: currentUserPrompt,
-          assistant_response: assistantText,
+          assistant_response: currentAssistantText,
           tool_calls: [...pendingToolCalls],
           timestamp: currentTimestamp,
           is_interrupt: interrupt,
@@ -233,13 +238,14 @@ export function parseTranscript(filePath: string): ParsedTranscript {
         });
         exchangeIndex++;
         pendingToolCalls = [];
+        currentAssistantText = "";
         inExchange = false;
       } else if (inExchange && interrupt) {
         // Interrupted — finalize
         exchanges.push({
           index: exchangeIndex,
           user_prompt: currentUserPrompt,
-          assistant_response: assistantText,
+          assistant_response: currentAssistantText,
           tool_calls: [...pendingToolCalls],
           timestamp: currentTimestamp,
           is_interrupt: true,
@@ -247,6 +253,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
         });
         exchangeIndex++;
         pendingToolCalls = [];
+        currentAssistantText = "";
         inExchange = false;
       }
       // If there are tool uses, we wait for tool results + next assistant message
@@ -259,7 +266,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     exchanges.push({
       index: exchangeIndex,
       user_prompt: currentUserPrompt,
-      assistant_response: "",
+      assistant_response: currentAssistantText,
       tool_calls: pendingToolCalls,
       timestamp: currentTimestamp,
       is_interrupt: false,

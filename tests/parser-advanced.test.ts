@@ -81,6 +81,34 @@ describe("parseTranscript — forked sessions", () => {
   });
 });
 
+describe("parseTranscript — multi-turn assistant text accumulation", () => {
+  it("should accumulate assistant text from multiple assistant messages", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-multi-assistant.jsonl"));
+    expect(result.exchanges.length).toBe(1);
+
+    const exchange = result.exchanges[0];
+    // Should contain text from ALL three assistant messages
+    expect(exchange.assistant_response).toContain("Let me look at the login code first");
+    expect(exchange.assistant_response).toContain("I see the issue");
+    expect(exchange.assistant_response).toContain("login function has been fixed");
+  });
+
+  it("should have all tool calls from multi-turn exchange", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-multi-assistant.jsonl"));
+    const exchange = result.exchanges[0];
+    expect(exchange.tool_calls.length).toBe(2);
+    expect(exchange.tool_calls[0].name).toBe("Read");
+    expect(exchange.tool_calls[1].name).toBe("Edit");
+  });
+
+  it("should match tool results correctly in multi-turn exchange", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-multi-assistant.jsonl"));
+    const exchange = result.exchanges[0];
+    expect(exchange.tool_calls[0].result).toContain("return false");
+    expect(exchange.tool_calls[1].result).toBe("File edited");
+  });
+});
+
 describe("parseTranscript — malformed input handling", () => {
   let tmpDir: string;
 
