@@ -32,9 +32,12 @@ sessionsRoutes.get("/", (c) => {
     });
   } else {
     sessions = getRecentSessions(daysVal ?? 365, limitVal);
-    // Apply project filter
+    // Apply project filter — match exact path or by repo name (for merged projects)
     if (project) {
-      sessions = sessions.filter((s) => s.project_path === project);
+      sessions = sessions.filter((s) =>
+        s.project_path === project ||
+        s.project_path.includes(project.split("/").pop() || project)
+      );
     }
   }
 

@@ -3,7 +3,7 @@ import { getProjects } from "../../db/queries.js";
 
 export const projectsRoutes = new Hono();
 
-interface ProjectInfo {
+interface ProjectView {
   project_path: string;
   session_count: number;
   last_activity: string;
@@ -11,134 +11,131 @@ interface ProjectInfo {
   org: string;
   repo: string;
   short_path: string;
-  is_worktree: boolean;
-  worktree_branch: string | null;
 }
 
-// GET /api/projects
+// Known orgs — GitHub org folders that contain repos
+const KNOWN_ORGS = ["LIVAD-Technologies"];
+
+function parseProjectPath(projectPath: string): { org: string; repo: string } {
+  const parts = projectPath.split("/");
+
+  // Detect worktrees: .../worktrees/repo-name/branch
+  const worktreeIdx = parts.findIndex((s) => s === "worktrees");
+  if (worktreeIdx >= 0 && worktreeIdx + 1 < parts.length) {
+    return { org: "", repo: parts[worktreeIdx + 1] };
+  }
+
+  // Standard GitHub path: .../GitHub/[Org/]RepoName
+  const ghIdx = parts.indexOf("GitHub");
+  if (ghIdx >= 0) {
+    const after = parts.slice(ghIdx + 1).filter(Boolean);
+
+    if (after.length === 0) return { org: "", repo: "unknown" };
+
+    // Check if first component is a known org
+    if (after.length >= 2 && KNOWN_ORGS.includes(after[0])) {
+      return { org: after[0], repo: after[1] };
+    }
+
+    // Check if first component looks like an org (contains uppercase or "Technologies" etc)
+    if (after.length >= 2 && /[A-Z]/.test(after[0]) && after[0] !== after[0].toUpperCase()) {
+      // Mixed case like "LIVAD-Technologies" = org
+      return { org: after[0], repo: after[1] };
+    }
+
+    // Single component or personal repo
+    return { org: "", repo: after[0] };
+  }
+
+  // Fallback
+  return { org: "", repo: parts[parts.length - 1] || projectPath };
+}
+
+// Normalize repo names: merge corrupted paths (e.g. "redacts/v2" → "redacts-v2")
+function normalizeRepo(repo: string): string {
+  return repo;
+}
+
 projectsRoutes.get("/projects", (c) => {
   const raw = getProjects();
 
-  const projects: ProjectInfo[] = raw.map((p) => {
-    const path = p.project_path;
-    const parts = path.split("/");
-
-    // Detect worktrees: paths containing "worktrees" or ".superset/worktrees"
-    const worktreeIdx = parts.findIndex((s) => s === "worktrees");
-    if (worktreeIdx >= 0) {
-      // e.g. .superset/worktrees/livad-knowledge/branch-name
-      // or   .claude/worktrees/repo-name/branch
-      const repoName = parts[worktreeIdx + 1] || "unknown";
-      const branchName = parts.slice(worktreeIdx + 2).join("/") || null;
-      return {
-        ...p,
-        org: "",
-        repo: repoName,
-        short_path: branchName ? `${repoName}/${branchName}` : repoName,
-        is_worktree: true,
-        worktree_branch: branchName,
-      };
-    }
-
-    // Standard GitHub path: .../GitHub/OrgOrUser/RepoName
-    const ghIdx = parts.indexOf("GitHub");
-    if (ghIdx >= 0) {
-      const remaining = parts.slice(ghIdx + 1);
-      if (remaining.length >= 2) {
-        // org/repo pattern
-        return {
-          ...p,
-          org: remaining[0],
-          repo: remaining[1],
-          short_path: `${remaining[0]}/${remaining[1]}`,
-          is_worktree: false,
-          worktree_branch: null,
-        };
-      } else if (remaining.length === 1) {
-        return {
-          ...p,
-          org: "",
-          repo: remaining[0],
-          short_path: remaining[0],
-          is_worktree: false,
-          worktree_branch: null,
-        };
-      }
-    }
-
-    // Fallback: use last 2 path components
-    const repo = parts[parts.length - 1] || parts[parts.length - 2] || path;
-    return {
-      ...p,
-      org: "",
-      repo,
-      short_path: repo,
-      is_worktree: false,
-      worktree_branch: null,
-    };
+  // Parse and normalize all project paths
+  const parsed = raw.map((p) => {
+    const { org, repo } = parseProjectPath(p.project_path);
+    return { ...p, org, repo, short_path: org ? `${org}/${repo}` : repo };
   });
 
-  // Merge worktree sessions into their parent repo
-  const merged = new Map<string, ProjectInfo>();
-  const worktrees = new Map<string, ProjectInfo[]>();
+  // Merge projects: same repo name merges together, org version preferred
+  const merged = new Map<string, ProjectView>();
 
-  for (const p of projects) {
-    if (p.is_worktree) {
-      // Group worktrees under their repo name
-      const key = p.repo;
-      if (!worktrees.has(key)) worktrees.set(key, []);
-      worktrees.get(key)!.push(p);
+  // First pass: insert all with org (they're the canonical entries)
+  for (const p of parsed) {
+    if (!p.org) continue;
+    const key = p.repo.toLowerCase();
+    if (merged.has(key)) {
+      const existing = merged.get(key)!;
+      existing.session_count += p.session_count;
+      existing.exchange_count += p.exchange_count;
+      if (p.last_activity > existing.last_activity) existing.last_activity = p.last_activity;
     } else {
-      const key = p.short_path;
-      if (merged.has(key)) {
-        const existing = merged.get(key)!;
-        existing.session_count += p.session_count;
-        existing.exchange_count += p.exchange_count;
-        if (p.last_activity > existing.last_activity) {
-          existing.last_activity = p.last_activity;
-        }
-      } else {
-        merged.set(key, { ...p });
-      }
-    }
-  }
-
-  // Merge worktree counts into parent repos if they exist
-  for (const [repoName, wtProjects] of worktrees) {
-    const totalSessions = wtProjects.reduce((s, p) => s + p.session_count, 0);
-    const totalExchanges = wtProjects.reduce((s, p) => s + p.exchange_count, 0);
-    const lastActivity = wtProjects.reduce((a, p) => p.last_activity > a ? p.last_activity : a, "");
-
-    // Find parent repo
-    let parent: ProjectInfo | undefined;
-    for (const [, m] of merged) {
-      if (m.repo === repoName) {
-        parent = m;
-        break;
-      }
-    }
-
-    if (parent) {
-      parent.session_count += totalSessions;
-      parent.exchange_count += totalExchanges;
-      if (lastActivity > parent.last_activity) parent.last_activity = lastActivity;
-    } else {
-      // No parent found — create standalone entry
-      merged.set(repoName, {
-        project_path: wtProjects[0].project_path,
-        session_count: totalSessions,
-        exchange_count: totalExchanges,
-        last_activity: lastActivity,
-        org: "",
-        repo: repoName,
-        short_path: repoName,
-        is_worktree: true,
-        worktree_branch: null,
+      merged.set(key, {
+        project_path: p.project_path,
+        session_count: p.session_count,
+        last_activity: p.last_activity,
+        exchange_count: p.exchange_count,
+        org: p.org,
+        repo: p.repo,
+        short_path: p.short_path,
       });
     }
   }
 
-  // Sort by last activity
+  // Second pass: merge non-org projects — if repo name matches an org project, merge into it
+  for (const p of parsed) {
+    if (p.org) continue;
+    const key = p.repo.toLowerCase();
+    if (merged.has(key)) {
+      // Merge into existing org project
+      const existing = merged.get(key)!;
+      existing.session_count += p.session_count;
+      existing.exchange_count += p.exchange_count;
+      if (p.last_activity > existing.last_activity) existing.last_activity = p.last_activity;
+    } else {
+      // Standalone personal repo
+      merged.set(key, {
+        project_path: p.project_path,
+        session_count: p.session_count,
+        last_activity: p.last_activity,
+        exchange_count: p.exchange_count,
+        org: "",
+        repo: p.repo,
+        short_path: p.repo,
+      });
+    }
+  }
+
+  // Remove entries that are clearly fragments (single-word that match part of a larger repo)
+  // e.g. "LIVAD" (from corrupted "LIVAD-Technologies" path) or "teba" (from "teba-hq")
+  const repoNames = new Set(Array.from(merged.keys()));
+  for (const key of repoNames) {
+    const entry = merged.get(key)!;
+    // Check if this repo name is a prefix of another repo (like "livad" is prefix of "livad-agents")
+    // Only remove if it has few sessions and looks like a fragment
+    if (entry.session_count <= 5 && !entry.org) {
+      for (const otherKey of repoNames) {
+        if (otherKey !== key && otherKey.startsWith(key + "-")) {
+          // Merge into the longer name
+          const other = merged.get(otherKey)!;
+          other.session_count += entry.session_count;
+          other.exchange_count += entry.exchange_count;
+          if (entry.last_activity > other.last_activity) other.last_activity = entry.last_activity;
+          merged.delete(key);
+          break;
+        }
+      }
+    }
+  }
+
   const result = Array.from(merged.values()).sort(
     (a, b) => b.last_activity.localeCompare(a.last_activity),
   );
