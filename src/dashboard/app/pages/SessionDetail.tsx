@@ -799,12 +799,14 @@ export function SessionDetail() {
       {showAiSetup && (
         <>
           <div className="fixed inset-0 z-50" style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)" }} onClick={() => setShowAiSetup(false)} />
-          <div className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[440px] rounded-2xl border overflow-hidden slide-in" style={{ background: "var(--bg-surface)", borderColor: "var(--border)", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
-            <div className="px-6 pt-5 pb-4">
+          <div className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[480px] rounded-2xl border overflow-hidden slide-in" style={{ background: "var(--bg-surface)", borderColor: "var(--border)", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
+            <div className="px-6 pt-5 pb-3">
               <h3 className="text-[16px] font-semibold mb-1">Enable AI Analysis</h3>
-              <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>Enter your Anthropic API key to generate titles, summaries, and extract decisions.</p>
+              <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>Uses Claude to generate titles, summaries, and extract decisions from your sessions.</p>
             </div>
-            <div className="px-6 pb-4">
+
+            {/* API Key */}
+            <div className="px-6 pb-3">
               <label className="text-[13px] font-medium block mb-2">Anthropic API Key</label>
               <input
                 type="password"
@@ -821,8 +823,30 @@ export function SessionDetail() {
                   }
                 }}
               />
-              <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>Stored locally at ~/.keddy/config.json · Never sent to Keddy servers</p>
+              <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>Stored locally · Never sent to Keddy servers</p>
             </div>
+
+            {/* Features that will be enabled */}
+            <div className="px-6 pb-3">
+              <div className="text-[12px] font-medium mb-2" style={{ color: "var(--text-muted)" }}>Features included</div>
+              <div className="space-y-1.5 text-[12px]">
+                {[
+                  { name: "Session Titles", desc: "Descriptive titles for each session", model: "Haiku" },
+                  { name: "Segment Summaries", desc: "What happened in each timeline block", model: "Haiku" },
+                  { name: "Decision Extraction", desc: "Key technical decisions and rationale", model: "Haiku" },
+                  { name: "Plan Analysis", desc: "Analyze plan versions and evolution", model: "Sonnet" },
+                  { name: "Session Notes", desc: "Retrospective notes for sessions", model: "Sonnet" },
+                ].map(f => (
+                  <div key={f.name} className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: "var(--bg-elevated)" }}>
+                    <span style={{ color: "#10b981" }}>✓</span>
+                    <span className="flex-1" style={{ color: "var(--text-secondary)" }}>{f.name}</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ background: "var(--bg-root)", color: "var(--text-muted)" }}>{f.model}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>Configure individual features in Settings</p>
+            </div>
+
             <div className="px-6 pb-5 flex items-center gap-3">
               <button
                 id="ai-setup-save"
@@ -833,7 +857,6 @@ export function SessionDetail() {
                   try {
                     await updateConfig({ analysis: { enabled: true, provider: "anthropic", apiKey: aiKey } });
                     setShowAiSetup(false);
-                    // Now run the analysis
                     setAnalyzing(true);
                     await analyzeSession(id);
                     fetchData(false);

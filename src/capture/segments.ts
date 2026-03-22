@@ -35,7 +35,10 @@ function classifyExchange(exchange: ParsedExchange): SegmentType {
       return typeof tc.input === "string" ? tc.input : "";
     });
 
-  if (bashInputs.some((cmd) => DEPLOY_PATTERNS.some((p) => p.test(cmd)))) return "deploying";
+  // "Deploying" only if deployment IS the primary activity — not just a side push during implementation
+  const deployCommands = bashInputs.filter((cmd) => DEPLOY_PATTERNS.some((p) => p.test(cmd)));
+  const hasEditsCheck = toolNames.some((n) => EDIT_TOOLS.has(n));
+  if (deployCommands.length > 0 && !hasEditsCheck && toolCalls.length <= 5) return "deploying";
   if (bashInputs.some((cmd) => TEST_PATTERNS.some((p) => p.test(cmd)))) {
     const hasErrors = toolCalls.some((tc) => tc.is_error);
     return hasErrors ? "debugging" : "testing";

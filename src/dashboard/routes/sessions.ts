@@ -58,6 +58,7 @@ sessionsRoutes.get("/", (c) => {
       milestone_count: milestones.length,
       plans: plans.map((p) => ({ version: p.version, status: p.status })),
       has_ai: hasAiSummaries,
+      compaction_count: s.compaction_count,
     };
   });
 

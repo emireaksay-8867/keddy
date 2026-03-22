@@ -99,6 +99,7 @@ function SessionRow({ session }: { session: SessionListItem }) {
             {duration && <span>{duration}</span>}
             <span>{session.exchange_count} exchanges</span>
             {session.milestone_count > 0 && <span>{session.milestone_count} milestones</span>}
+            {session.compaction_count > 0 && <span>{session.compaction_count} compaction{session.compaction_count !== 1 ? "s" : ""}</span>}
           </div>
           {/* Flow badges — plans + key segment types */}
           {(flowBadges.length > 0 || segTypes.length > 1) && (

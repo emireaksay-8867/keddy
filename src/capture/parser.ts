@@ -160,7 +160,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       const meta = entry.compactMetadata as Record<string, unknown> | undefined;
       compactions.push({
         exchange_index: exchangeIndex,
-        summary: (entry as Record<string, unknown>).content as string || null,
+        summary: null, // Will be filled from the next isCompactSummary entry
         pre_tokens: (meta?.preTokens as number) || null,
       });
       continue;
@@ -197,6 +197,12 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       currentTimestamp = entry.timestamp || new Date().toISOString();
       currentIsCompactSummary = true;
       inExchange = true;
+
+      // Link this compact summary to the most recent compaction event
+      if (compactions.length > 0 && !compactions[compactions.length - 1].summary) {
+        compactions[compactions.length - 1].summary = currentUserPrompt;
+      }
+
       continue;
     }
 
