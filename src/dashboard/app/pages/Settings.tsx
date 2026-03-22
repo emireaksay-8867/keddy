@@ -37,14 +37,26 @@ export function Settings() {
 
   async function handleBulkAnalyze() {
     setAnalyzing(true);
-    setAnalyzeResult(null);
+    setAnalyzeResult("Starting analysis...");
+
+    // Poll status while processing
+    const pollInterval = setInterval(async () => {
+      try {
+        const status = await getAnalyzeStatus();
+        setAnalyzeStatus(status);
+        const done = (analyzeStatus?.needsTitle || 0) - (status.needsTitle || 0);
+        if (done > 0) setAnalyzeResult(`Processing... ${done} sessions analyzed so far`);
+      } catch {}
+    }, 3000);
+
     try {
       const result = await analyzeBulk(20) as any;
-      setAnalyzeResult(`Processed ${result.processed} sessions`);
-      // Refresh status
+      clearInterval(pollInterval);
+      setAnalyzeResult(`Done — ${result.processed} sessions analyzed`);
       const status = await getAnalyzeStatus();
       setAnalyzeStatus(status);
     } catch (e: any) {
+      clearInterval(pollInterval);
       setAnalyzeResult(`Error: ${e.message}`);
     } finally {
       setAnalyzing(false);
@@ -210,17 +222,31 @@ export function Settings() {
                     </div>
                   </div>
 
+                  {/* Progress bar */}
+                  {analyzeStatus.total > 0 && (
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between text-[11px] mb-1.5" style={{ color: "var(--text-muted)" }}>
+                        <span>Analysis progress</span>
+                        <span>{Math.round((analyzeStatus.analyzed / analyzeStatus.total) * 100)}%</span>
+                      </div>
+                      <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--bg-elevated)" }}>
+                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${(analyzeStatus.analyzed / analyzeStatus.total) * 100}%`, background: analyzeStatus.analyzed === analyzeStatus.total ? "#10b981" : "var(--accent)" }} />
+                      </div>
+                    </div>
+                  )}
+
                   {analyzeStatus.needsTitle > 0 && (
                     <div className="flex items-center gap-3">
                       <button
                         onClick={handleBulkAnalyze}
                         disabled={analyzing}
-                        className="text-[13px] font-medium px-5 py-2.5 rounded-lg transition-all"
+                        className="text-[13px] font-medium px-5 py-2.5 rounded-lg transition-all flex items-center gap-2"
                         style={{ background: analyzing ? "var(--bg-active)" : "var(--accent)", color: "white", opacity: analyzing ? 0.7 : 1 }}
                       >
+                        {analyzing && <span className="w-3.5 h-3.5 border-2 border-current rounded-full animate-spin" style={{ borderTopColor: "transparent" }} />}
                         {analyzing ? "Processing..." : `Analyze ${Math.min(analyzeStatus.needsTitle, 20)} sessions`}
                       </button>
-                      {analyzeResult && <span className="text-[13px]" style={{ color: "#10b981" }}>{analyzeResult}</span>}
+                      {analyzeResult && <span className="text-[13px]" style={{ color: analyzeResult.startsWith("Error") ? "#ef4444" : "#10b981" }}>{analyzeResult}</span>}
                     </div>
                   )}
 

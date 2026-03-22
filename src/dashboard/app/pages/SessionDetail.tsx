@@ -521,34 +521,69 @@ export function SessionDetail() {
           <span>{exchanges.length} exchanges</span>
           {session.milestones.length > 0 && <span>{session.milestones.length} milestones</span>}
           {session.plans.length > 0 && <span style={{ color: SEGMENT_COLORS.planning }}>{session.plans.length} plans</span>}
-          <button
-            onClick={async () => {
-              if (!id || analyzing) return;
-              // Check if AI is configured first
-              try {
-                const cfg = await getConfig() as any;
-                if (!cfg.analysis?.enabled || !cfg.analysis?.apiKey) {
-                  setAiKey(cfg.analysis?.apiKey || "");
-                  setShowAiSetup(true);
-                  return;
-                }
-                setAnalyzing(true);
-                await analyzeSession(id);
-                fetchData(false);
-              } catch (e: any) {
-                if (e.message?.includes("not enabled") || e.message?.includes("No API key")) {
-                  setShowAiSetup(true);
-                } else {
-                  alert(e.message || "Analysis failed");
-                }
-              } finally { setAnalyzing(false); }
-            }}
-            disabled={analyzing}
-            className="text-[11px] font-medium px-2.5 py-1 rounded-lg ml-2 transition-colors hover:bg-[var(--bg-hover)]"
-            style={{ color: analyzing ? "var(--text-muted)" : "var(--accent)", border: "1px solid var(--border)" }}
-          >
-            {analyzing ? "Analyzing..." : "✦ AI Analyze"}
-          </button>
+          {(() => {
+            const hasAiSummaries = session.segments.some(s => s.summary);
+            const isAiTitle = session.title && session.title.length < 80 && !session.title.startsWith("[") && !session.title.includes("implement the following") && !/^[a-f0-9-]{20,}$/.test(session.title);
+
+            if (analyzing) {
+              return (
+                <span className="text-[11px] font-medium px-2.5 py-1 rounded-lg ml-2 flex items-center gap-1.5" style={{ color: "var(--accent)", border: "1px solid var(--border)" }}>
+                  <span className="w-3 h-3 border-2 border-current rounded-full animate-spin" style={{ borderTopColor: "transparent" }} />
+                  Analyzing...
+                </span>
+              );
+            }
+
+            if (hasAiSummaries) {
+              return (
+                <button
+                  onClick={async () => {
+                    if (!id) return;
+                    try {
+                      const cfg = await getConfig() as any;
+                      if (!cfg.analysis?.enabled || !cfg.analysis?.apiKey) { setShowAiSetup(true); return; }
+                      setAnalyzing(true);
+                      await analyzeSession(id);
+                      fetchData(false);
+                    } catch { setShowAiSetup(true); }
+                    finally { setAnalyzing(false); }
+                  }}
+                  className="text-[11px] font-medium px-2.5 py-1 rounded-lg ml-2 transition-colors hover:bg-[var(--bg-hover)] flex items-center gap-1"
+                  style={{ color: "#10b981", border: "1px solid var(--border)" }}
+                >
+                  ✓ AI Analyzed
+                  <span className="opacity-50 ml-0.5">· Re-run</span>
+                </button>
+              );
+            }
+
+            return (
+              <button
+                onClick={async () => {
+                  if (!id) return;
+                  try {
+                    const cfg = await getConfig() as any;
+                    if (!cfg.analysis?.enabled || !cfg.analysis?.apiKey) {
+                      setAiKey(cfg.analysis?.apiKey || "");
+                      setShowAiSetup(true);
+                      return;
+                    }
+                    setAnalyzing(true);
+                    await analyzeSession(id);
+                    fetchData(false);
+                  } catch (e: any) {
+                    if (e.message?.includes("not enabled") || e.message?.includes("No API key")) {
+                      setShowAiSetup(true);
+                    }
+                  } finally { setAnalyzing(false); }
+                }}
+                className="text-[11px] font-medium px-2.5 py-1 rounded-lg ml-2 transition-colors hover:bg-[var(--bg-hover)]"
+                style={{ color: "var(--accent)", border: "1px solid var(--border)" }}
+              >
+                ✦ AI Analyze
+              </button>
+            );
+          })()}
         </div>
       </div>
 

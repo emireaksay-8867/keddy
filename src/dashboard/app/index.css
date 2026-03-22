@@ -58,6 +58,11 @@ code, pre, .font-mono {
 }
 .slide-in { animation: slideIn 0.2s ease-out forwards; }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.animate-spin { animation: spin 0.7s linear infinite; }
+
 /* Markdown rendered content */
 .md-content h1 { font-size: 1.25rem; font-weight: 600; margin: 1rem 0 0.5rem; }
 .md-content h2 { font-size: 1.1rem; font-weight: 600; margin: 1rem 0 0.5rem; color: var(--text-primary); }
