@@ -33,16 +33,24 @@ interface ContentPanelProps {
   onClose: () => void;
   subtitle?: string;
   chatExchanges?: Exchange[];
+  onPrev?: () => void;
+  onNext?: () => void;
+  prevLabel?: string;
+  nextLabel?: string;
 }
 
-export function ContentPanel({ title, content, onClose, subtitle, chatExchanges }: ContentPanelProps) {
+export function ContentPanel({ title, content, onClose, subtitle, chatExchanges, onPrev, onNext, prevLabel, nextLabel }: ContentPanelProps) {
   const [mode, setMode] = useState<"rendered" | "raw">("rendered");
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowLeft" && onPrev) onPrev();
+      if (e.key === "ArrowRight" && onNext) onNext();
+    };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
+  }, [onClose, onPrev, onNext]);
 
   const hasMarkdown = /^#{1,6}\s|^\*\*|^-\s|^\d+\.\s|```/m.test(content);
   const showTranscript = chatExchanges && chatExchanges.length > 0;
@@ -50,13 +58,14 @@ export function ContentPanel({ title, content, onClose, subtitle, chatExchanges 
   return (
     <>
       <div className="fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)" }} onClick={onClose} />
-      <div className="fixed top-0 right-0 bottom-0 z-50 flex flex-col slide-in" style={{ width: "min(900px, 85vw)", background: "var(--bg-root)", borderLeft: "1px solid var(--border)", boxShadow: "-12px 0 40px rgba(0,0,0,0.4)" }}>
+      <div className="fixed top-0 right-0 bottom-0 z-50 flex flex-col slide-in" style={{ width: "min(960px, 88vw)", background: "var(--bg-root)", borderLeft: "1px solid var(--border)", boxShadow: "-12px 0 40px rgba(0,0,0,0.4)" }}>
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-3.5 border-b shrink-0" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
-          <div className="flex-1 min-w-0">
-            <h3 className="text-[15px] font-semibold truncate">{title}</h3>
-            {subtitle && <p className="text-[12px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{subtitle}</p>}
-          </div>
+        <div className="px-6 py-3.5 border-b shrink-0" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
+          <div className="flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <h3 className="text-[15px] font-semibold">{title}</h3>
+              {subtitle && <p className="text-[12px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{subtitle}</p>}
+            </div>
           {!showTranscript && hasMarkdown && (
             <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: "var(--border)" }}>
               <button onClick={() => setMode("rendered")} className="px-3 py-1 text-[12px] transition-colors" style={{ background: mode === "rendered" ? "var(--accent)" : "transparent", color: mode === "rendered" ? "white" : "var(--text-tertiary)" }}>Rendered</button>
@@ -64,6 +73,30 @@ export function ContentPanel({ title, content, onClose, subtitle, chatExchanges 
             </div>
           )}
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-lg" style={{ color: "var(--text-tertiary)" }}>×</button>
+          </div>
+
+          {/* Navigation between segments */}
+          {(onPrev || onNext) && (
+            <div className="flex items-center gap-2 px-6 pt-2">
+              <button
+                onClick={onPrev}
+                disabled={!onPrev}
+                className="text-[12px] flex items-center gap-1 px-3 py-1.5 rounded-lg transition-colors hover:bg-[var(--bg-hover)]"
+                style={{ color: onPrev ? "var(--text-secondary)" : "var(--text-muted)", opacity: onPrev ? 1 : 0.3 }}
+              >
+                ← {prevLabel || "Previous"}
+              </button>
+              <div className="flex-1" />
+              <button
+                onClick={onNext}
+                disabled={!onNext}
+                className="text-[12px] flex items-center gap-1 px-3 py-1.5 rounded-lg transition-colors hover:bg-[var(--bg-hover)]"
+                style={{ color: onNext ? "var(--text-secondary)" : "var(--text-muted)", opacity: onNext ? 1 : 0.3 }}
+              >
+                {nextLabel || "Next"} →
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Content */}

@@ -11,6 +11,18 @@ import type { SessionDetail as SessionDetailType, Exchange, Segment, Milestone, 
 // ── Helpers ────────────────────────────────────────────────────
 function fmtTime(d: string) { return new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
 function fmtShortTime(d: string) { return new Date(d).toLocaleString("en-US", { hour: "numeric", minute: "2-digit" }); }
+function fmtRelative(d: string) {
+  const ms = Date.now() - new Date(d).getTime();
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d ago`;
+  return fmtTime(d);
+}
 function fmtDuration(a: string, b: string | null) {
   if (!b) return "";
   const m = Math.floor((new Date(b).getTime() - new Date(a).getTime()) / 60000);
@@ -43,7 +55,16 @@ function cleanText(text: string): { cleaned: string; wasInterrupted: boolean } {
   return { cleaned: cleaned.trim(), wasInterrupted };
 }
 
-type PanelContent = { title: string; content: string; subtitle?: string; exchanges?: Exchange[] } | null;
+type PanelContent = {
+  title: string;
+  content: string;
+  subtitle?: string;
+  exchanges?: Exchange[];
+  onPrev?: () => void;
+  onNext?: () => void;
+  prevLabel?: string;
+  nextLabel?: string;
+} | null;
 
 const STATUS_STYLE: Record<string, { bg: string; fg: string; label: string }> = {
   approved: { bg: "#10b98115", fg: "#10b981", label: "Approved" },
@@ -239,7 +260,7 @@ function TranscriptView({ exchanges, segments, milestones, compactionEvents, ope
 // ── Summary Timeline View (overview cards) ─────────────────────
 function TimelineView({ session, exchanges, openPanel }: {
   session: SessionDetailType; exchanges: Exchange[];
-  openPanel: (t: string, c: string, s?: string, exs?: Exchange[]) => void;
+  openPanel: (t: string, c: string, s?: string, exs?: Exchange[], nav?: { onPrev?: () => void; onNext?: () => void; prevLabel?: string; nextLabel?: string }) => void;
 }) {
   const { segments, milestones, compaction_events: compactionEvents, plans } = session;
 
@@ -258,6 +279,40 @@ function TimelineView({ session, exchanges, openPanel }: {
     else { if (pendingMs.length) { items.push({ kind: "milestones", data: pendingMs, idx: pendingMs[0].exchange_index }); pendingMs = []; } items.push({ kind: r.kind as any, data: r.data, idx: r.idx }); }
   }
   if (pendingMs.length) items.push({ kind: "milestones", data: pendingMs, idx: pendingMs[0].exchange_index });
+
+  // Get only segment items for navigation
+  const segmentItems = items.filter(it => it.kind === "segment");
+
+  // Open a segment panel with prev/next navigation
+  function openSegment(segIdx: number) {
+    const seg = segmentItems[segIdx]?.data as Segment | undefined;
+    if (!seg) return;
+    const color = SEGMENT_COLORS[seg.segment_type] || "#555";
+    const label = SEGMENT_LABELS[seg.segment_type] || seg.segment_type;
+    const segEx = exchanges.filter(e => e.exchange_index >= seg.exchange_index_start && e.exchange_index <= seg.exchange_index_end);
+    const ts = segEx[0]?.timestamp;
+    const tsEnd = segEx[segEx.length - 1]?.timestamp;
+    const dur = ts && tsEnd ? fmtDuration(ts, tsEnd) : "";
+    const range = seg.exchange_index_start === seg.exchange_index_end ? `#${seg.exchange_index_start}` : `#${seg.exchange_index_start}–${seg.exchange_index_end}`;
+
+    const title = `${label} — ${range}`;
+    const subtitle = [
+      `${segEx.length} exchanges`,
+      dur,
+      ts ? fmtShortTime(ts) : "",
+      ts ? fmtRelative(ts) : "",
+    ].filter(Boolean).join(" · ");
+
+    const prevSeg = segIdx > 0 ? segmentItems[segIdx - 1]?.data as Segment : null;
+    const nextSeg = segIdx < segmentItems.length - 1 ? segmentItems[segIdx + 1]?.data as Segment : null;
+
+    openPanel(title, "", subtitle, segEx, {
+      onPrev: prevSeg ? () => openSegment(segIdx - 1) : undefined,
+      onNext: nextSeg ? () => openSegment(segIdx + 1) : undefined,
+      prevLabel: prevSeg ? SEGMENT_LABELS[prevSeg.segment_type] || prevSeg.segment_type : undefined,
+      nextLabel: nextSeg ? SEGMENT_LABELS[nextSeg.segment_type] || nextSeg.segment_type : undefined,
+    });
+  }
 
   return (
     <div className="py-4 px-8">
@@ -321,7 +376,7 @@ function TimelineView({ session, exchanges, openPanel }: {
                 <div key={`s${i}`} className="relative pb-4">
                   <div className="absolute left-[-27px] top-[14px] w-[10px] h-[10px] rounded-full" style={{ background: color }} />
                   <button
-                    onClick={() => openPanel(`${label} — ${range}`, "", `${segEx.length} exchanges${segDur ? ` · ${segDur}` : ""}`, segEx)}
+                    onClick={() => { const sIdx = segmentItems.findIndex(si => si.data === seg); openSegment(sIdx >= 0 ? sIdx : 0); }}
                     className="w-full text-left rounded-xl border hover:border-[var(--border-bright)] transition-all group overflow-hidden"
                     style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}
                   >
@@ -329,7 +384,7 @@ function TimelineView({ session, exchanges, openPanel }: {
                     <div className="flex items-center gap-2 px-5 pt-4 pb-3">
                       <span className="text-[12px] font-semibold px-2.5 py-0.5 rounded-full" style={{ background: `${color}12`, color }}>{label}</span>
                       <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-                        {segEx.length} exchange{segEx.length !== 1 ? "s" : ""}{segDur ? ` · ${segDur}` : ""}{ts ? ` · ${fmtShortTime(ts)}` : ""}
+                        {segEx.length} exchange{segEx.length !== 1 ? "s" : ""}{segDur ? ` · ${segDur}` : ""}{ts ? ` · ${fmtShortTime(ts)}` : ""}{ts ? ` · ${fmtRelative(ts)}` : ""}
                       </span>
                       <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View conversation →</span>
                     </div>
@@ -498,7 +553,8 @@ export function SessionDetail() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [fetchData]);
 
-  const openPanel = (title: string, content: string, subtitle?: string, exs?: Exchange[]) => setPanel({ title, content, subtitle, exchanges: exs });
+  const openPanel = (title: string, content: string, subtitle?: string, exs?: Exchange[], nav?: { onPrev?: () => void; onNext?: () => void; prevLabel?: string; nextLabel?: string }) =>
+    setPanel({ title, content, subtitle, exchanges: exs, ...nav });
 
   if (loading) return <div className="p-8 text-[14px]" style={{ color: "var(--text-muted)" }}>Loading...</div>;
   if (!session) return <div className="p-8 text-[14px]" style={{ color: "var(--text-muted)" }}>Session not found</div>;
@@ -608,7 +664,7 @@ export function SessionDetail() {
         )}
       </div>
 
-      {panel && <ContentPanel title={panel.title} content={panel.content} subtitle={panel.subtitle} onClose={() => setPanel(null)} chatExchanges={panel.exchanges} />}
+      {panel && <ContentPanel title={panel.title} content={panel.content} subtitle={panel.subtitle} onClose={() => setPanel(null)} chatExchanges={panel.exchanges} onPrev={panel.onPrev} onNext={panel.onNext} prevLabel={panel.prevLabel} nextLabel={panel.nextLabel} />}
 
       {/* AI Setup Popup */}
       {showAiSetup && (
