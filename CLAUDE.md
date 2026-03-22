@@ -41,6 +41,13 @@ src/
     └── decisions.ts   # AI decision extraction
 ```
 
+## npm Package
+
+- **Published**: `keddy@0.1.0` on npmjs.com (https://www.npmjs.com/package/keddy)
+- **Owner**: `emiraksay` on npm
+- **Publish**: `npm publish --access public` (runs tests + build via prepublishOnly)
+- **Granular access token** with 2FA bypass is configured for publishing
+
 ## Key Conventions
 
 - **Module format**: NodeNext (import with `.js` extensions)
