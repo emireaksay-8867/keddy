@@ -43,10 +43,11 @@ src/
 
 ## npm Package
 
-- **Published**: `keddy@0.1.0` on npmjs.com (https://www.npmjs.com/package/keddy)
+- **Published**: https://www.npmjs.com/package/keddy
 - **Owner**: `emiraksay` on npm
-- **Publish**: `npm publish --access public` (runs tests + build via prepublishOnly)
-- **Granular access token** with 2FA bypass is configured for publishing
+- **Release flow**: Tag with `vX.Y.Z` → GitHub Actions runs tests + publishes to npm automatically
+- **Manual publish**: `npm publish --access public` (runs tests + build via prepublishOnly)
+- **GitHub secret needed**: `NPM_TOKEN` in repo settings for automated releases
 
 ## Key Conventions
 
