@@ -8,8 +8,10 @@ export interface SessionListItem {
   ended_at: string | null;
   exchange_count: number;
   compaction_count: number;
-  segments: Array<{ type: string; start: number; end: number }>;
+  segments: Array<{ type: string; start: number; end: number; has_summary?: boolean }>;
   milestone_count: number;
+  plans?: Array<{ version: number; status: string }>;
+  has_ai?: boolean;
 }
 
 export interface SessionDetail {

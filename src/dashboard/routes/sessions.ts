@@ -41,18 +41,23 @@ sessionsRoutes.get("/", (c) => {
     }
   }
 
-  // Enrich with segment data
+  // Enrich with segment data + plans + AI status
   const enriched = sessions.map((s) => {
     const segments = getSessionSegments(s.id);
     const milestones = getSessionMilestones(s.id);
+    const plans = getSessionPlans(s.id);
+    const hasAiSummaries = segments.some((seg) => seg.summary);
     return {
       ...s,
       segments: segments.map((seg) => ({
         type: seg.segment_type,
         start: seg.exchange_index_start,
         end: seg.exchange_index_end,
+        has_summary: !!seg.summary,
       })),
       milestone_count: milestones.length,
+      plans: plans.map((p) => ({ version: p.version, status: p.status })),
+      has_ai: hasAiSummaries,
     };
   });
 

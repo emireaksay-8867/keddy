@@ -64,8 +64,15 @@ function SessionRow({ session }: { session: SessionListItem }) {
   const lastActivity = session.ended_at || session.started_at;
   const duration = formatDuration(session.started_at, session.ended_at);
 
-  // Deduplicate segment types for badges
+  const plans = session.plans || [];
   const segTypes = [...new Set(session.segments.map(s => s.type))];
+
+  // Build mini flow badges: show plan journey + key segment types
+  const flowBadges: Array<{ label: string; color: string }> = [];
+  for (const plan of plans) {
+    const statusColors: Record<string, string> = { approved: "#10b981", rejected: "#ef4444", drafted: "#f59e0b", superseded: "#71717a" };
+    flowBadges.push({ label: `Plan v${plan.version} ${plan.status === "approved" ? "✓" : plan.status === "rejected" ? "✗" : "…"}`, color: statusColors[plan.status] || "#888" });
+  }
 
   return (
     <Link
@@ -75,9 +82,12 @@ function SessionRow({ session }: { session: SessionListItem }) {
     >
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <p className="text-[14px] font-medium truncate mb-1.5" style={{ color: "var(--text-primary)" }}>
-            {title}
-          </p>
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-[14px] font-medium truncate" style={{ color: "var(--text-primary)" }}>
+              {title}
+            </p>
+            {session.has_ai && <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--accent-dim)", color: "var(--accent)" }}>AI</span>}
+          </div>
           <div className="flex items-center gap-2 text-[12px] flex-wrap" style={{ color: "var(--text-tertiary)" }}>
             <span>{project}</span>
             {session.git_branch && (
@@ -88,14 +98,22 @@ function SessionRow({ session }: { session: SessionListItem }) {
             {duration && <span>{duration}</span>}
             <span>{session.exchange_count} exchanges</span>
             {session.milestone_count > 0 && <span>{session.milestone_count} milestones</span>}
-            {segTypes.length > 0 && (
-              <span className="flex gap-1 ml-1">
-                {segTypes.slice(0, 3).map(type => (
-                  <span key={type} className="w-1.5 h-1.5 rounded-full" style={{ background: SEGMENT_COLORS[type] || "#555" }} title={SEGMENT_LABELS[type] || type} />
-                ))}
-              </span>
-            )}
           </div>
+          {/* Flow badges — plans + key segment types */}
+          {(flowBadges.length > 0 || segTypes.length > 1) && (
+            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+              {flowBadges.map((badge, i) => (
+                <span key={i} className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ background: `${badge.color}15`, color: badge.color }}>
+                  {badge.label}
+                </span>
+              ))}
+              {segTypes.slice(0, 4).map(type => (
+                <span key={type} className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: `${SEGMENT_COLORS[type] || "#555"}10`, color: SEGMENT_COLORS[type] || "#555" }}>
+                  {SEGMENT_LABELS[type] || type}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <div className="text-right shrink-0">
           <span className="text-[12px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
