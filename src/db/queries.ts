@@ -412,6 +412,7 @@ export function insertCompactionEvent(data: {
   session_id: string;
   exchange_index: number;
   summary?: string | null;
+  analysis_summary?: string | null;
   exchanges_before?: number;
   exchanges_after?: number;
   pre_tokens?: number | null;
@@ -419,13 +420,14 @@ export function insertCompactionEvent(data: {
   const db = getDb();
   const id = randomUUID();
   db.prepare(`
-    INSERT INTO compaction_events (id, session_id, exchange_index, summary, exchanges_before, exchanges_after, pre_tokens)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO compaction_events (id, session_id, exchange_index, summary, analysis_summary, exchanges_before, exchanges_after, pre_tokens)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.session_id,
     data.exchange_index,
     data.summary ?? null,
+    data.analysis_summary ?? null,
     data.exchanges_before ?? 0,
     data.exchanges_after ?? 0,
     data.pre_tokens ?? null,

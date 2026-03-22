@@ -89,6 +89,13 @@ function SessionRow({ session }: { session: SessionListItem }) {
             </p>
             {session.has_ai && <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--accent-dim)", color: "var(--accent)" }}>AI</span>}
           </div>
+          {session.forked_from && (
+            <div className="flex items-center gap-1.5 mb-1 text-[11px]" style={{ color: "var(--text-muted)" }}>
+              <span style={{ color: "#f59e0b" }}>&#8618;</span>
+              <span>forked from</span>
+              {session.parent_title && <span className="font-medium" style={{ color: "var(--text-tertiary)" }}>{session.parent_title.substring(0, 50)}</span>}
+            </div>
+          )}
           <div className="flex items-center gap-2 text-[12px] flex-wrap" style={{ color: "var(--text-tertiary)" }}>
             <span>{project}</span>
             {session.git_branch && (

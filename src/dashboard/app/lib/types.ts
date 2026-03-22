@@ -12,6 +12,8 @@ export interface SessionListItem {
   milestone_count: number;
   plans?: Array<{ version: number; status: string }>;
   has_ai?: boolean;
+  forked_from?: string | null;
+  parent_title?: string | null;
 }
 
 export interface SessionDetail {
@@ -95,6 +97,7 @@ export interface CompactionEvent {
   id: string;
   exchange_index: number;
   summary: string | null;
+  analysis_summary: string | null;
   exchanges_before: number;
   exchanges_after: number;
   pre_tokens: number | null;

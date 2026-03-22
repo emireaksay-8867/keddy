@@ -135,11 +135,12 @@ async function handleStop(input: HookStdin): Promise<void> {
       `).run(lastExchange.timestamp || new Date().toISOString(), sessionRow.id, sessionRow.id);
     }
 
-    // Update git branch from the latest JSONL entries
-    // Branch can change mid-session, so read the tail of the file
+    // Update git branch and forkedFrom from JSONL entries
     try {
       const fs = await import("node:fs");
       const stat = fs.statSync(input.transcript_path);
+
+      // Read tail for latest git branch (branch can change mid-session)
       const readSize = Math.min(stat.size, 4096);
       const buf = Buffer.alloc(readSize);
       const fd = fs.openSync(input.transcript_path, "r");
@@ -151,6 +152,21 @@ async function handleStop(input: HookStdin): Promise<void> {
         const latestBranch = matches[matches.length - 1][1];
         const db = getDb();
         db.prepare("UPDATE sessions SET git_branch = ? WHERE id = ?").run(latestBranch, sessionRow.id);
+      }
+
+      // Read head for forkedFrom (only present in branched/forked sessions)
+      if (!sessionRow.forked_from) {
+        const headSize = Math.min(stat.size, 2048);
+        const headBuf = Buffer.alloc(headSize);
+        const fd2 = fs.openSync(input.transcript_path, "r");
+        fs.readSync(fd2, headBuf, 0, headSize, 0);
+        fs.closeSync(fd2);
+        const head = headBuf.toString("utf8");
+        const forkMatch = head.match(/"forkedFrom"\s*:\s*(\{[^}]+\})/);
+        if (forkMatch) {
+          const db = getDb();
+          db.prepare("UPDATE sessions SET forked_from = ? WHERE id = ?").run(forkMatch[1], sessionRow.id);
+        }
       }
     } catch {
       // Non-critical
@@ -168,10 +184,12 @@ async function handlePostCompact(input: HookStdin): Promise<void> {
     const session = getSession(input.session_id);
     if (!session) return;
 
+    // Store the compaction analysis from the hook
+    // The continuation context (isCompactSummary) will be added later by the parser
     insertCompactionEvent({
       session_id: session.id,
       exchange_index: session.exchange_count,
-      summary: input.compact_summary ?? null,
+      analysis_summary: input.compact_summary ?? null,
     });
   } finally {
     closeDb();
@@ -244,6 +262,13 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
     db.prepare("DELETE FROM segments WHERE session_id = ?").run(session.id);
     db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
     db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);
+    // Update forked_from if parser found it (branches set this on every JSONL entry)
+    if (transcript.forked_from) {
+      db.prepare("UPDATE sessions SET forked_from = ? WHERE id = ?").run(
+        transcript.forked_from,
+        session.id,
+      );
+    }
 
     // Run programmatic analysis
     const plans = extractPlans(transcript.exchanges);
@@ -282,14 +307,26 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
       });
     }
 
-    // Compaction events from transcript
+    // Compaction events from transcript — merge with existing PostCompact data
     for (const compaction of transcript.compactions) {
-      insertCompactionEvent({
-        session_id: session.id,
-        exchange_index: compaction.exchange_index,
-        summary: compaction.summary,
-        pre_tokens: compaction.pre_tokens,
-      });
+      // Check if PostCompact already created an event for this exchange index
+      const existing = db.prepare(
+        "SELECT id, analysis_summary FROM compaction_events WHERE session_id = ? AND exchange_index = ?",
+      ).get(session.id, compaction.exchange_index) as { id: string; analysis_summary: string | null } | undefined;
+
+      if (existing) {
+        // Update with parser data (summary + pre_tokens) while preserving analysis_summary
+        db.prepare(
+          "UPDATE compaction_events SET summary = ?, pre_tokens = ? WHERE id = ?",
+        ).run(compaction.summary, compaction.pre_tokens, existing.id);
+      } else {
+        insertCompactionEvent({
+          session_id: session.id,
+          exchange_index: compaction.exchange_index,
+          summary: compaction.summary,
+          pre_tokens: compaction.pre_tokens,
+        });
+      }
     }
 
     // Extract and store tasks

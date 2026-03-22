@@ -51,7 +51,7 @@ function parseProjectPath(projectPath: string): { org: string; repo: string } {
   return { org: "", repo: parts[parts.length - 1] || projectPath };
 }
 
-// Normalize repo names: merge corrupted paths (e.g. "redacts/v2" → "redacts-v2")
+// Normalize repo names: merge corrupted paths (e.g. "repo/v2" → "repo-v2")
 function normalizeRepo(repo: string): string {
   return repo;
 }
@@ -114,17 +114,19 @@ projectsRoutes.get("/projects", (c) => {
     }
   }
 
-  // Remove entries that are clearly fragments (single-word that match part of a larger repo)
-  // e.g. "LIVAD" (from corrupted "LIVAD-Technologies" path) or "teba" (from "teba-hq")
+  // Remove entries that are clearly fragments from corrupted deriveProjectPath
+  // Only merge if the short name has 1 session and no real project_path (a true fragment)
+  // e.g. "LIVAD" from corrupted "LIVAD-Technologies" path
+  // Do NOT merge repos that share a prefix — "foo" and "foo-v2" are different repos
   const repoNames = new Set(Array.from(merged.keys()));
   for (const key of repoNames) {
     const entry = merged.get(key)!;
-    // Check if this repo name is a prefix of another repo (like "livad" is prefix of "livad-agents")
-    // Only remove if it has few sessions and looks like a fragment
-    if (entry.session_count <= 5 && !entry.org) {
+    // Only treat as fragment if: single session, no org, and the project_path looks corrupted
+    // (doesn't contain /GitHub/ or /Documents/ — meaning it came from deriveProjectPath)
+    const looksCorrupted = !entry.project_path.includes("/GitHub/") && !entry.project_path.includes("/Documents/");
+    if (entry.session_count <= 2 && !entry.org && looksCorrupted) {
       for (const otherKey of repoNames) {
         if (otherKey !== key && otherKey.startsWith(key + "-")) {
-          // Merge into the longer name
           const other = merged.get(otherKey)!;
           other.session_count += entry.session_count;
           other.exchange_count += entry.exchange_count;

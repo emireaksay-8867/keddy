@@ -552,37 +552,57 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
               );
             }
 
-            // compaction — show token count and summary if available
+            // compaction — show token count, continuation summary, and analysis
             const ce = item.data as CompactionEvent;
             const ceTs = exchanges.find(e => e.exchange_index === ce.exchange_index)?.timestamp;
-            const tokenInfo = (ce as any).pre_tokens ? `${Math.round((ce as any).pre_tokens / 1000)}K tokens` : null;
-            const hasCeSummary = ce.summary && ce.summary !== "Conversation compacted";
+            const tokenInfo = ce.pre_tokens ? `${Math.round(ce.pre_tokens / 1000)}K tokens` : null;
+            const hasContinuation = ce.summary && ce.summary !== "Conversation compacted";
+            const hasAnalysis = !!ce.analysis_summary;
+            const hasContent = hasContinuation || hasAnalysis;
             return (
               <div key={`c${i}`} className="relative pb-4">
                 <div className="absolute left-[-25px] top-[12px] w-[6px] h-[6px] rounded-full" style={{ background: SEGMENT_COLORS.exploring }} />
-                {hasCeSummary ? (
-                  <button
-                    onClick={() => openPanel("Context Compacted", ce.summary!, tokenInfo ? `${tokenInfo} before compaction` : undefined)}
-                    className="w-full text-left rounded-xl border p-4 hover:border-[var(--border-bright)] transition-all group"
-                    style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-[12px] font-semibold" style={{ color: SEGMENT_COLORS.exploring }}>Context Compacted</span>
-                      {tokenInfo && <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{tokenInfo}</span>}
-                      {ceTs && <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtShortTime(ceTs)}</span>}
-                      <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View summary →</span>
-                    </div>
-                    <p className="text-[12px] line-clamp-2" style={{ color: "var(--text-tertiary)" }}>{trunc(ce.summary!, 150)}</p>
-                  </button>
-                ) : (
-                  <div className="flex items-center gap-3 py-2">
-                    <div className="h-px flex-1" style={{ background: SEGMENT_COLORS.exploring + "25" }} />
-                    <span className="text-[12px] font-medium" style={{ color: SEGMENT_COLORS.exploring }}>
-                      Context compacted{tokenInfo ? ` · ${tokenInfo}` : ""}{ceTs ? ` · ${fmtShortTime(ceTs)}` : ""}
-                    </span>
-                    <div className="h-px flex-1" style={{ background: SEGMENT_COLORS.exploring + "25" }} />
+                <div className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
+                  {/* Header */}
+                  <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: hasContent ? "1px solid var(--border)" : "none" }}>
+                    <span className="text-[12px] font-semibold" style={{ color: SEGMENT_COLORS.exploring }}>Context Compacted</span>
+                    {tokenInfo && <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}>{tokenInfo}</span>}
+                    {ceTs && <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtShortTime(ceTs)}</span>}
                   </div>
-                )}
+
+                  {/* Analysis summary — Claude's analysis of the compacted conversation */}
+                  {hasAnalysis && (
+                    <button
+                      onClick={() => openPanel("Compaction Analysis", ce.analysis_summary!, tokenInfo ? `Analysis of ${tokenInfo} before compaction` : "Analysis of compacted context")}
+                      className="w-full text-left px-4 py-2.5 hover:bg-[var(--bg-hover)] transition-colors group"
+                      style={{ borderBottom: hasContinuation ? "1px solid var(--border)" : "none" }}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Analysis</span>
+                        <span className="text-[11px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View →</span>
+                      </div>
+                      <p className="text-[12px] line-clamp-2" style={{ color: "var(--text-tertiary)" }}>{trunc(ce.analysis_summary!, 150)}</p>
+                    </button>
+                  )}
+
+                  {/* Continuation context — the summary injected for the next turn */}
+                  {hasContinuation && (
+                    <button
+                      onClick={() => openPanel("Continuation Context", ce.summary!, tokenInfo ? `Context carried forward after ${tokenInfo} compacted` : "Context carried forward")}
+                      className="w-full text-left px-4 py-2.5 hover:bg-[var(--bg-hover)] transition-colors group"
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Continuation Context</span>
+                        <span className="text-[11px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View →</span>
+                      </div>
+                      <p className="text-[12px] line-clamp-2" style={{ color: "var(--text-tertiary)" }}>{trunc(ce.summary!, 150)}</p>
+                    </button>
+                  )}
+
+                  {!hasContent && (
+                    <div className="px-4 py-2 text-[12px]" style={{ color: "var(--text-muted)" }}>No summary available</div>
+                  )}
+                </div>
               </div>
             );
           })}

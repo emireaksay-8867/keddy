@@ -95,6 +95,7 @@ export function initSchema(db: Database.Database): void {
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
       exchange_index INTEGER NOT NULL,
       summary TEXT,
+      analysis_summary TEXT,
       exchanges_before INTEGER NOT NULL DEFAULT 0,
       exchanges_after INTEGER NOT NULL DEFAULT 0,
       pre_tokens INTEGER,

@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 
-const CURRENT_VERSION = 3;
+const CURRENT_VERSION = 4;
 
 interface Migration {
   version: number;
@@ -88,6 +88,17 @@ const migrations: Migration[] = [
         );
         CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id);
       `);
+    },
+  },
+  {
+    version: 4,
+    description: "Add analysis_summary to compaction_events for PostCompact hook data",
+    up: (db) => {
+      try {
+        db.exec("ALTER TABLE compaction_events ADD COLUMN analysis_summary TEXT");
+      } catch {
+        // Column might already exist
+      }
     },
   },
 ];
