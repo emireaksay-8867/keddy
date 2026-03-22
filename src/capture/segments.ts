@@ -11,6 +11,7 @@ export interface ExtractedSegment {
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "NotebookEdit"]);
 const READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS"]);
+const MCP_QUERY_PATTERN = /^mcp__/;
 const TEST_PATTERNS = [/\btest\b/i, /\bjest\b/i, /\bvitest\b/i, /\bpytest\b/i, /\bmocha\b/i, /\bcargo test\b/i, /\bgo test\b/i];
 const DEPLOY_PATTERNS = [/\bgit push\b/, /\bdeploy\b/i, /\bnpm publish\b/];
 
@@ -18,13 +19,21 @@ function classifyExchange(exchange: ParsedExchange): SegmentType {
   const toolCalls = exchange.tool_calls;
   if (toolCalls.length === 0) return "discussion";
 
+  // Planning — definitive signal
   if (toolCalls.some((tc) => tc.name === "EnterPlanMode" || tc.name === "ExitPlanMode")) {
     return "planning";
   }
 
+  // Pivot — user interrupted
   if (exchange.is_interrupt) return "pivot";
 
   const toolNames = toolCalls.map((tc) => tc.name);
+  const hasEdits = toolNames.some((n) => EDIT_TOOLS.has(n));
+  const hasErrors = toolCalls.some((tc) => tc.is_error);
+  const editCount = toolNames.filter((n) => EDIT_TOOLS.has(n)).length;
+  const readCount = toolNames.filter((n) => READ_TOOLS.has(n)).length;
+  const mcpCount = toolNames.filter((n) => MCP_QUERY_PATTERN.test(n)).length;
+  const agentCount = toolNames.filter((n) => n === "Agent").length;
 
   const bashInputs = toolCalls
     .filter((tc) => tc.name === "Bash")
@@ -35,29 +44,31 @@ function classifyExchange(exchange: ParsedExchange): SegmentType {
       return typeof tc.input === "string" ? tc.input : "";
     });
 
-  // "Deploying" only if deployment IS the primary activity — not just a side push during implementation
-  const deployCommands = bashInputs.filter((cmd) => DEPLOY_PATTERNS.some((p) => p.test(cmd)));
-  const hasEditsCheck = toolNames.some((n) => EDIT_TOOLS.has(n));
-  if (deployCommands.length > 0 && !hasEditsCheck && toolCalls.length <= 5) return "deploying";
+  // Testing — Bash with test commands
   if (bashInputs.some((cmd) => TEST_PATTERNS.some((p) => p.test(cmd)))) {
-    const hasErrors = toolCalls.some((tc) => tc.is_error);
     return hasErrors ? "debugging" : "testing";
   }
 
-  const hasErrors = toolCalls.some((tc) => tc.is_error);
-  const hasEdits = toolNames.some((n) => EDIT_TOOLS.has(n));
+  // Deploying — ONLY standalone deployment (no edits, few tools)
+  const deployCommands = bashInputs.filter((cmd) => DEPLOY_PATTERNS.some((p) => p.test(cmd)));
+  if (deployCommands.length > 0 && !hasEdits && toolCalls.length <= 5) return "deploying";
+
+  // Debugging — errors + edits (fixing something that broke)
   if (hasErrors && hasEdits) return "debugging";
 
-  const editCount = toolNames.filter((n) => EDIT_TOOLS.has(n)).length;
-  if (editCount > 0 && editCount >= toolNames.length * 0.5) return "implementing";
+  // Implementing — ANY edit/write call means code is being changed
+  if (editCount > 0) return "implementing";
 
-  const readCount = toolNames.filter((n) => READ_TOOLS.has(n)).length;
-  if (readCount > 0 && !hasEdits && readCount >= toolNames.length * 0.5) return "exploring";
+  // Querying — MCP database/API calls as significant activity
+  if (mcpCount > 0 && mcpCount >= toolNames.length * 0.3) return "querying";
 
-  if (hasEdits) return "implementing";
+  // Reviewing — Agent subagent calls + reads (code review, investigation)
+  if (agentCount > 0 && readCount > 0) return "reviewing";
 
-  // If tools were used but they're not edit/read/test/deploy,
-  // it's likely discussion with tool-assisted answers (MCP queries, search, etc.)
+  // Exploring — mostly read/search tools, no edits
+  if (readCount > 0 && readCount >= toolNames.length * 0.4) return "exploring";
+
+  // Discussion — everything else
   return "discussion";
 }
 
@@ -85,13 +96,12 @@ function countTools(exchanges: ParsedExchange[]): Record<string, number> {
 export function extractSegments(exchanges: ParsedExchange[]): ExtractedSegment[] {
   if (exchanges.length === 0) return [];
 
-  // Classify each exchange
   const classifications = exchanges.map((ex) => ({
     exchange: ex,
     type: classifyExchange(ex),
   }));
 
-  // Merge adjacent same-type into segments
+  // Merge adjacent same-type
   const rawSegments: { type: SegmentType; exchanges: ParsedExchange[] }[] = [];
   let current = { type: classifications[0].type, exchanges: [classifications[0].exchange] };
 
@@ -118,18 +128,10 @@ export function extractSegments(exchanges: ParsedExchange[]): ExtractedSegment[]
     merged.push(...rawSegments);
   }
 
-  // KEY FIX: Merge consecutive discussion blocks.
-  // Two discussion blocks should not be split just because Claude
-  // used a few tools in between. Only a real activity segment
-  // (implementing, testing, deploying, planning) should break discussions apart.
+  // Merge consecutive discussion blocks
   const final: typeof rawSegments = [];
   for (const seg of merged) {
-    if (
-      seg.type === "discussion" &&
-      final.length > 0 &&
-      final[final.length - 1].type === "discussion"
-    ) {
-      // Merge into previous discussion block
+    if (seg.type === "discussion" && final.length > 0 && final[final.length - 1].type === "discussion") {
       final[final.length - 1].exchanges.push(...seg.exchanges);
     } else {
       final.push(seg);

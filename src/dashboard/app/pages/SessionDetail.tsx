@@ -618,6 +618,10 @@ export function SessionDetail() {
   const fetchData = useCallback((isInitial = false) => {
     if (!id) return;
     if (isInitial) { setLoading(true); setTab("timeline"); }
+
+    // Save scroll position before refresh
+    const scrollPos = contentRef.current?.scrollTop ?? 0;
+
     Promise.all([getSession(id) as Promise<SessionDetailType>, getSessionExchanges(id, true) as Promise<Exchange[]>])
       .then(([s, e]) => {
         setSession(s);
@@ -626,17 +630,22 @@ export function SessionDetail() {
           setLastSeenCount(e.length);
           setNewExchangeCount(0);
         } else {
-          // Background poll — check for new exchanges
-          setExchanges(prev => {
-            if (e.length > prev.length) {
-              setNewExchangeCount(e.length - lastSeenCount);
+          // Background poll — only update count, preserve scroll
+          const prevLen = exchanges.length;
+          setExchanges(e);
+          if (e.length > prevLen) {
+            setNewExchangeCount(e.length - lastSeenCount);
+          }
+          // Restore scroll position after render
+          requestAnimationFrame(() => {
+            if (contentRef.current) {
+              contentRef.current.scrollTop = scrollPos;
             }
-            return e;
           });
         }
       })
       .catch(console.error).finally(() => { if (isInitial) setLoading(false); });
-  }, [id, lastSeenCount]);
+  }, [id, lastSeenCount, exchanges.length]);
 
   useEffect(() => { fetchData(true); }, [fetchData]);
   useEffect(() => {
@@ -779,15 +788,28 @@ export function SessionDetail() {
               onClick={() => {
                 setLastSeenCount(exchanges.length);
                 setNewExchangeCount(0);
-                // Scroll to bottom for newest content
-                if (contentRef.current) {
-                  contentRef.current.scrollTo({ top: contentRef.current.scrollHeight, behavior: "smooth" });
-                }
+                // Scroll to the latest exchange — direction depends on sort
+                setTimeout(() => {
+                  if (sortNewest) {
+                    // Latest first = new content at top → scroll to top
+                    if (contentRef.current) {
+                      contentRef.current.scrollTo({ top: 0, behavior: "smooth" });
+                    }
+                  } else {
+                    // Oldest first = new content at bottom → scroll to bottom
+                    const lastEx = document.getElementById(`exchange-${exchanges.length - 1}`);
+                    if (lastEx) {
+                      lastEx.scrollIntoView({ behavior: "smooth", block: "center" });
+                    } else if (contentRef.current) {
+                      contentRef.current.scrollTo({ top: contentRef.current.scrollHeight, behavior: "smooth" });
+                    }
+                  }
+                }, 100);
               }}
               className="pointer-events-auto text-[13px] font-medium px-5 py-2.5 rounded-full shadow-lg transition-all hover:scale-105"
               style={{ background: "var(--accent)", color: "white", boxShadow: "0 4px 20px rgba(99, 102, 241, 0.4)" }}
             >
-              ↓ {newExchangeCount} new exchange{newExchangeCount !== 1 ? "s" : ""}
+              {sortNewest ? "↑" : "↓"} {newExchangeCount} new exchange{newExchangeCount !== 1 ? "s" : ""}
             </button>
           </div>
         )}

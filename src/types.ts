@@ -67,6 +67,8 @@ export type SegmentType =
   | "testing"
   | "debugging"
   | "exploring"
+  | "querying"
+  | "reviewing"
   | "discussion"
   | "pivot"
   | "deploying";
