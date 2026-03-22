@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { getSession, getSessionExchanges, analyzeSession } from "../lib/api.js";
+import { getSession, getSessionExchanges, analyzeSession, getConfig, updateConfig } from "../lib/api.js";
 import { SEGMENT_COLORS, SEGMENT_LABELS } from "../lib/constants.js";
 import { ContentPanel } from "../components/ContentPanel.js";
 import { ClaudeIcon } from "../components/ClaudeIcon.js";
@@ -479,6 +479,9 @@ export function SessionDetail() {
   const [tab, setTab] = useState<"timeline" | "transcript">("timeline");
   const [panel, setPanel] = useState<PanelContent>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [showAiSetup, setShowAiSetup] = useState(false);
+  const [aiKey, setAiKey] = useState("");
+  const [aiSaving, setAiSaving] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchData = useCallback((isInitial = false) => {
@@ -521,12 +524,23 @@ export function SessionDetail() {
           <button
             onClick={async () => {
               if (!id || analyzing) return;
-              setAnalyzing(true);
+              // Check if AI is configured first
               try {
+                const cfg = await getConfig() as any;
+                if (!cfg.analysis?.enabled || !cfg.analysis?.apiKey) {
+                  setAiKey(cfg.analysis?.apiKey || "");
+                  setShowAiSetup(true);
+                  return;
+                }
+                setAnalyzing(true);
                 await analyzeSession(id);
-                fetchData(false); // Refresh to show AI results
+                fetchData(false);
               } catch (e: any) {
-                alert(e.message || "Analysis failed");
+                if (e.message?.includes("not enabled") || e.message?.includes("No API key")) {
+                  setShowAiSetup(true);
+                } else {
+                  alert(e.message || "Analysis failed");
+                }
               } finally { setAnalyzing(false); }
             }}
             disabled={analyzing}
@@ -560,6 +574,65 @@ export function SessionDetail() {
       </div>
 
       {panel && <ContentPanel title={panel.title} content={panel.content} subtitle={panel.subtitle} onClose={() => setPanel(null)} chatExchanges={panel.exchanges} />}
+
+      {/* AI Setup Popup */}
+      {showAiSetup && (
+        <>
+          <div className="fixed inset-0 z-50" style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)" }} onClick={() => setShowAiSetup(false)} />
+          <div className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[440px] rounded-2xl border overflow-hidden slide-in" style={{ background: "var(--bg-surface)", borderColor: "var(--border)", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
+            <div className="px-6 pt-5 pb-4">
+              <h3 className="text-[16px] font-semibold mb-1">Enable AI Analysis</h3>
+              <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>Enter your Anthropic API key to generate titles, summaries, and extract decisions.</p>
+            </div>
+            <div className="px-6 pb-4">
+              <label className="text-[13px] font-medium block mb-2">Anthropic API Key</label>
+              <input
+                type="password"
+                value={aiKey}
+                onChange={(e) => setAiKey(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-lg text-[13px] outline-none focus:border-[var(--accent)] transition-colors"
+                style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
+                placeholder="sk-ant-api03-..."
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && aiKey) {
+                    e.preventDefault();
+                    document.getElementById("ai-setup-save")?.click();
+                  }
+                }}
+              />
+              <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>Stored locally at ~/.keddy/config.json · Never sent to Keddy servers</p>
+            </div>
+            <div className="px-6 pb-5 flex items-center gap-3">
+              <button
+                id="ai-setup-save"
+                disabled={!aiKey || aiSaving}
+                onClick={async () => {
+                  if (!aiKey || !id) return;
+                  setAiSaving(true);
+                  try {
+                    await updateConfig({ analysis: { enabled: true, provider: "anthropic", apiKey: aiKey } });
+                    setShowAiSetup(false);
+                    // Now run the analysis
+                    setAnalyzing(true);
+                    await analyzeSession(id);
+                    fetchData(false);
+                  } catch (e: any) {
+                    alert(e.message || "Failed to save");
+                  } finally { setAiSaving(false); setAnalyzing(false); }
+                }}
+                className="text-[13px] font-medium px-5 py-2.5 rounded-lg transition-all"
+                style={{ background: aiKey ? "var(--accent)" : "var(--bg-active)", color: "white", opacity: aiSaving ? 0.7 : 1 }}
+              >
+                {aiSaving ? "Saving & Analyzing..." : "Save & Analyze"}
+              </button>
+              <button onClick={() => setShowAiSetup(false)} className="text-[13px] px-4 py-2.5 rounded-lg hover:bg-[var(--bg-hover)] transition-colors" style={{ color: "var(--text-muted)" }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
