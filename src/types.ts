@@ -47,7 +47,7 @@ export interface ToolCall {
   duration_ms: number | null;
 }
 
-export type PlanStatus = "drafted" | "approved" | "rejected" | "superseded" | "revised";
+export type PlanStatus = "drafted" | "approved" | "implemented" | "rejected" | "superseded" | "revised";
 
 export interface Plan {
   id: string;

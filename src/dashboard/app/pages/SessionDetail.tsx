@@ -67,6 +67,7 @@ type PanelContent = {
 } | null;
 
 const STATUS_STYLE: Record<string, { bg: string; fg: string; label: string }> = {
+  implemented: { bg: "#10b98120", fg: "#10b981", label: "Implemented" },
   approved: { bg: "#10b98115", fg: "#10b981", label: "Approved" },
   revised: { bg: "#f59e0b15", fg: "#f59e0b", label: "Revised" },
   rejected: { bg: "#ef444415", fg: "#ef4444", label: "Rejected" },

@@ -70,8 +70,8 @@ function SessionRow({ session }: { session: SessionListItem }) {
   // Build mini flow badges: show plan journey + key segment types
   const flowBadges: Array<{ label: string; color: string }> = [];
   for (const plan of plans) {
-    const statusColors: Record<string, string> = { approved: "#10b981", revised: "#f59e0b", rejected: "#ef4444", drafted: "#71717a", superseded: "#71717a" };
-    const statusIcons: Record<string, string> = { approved: "✓", revised: "→", rejected: "✗", drafted: "…", superseded: "–" };
+    const statusColors: Record<string, string> = { implemented: "#10b981", approved: "#10b981", revised: "#f59e0b", rejected: "#ef4444", drafted: "#71717a", superseded: "#71717a" };
+    const statusIcons: Record<string, string> = { implemented: "●", approved: "✓", revised: "→", rejected: "✗", drafted: "…", superseded: "–" };
     flowBadges.push({ label: `Plan v${plan.version} ${statusIcons[plan.status] || "…"}`, color: statusColors[plan.status] || "#888" });
   }
 
