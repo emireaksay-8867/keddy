@@ -75,3 +75,26 @@ export async function updateConfig(config: unknown) {
     body: JSON.stringify(config),
   });
 }
+
+export async function analyzeSession(id: string) {
+  return fetchJson(`/sessions/${id}/analyze`, { method: "POST" });
+}
+
+export async function analyzeBulk(limit: number = 10) {
+  return fetchJson("/analyze/bulk", {
+    method: "POST",
+    body: JSON.stringify({ limit }),
+  });
+}
+
+export async function getAnalyzeStatus() {
+  return fetchJson<{
+    enabled: boolean;
+    hasApiKey: boolean;
+    total: number;
+    needsTitle: number;
+    hasSummaries: number;
+    hasDecisions: number;
+    analyzed: number;
+  }>("/analyze/status");
+}

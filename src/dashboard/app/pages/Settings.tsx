@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router";
-import { getConfig, updateConfig, getStats } from "../lib/api.js";
+import { getConfig, updateConfig, getStats, getAnalyzeStatus, analyzeBulk } from "../lib/api.js";
 import type { Stats } from "../lib/types.js";
 
 interface ConfigData {
@@ -25,12 +25,31 @@ export function Settings() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [analyzeStatus, setAnalyzeStatus] = useState<{ total: number; needsTitle: number; analyzed: number; hasSummaries: number } | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeResult, setAnalyzeResult] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([getConfig() as Promise<ConfigData>, getStats() as Promise<Stats>])
-      .then(([c, s]) => { setConfig(c); setStats(s); })
+    Promise.all([getConfig() as Promise<ConfigData>, getStats() as Promise<Stats>, getAnalyzeStatus()])
+      .then(([c, s, a]) => { setConfig(c); setStats(s); setAnalyzeStatus(a); })
       .catch(console.error);
   }, []);
+
+  async function handleBulkAnalyze() {
+    setAnalyzing(true);
+    setAnalyzeResult(null);
+    try {
+      const result = await analyzeBulk(20) as any;
+      setAnalyzeResult(`Processed ${result.processed} sessions`);
+      // Refresh status
+      const status = await getAnalyzeStatus();
+      setAnalyzeStatus(status);
+    } catch (e: any) {
+      setAnalyzeResult(`Error: ${e.message}`);
+    } finally {
+      setAnalyzing(false);
+    }
+  }
 
   async function handleSave() {
     if (!config) return;
@@ -169,6 +188,53 @@ export function Settings() {
             </button>
             {saved && <span className="text-[13px] font-medium" style={{ color: "#10b981" }}>Saved successfully</span>}
           </div>
+
+          {/* Bulk Analysis */}
+          {config.analysis.enabled && config.analysis.apiKey && analyzeStatus && (
+            <section>
+              <h2 className="text-[14px] font-semibold mb-4">Process Sessions</h2>
+              <div className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
+                <div className="px-5 py-4">
+                  <div className="grid grid-cols-3 gap-4 mb-4">
+                    <div>
+                      <div className="text-[18px] font-semibold">{analyzeStatus.analyzed}</div>
+                      <div className="text-[12px]" style={{ color: "var(--text-muted)" }}>Analyzed</div>
+                    </div>
+                    <div>
+                      <div className="text-[18px] font-semibold" style={{ color: analyzeStatus.needsTitle > 0 ? "var(--accent)" : "var(--text-muted)" }}>{analyzeStatus.needsTitle}</div>
+                      <div className="text-[12px]" style={{ color: "var(--text-muted)" }}>Need Analysis</div>
+                    </div>
+                    <div>
+                      <div className="text-[18px] font-semibold">{analyzeStatus.hasSummaries}</div>
+                      <div className="text-[12px]" style={{ color: "var(--text-muted)" }}>With Summaries</div>
+                    </div>
+                  </div>
+
+                  {analyzeStatus.needsTitle > 0 && (
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={handleBulkAnalyze}
+                        disabled={analyzing}
+                        className="text-[13px] font-medium px-5 py-2.5 rounded-lg transition-all"
+                        style={{ background: analyzing ? "var(--bg-active)" : "var(--accent)", color: "white", opacity: analyzing ? 0.7 : 1 }}
+                      >
+                        {analyzing ? "Processing..." : `Analyze ${Math.min(analyzeStatus.needsTitle, 20)} sessions`}
+                      </button>
+                      {analyzeResult && <span className="text-[13px]" style={{ color: "#10b981" }}>{analyzeResult}</span>}
+                    </div>
+                  )}
+
+                  {analyzeStatus.needsTitle === 0 && (
+                    <p className="text-[13px]" style={{ color: "#10b981" }}>All sessions have been analyzed</p>
+                  )}
+
+                  <p className="text-[11px] mt-3" style={{ color: "var(--text-muted)" }}>
+                    Generates AI titles and segment summaries using your Anthropic API key. Processes up to 20 sessions per batch.
+                  </p>
+                </div>
+              </div>
+            </section>
+          )}
         </div>
       </div>
     </div>

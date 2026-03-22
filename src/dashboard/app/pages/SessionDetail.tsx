@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { getSession, getSessionExchanges } from "../lib/api.js";
+import { getSession, getSessionExchanges, analyzeSession } from "../lib/api.js";
 import { SEGMENT_COLORS, SEGMENT_LABELS } from "../lib/constants.js";
 import { ContentPanel } from "../components/ContentPanel.js";
 import { ClaudeIcon } from "../components/ClaudeIcon.js";
@@ -334,6 +334,13 @@ function TimelineView({ session, exchanges, openPanel }: {
                       <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View conversation →</span>
                     </div>
 
+                    {/* AI summary if available */}
+                    {seg.summary && (
+                      <div className="mx-5 mb-3 px-4 py-2.5 rounded-lg text-[13px] leading-relaxed" style={{ background: `${color}08`, color: "var(--text-secondary)", borderLeft: `3px solid ${color}40` }}>
+                        {seg.summary}
+                      </div>
+                    )}
+
                     {/* Conversation flow — threaded style with left accent border */}
                     <div className="mx-5 mb-4 rounded-lg overflow-hidden" style={{ background: "var(--bg-elevated)" }}>
                       {flowPairs.slice(0, 3).map((pair, j) => (
@@ -471,6 +478,7 @@ export function SessionDetail() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"timeline" | "transcript">("timeline");
   const [panel, setPanel] = useState<PanelContent>(null);
+  const [analyzing, setAnalyzing] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchData = useCallback((isInitial = false) => {
@@ -510,6 +518,23 @@ export function SessionDetail() {
           <span>{exchanges.length} exchanges</span>
           {session.milestones.length > 0 && <span>{session.milestones.length} milestones</span>}
           {session.plans.length > 0 && <span style={{ color: SEGMENT_COLORS.planning }}>{session.plans.length} plans</span>}
+          <button
+            onClick={async () => {
+              if (!id || analyzing) return;
+              setAnalyzing(true);
+              try {
+                await analyzeSession(id);
+                fetchData(false); // Refresh to show AI results
+              } catch (e: any) {
+                alert(e.message || "Analysis failed");
+              } finally { setAnalyzing(false); }
+            }}
+            disabled={analyzing}
+            className="text-[11px] font-medium px-2.5 py-1 rounded-lg ml-2 transition-colors hover:bg-[var(--bg-hover)]"
+            style={{ color: analyzing ? "var(--text-muted)" : "var(--accent)", border: "1px solid var(--border)" }}
+          >
+            {analyzing ? "Analyzing..." : "✦ AI Analyze"}
+          </button>
         </div>
       </div>
 
