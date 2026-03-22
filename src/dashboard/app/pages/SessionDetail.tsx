@@ -258,9 +258,10 @@ function TranscriptView({ exchanges, segments, milestones, compactionEvents, ope
 }
 
 // ── Summary Timeline View (overview cards) ─────────────────────
-function TimelineView({ session, exchanges, openPanel }: {
+function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
   session: SessionDetailType; exchanges: Exchange[];
   openPanel: (t: string, c: string, s?: string, exs?: Exchange[], nav?: { onPrev?: () => void; onNext?: () => void; prevLabel?: string; nextLabel?: string }) => void;
+  sortNewest?: boolean;
 }) {
   const { segments, milestones, compaction_events: compactionEvents, plans } = session;
 
@@ -279,6 +280,9 @@ function TimelineView({ session, exchanges, openPanel }: {
     else { if (pendingMs.length) { items.push({ kind: "milestones", data: pendingMs, idx: pendingMs[0].exchange_index }); pendingMs = []; } items.push({ kind: r.kind as any, data: r.data, idx: r.idx }); }
   }
   if (pendingMs.length) items.push({ kind: "milestones", data: pendingMs, idx: pendingMs[0].exchange_index });
+
+  // Apply sort
+  const displayItems = sortNewest ? [...items].reverse() : items;
 
   // Get only segment items for navigation
   const segmentItems = items.filter(it => it.kind === "segment");
@@ -348,7 +352,7 @@ function TimelineView({ session, exchanges, openPanel }: {
       {items.length > 0 && (
         <div className="relative pl-9">
           <div className="absolute left-[14px] top-4 bottom-4 w-px" style={{ background: "var(--border)" }} />
-          {items.map((item, i) => {
+          {displayItems.map((item, i) => {
             if (item.kind === "segment") {
               const seg = item.data as Segment;
               const color = SEGMENT_COLORS[seg.segment_type] || "#555";
@@ -537,15 +541,34 @@ export function SessionDetail() {
   const [showAiSetup, setShowAiSetup] = useState(false);
   const [aiKey, setAiKey] = useState("");
   const [aiSaving, setAiSaving] = useState(false);
+  const [sortNewest, setSortNewest] = useState(false);
+  const [newExchangeCount, setNewExchangeCount] = useState(0);
+  const [lastSeenCount, setLastSeenCount] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback((isInitial = false) => {
     if (!id) return;
     if (isInitial) { setLoading(true); setTab("timeline"); }
     Promise.all([getSession(id) as Promise<SessionDetailType>, getSessionExchanges(id, true) as Promise<Exchange[]>])
-      .then(([s, e]) => { setSession(s); setExchanges(e); })
+      .then(([s, e]) => {
+        setSession(s);
+        if (isInitial) {
+          setExchanges(e);
+          setLastSeenCount(e.length);
+          setNewExchangeCount(0);
+        } else {
+          // Background poll — check for new exchanges
+          setExchanges(prev => {
+            if (e.length > prev.length) {
+              setNewExchangeCount(e.length - lastSeenCount);
+            }
+            return e;
+          });
+        }
+      })
       .catch(console.error).finally(() => { if (isInitial) setLoading(false); });
-  }, [id]);
+  }, [id, lastSeenCount]);
 
   useEffect(() => { fetchData(true); }, [fetchData]);
   useEffect(() => {
@@ -643,7 +666,7 @@ export function SessionDetail() {
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs + sort */}
       <div className="flex items-center border-b px-6" style={{ background: "var(--bg-surface)", borderColor: "var(--border)" }}>
         {(["timeline", "transcript"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} className="px-4 py-2.5 text-[13px] transition-colors relative font-medium" style={{ color: tab === t ? "var(--text-primary)" : "var(--text-muted)" }}>
@@ -652,15 +675,44 @@ export function SessionDetail() {
           </button>
         ))}
         <div className="flex-1" />
+        {tab === "timeline" && (
+          <button
+            onClick={() => setSortNewest(!sortNewest)}
+            className="text-[11px] px-2.5 py-1 rounded-md hover:bg-[var(--bg-hover)] transition-colors mr-3"
+            style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
+          >
+            {sortNewest ? "↓ New → Old" : "↑ Old → New"}
+          </button>
+        )}
         <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{exchanges.length} exchanges · {session.segments.length} segments</span>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto relative" ref={contentRef}>
         {tab === "timeline" ? (
-          <TimelineView session={session} exchanges={exchanges} openPanel={openPanel} />
+          <TimelineView session={session} exchanges={exchanges} openPanel={openPanel} sortNewest={sortNewest} />
         ) : (
           <TranscriptView exchanges={exchanges} segments={session.segments} milestones={session.milestones} compactionEvents={session.compaction_events} openPanel={openPanel} />
+        )}
+
+        {/* New updates notification */}
+        {newExchangeCount > 0 && (
+          <div className="sticky bottom-4 flex justify-center pointer-events-none">
+            <button
+              onClick={() => {
+                setLastSeenCount(exchanges.length);
+                setNewExchangeCount(0);
+                // Scroll to bottom for newest content
+                if (contentRef.current) {
+                  contentRef.current.scrollTo({ top: contentRef.current.scrollHeight, behavior: "smooth" });
+                }
+              }}
+              className="pointer-events-auto text-[13px] font-medium px-5 py-2.5 rounded-full shadow-lg transition-all hover:scale-105"
+              style={{ background: "var(--accent)", color: "white", boxShadow: "0 4px 20px rgba(99, 102, 241, 0.4)" }}
+            >
+              ↓ {newExchangeCount} new exchange{newExchangeCount !== 1 ? "s" : ""}
+            </button>
+          </div>
         )}
       </div>
 
