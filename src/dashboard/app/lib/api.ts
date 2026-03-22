@@ -98,3 +98,14 @@ export async function getAnalyzeStatus() {
     analyzed: number;
   }>("/analyze/status");
 }
+
+export interface AnalysisModel {
+  id: string;
+  label: string;
+  description: string;
+  tier: "fast" | "smart" | "powerful";
+}
+
+export async function getAnalysisModels() {
+  return fetchJson<AnalysisModel[]>("/analyze/models");
+}

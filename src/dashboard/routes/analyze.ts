@@ -8,7 +8,7 @@ import {
   insertDecision,
 } from "../../db/queries.js";
 import { loadConfig } from "../../cli/config.js";
-import { createProvider } from "../../analysis/providers.js";
+import { createProvider, ANALYSIS_MODELS } from "../../analysis/providers.js";
 import { generateTitle } from "../../analysis/titles.js";
 import { generateSegmentSummaries } from "../../analysis/summaries.js";
 import { extractDecisions } from "../../analysis/decisions.js";
@@ -34,16 +34,24 @@ analyzeRoutes.post("/sessions/:id/analyze", async (c) => {
   const exchanges = getSessionExchanges(session.id);
   const segments = getSessionSegments(session.id);
 
-  // Convert DB exchanges to ParsedExchange format
-  const parsedExchanges: ParsedExchange[] = exchanges.map((e) => ({
-    index: e.exchange_index,
-    user_prompt: e.user_prompt,
-    assistant_response: e.assistant_response,
-    tool_calls: [],
-    timestamp: e.timestamp,
-    is_interrupt: !!e.is_interrupt,
-    is_compact_summary: !!e.is_compact_summary,
-  }));
+  // Convert DB exchanges to ParsedExchange format (with tool calls for richer context)
+  const parsedExchanges: ParsedExchange[] = exchanges.map((e) => {
+    const tools = db.prepare("SELECT tool_name as name, tool_input as input, tool_use_id as id, is_error FROM tool_calls WHERE exchange_id = ?").all(e.id) as any[];
+    return {
+      index: e.exchange_index,
+      user_prompt: e.user_prompt,
+      assistant_response: e.assistant_response,
+      tool_calls: tools.map((tc: any) => ({
+        name: tc.name,
+        input: (() => { try { return JSON.parse(tc.input); } catch { return tc.input; } })(),
+        id: tc.id || "",
+        is_error: !!tc.is_error,
+      })),
+      timestamp: e.timestamp,
+      is_interrupt: !!e.is_interrupt,
+      is_compact_summary: !!e.is_compact_summary,
+    };
+  });
 
   const extractedSegments: ExtractedSegment[] = segments.map((s) => ({
     segment_type: s.segment_type as any,
@@ -64,6 +72,7 @@ analyzeRoutes.post("/sessions/:id/analyze", async (c) => {
         results.title = title;
       }
     } catch (e: any) {
+      console.error("[AI] Title generation failed:", e.message);
       results.titleError = e.message;
     }
   }
@@ -81,6 +90,7 @@ analyzeRoutes.post("/sessions/:id/analyze", async (c) => {
       }
       results.segmentSummaries = updated;
     } catch (e: any) {
+      console.error("[AI] Segment summaries failed:", e.message);
       results.summaryError = e.message;
     }
   }
@@ -89,6 +99,8 @@ analyzeRoutes.post("/sessions/:id/analyze", async (c) => {
   if (config.analysis.features.decisionExtraction.enabled) {
     try {
       const decisions = await extractDecisions(provider, parsedExchanges, config.analysis.features.decisionExtraction.model);
+      // Clear previous decisions for this session before inserting
+      db.prepare("DELETE FROM decisions WHERE session_id = ?").run(session.id);
       for (const d of decisions) {
         insertDecision({
           session_id: session.id,
@@ -100,6 +112,7 @@ analyzeRoutes.post("/sessions/:id/analyze", async (c) => {
       }
       results.decisions = decisions.length;
     } catch (e: any) {
+      console.error("[AI] Decision extraction failed:", e.message);
       results.decisionError = e.message;
     }
   }
@@ -200,4 +213,9 @@ analyzeRoutes.get("/analyze/status", (c) => {
     hasDecisions,
     analyzed: total - needsTitle,
   });
+});
+
+// GET /api/analyze/models — list available models for UI dropdowns
+analyzeRoutes.get("/analyze/models", (c) => {
+  return c.json(ANALYSIS_MODELS.map(m => ({ id: m.id, label: m.label, description: m.description, tier: m.tier })));
 });

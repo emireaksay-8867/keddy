@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router";
-import { getConfig, updateConfig, getStats, getAnalyzeStatus, analyzeBulk } from "../lib/api.js";
+import { getConfig, updateConfig, getStats, getAnalyzeStatus, analyzeBulk, getAnalysisModels } from "../lib/api.js";
 import type { Stats } from "../lib/types.js";
+import type { AnalysisModel } from "../lib/api.js";
 
 interface ConfigData {
   analysis: {
@@ -12,17 +13,24 @@ interface ConfigData {
   };
 }
 
-const FEATURE_INFO: Record<string, { name: string; description: string; tier: "fast" | "smart" }> = {
-  sessionTitles: { name: "Session Titles", description: "Generate descriptive titles for each session based on the conversation content", tier: "fast" },
-  segmentSummaries: { name: "Segment Summaries", description: "Summarize what happened in each timeline segment", tier: "fast" },
-  decisionExtraction: { name: "Decision Extraction", description: "Identify key technical decisions and their rationale", tier: "fast" },
-  planDiffAnalysis: { name: "Plan Diff Analysis", description: "Analyze changes between plan versions and why they evolved", tier: "smart" },
-  sessionNotes: { name: "Session Notes", description: "Generate retrospective notes for completed sessions", tier: "smart" },
+const FEATURE_INFO: Record<string, { name: string; description: string; defaultTier: string }> = {
+  sessionTitles: { name: "Session Titles", description: "Generate descriptive titles for each session based on the conversation content", defaultTier: "fast" },
+  segmentSummaries: { name: "Segment Summaries", description: "Summarize what happened in each timeline segment", defaultTier: "fast" },
+  decisionExtraction: { name: "Decision Extraction", description: "Identify key technical decisions and their rationale", defaultTier: "fast" },
+  planDiffAnalysis: { name: "Plan Diff Analysis", description: "Analyze changes between plan versions and why they evolved", defaultTier: "smart" },
+  sessionNotes: { name: "Session Notes", description: "Generate retrospective notes for completed sessions", defaultTier: "smart" },
+};
+
+const TIER_COLORS: Record<string, string> = {
+  fast: "#10b981",
+  smart: "#6366f1",
+  powerful: "#f59e0b",
 };
 
 export function Settings() {
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [models, setModels] = useState<AnalysisModel[]>([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [analyzeStatus, setAnalyzeStatus] = useState<{ total: number; needsTitle: number; analyzed: number; hasSummaries: number } | null>(null);
@@ -30,16 +38,25 @@ export function Settings() {
   const [analyzeResult, setAnalyzeResult] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([getConfig() as Promise<ConfigData>, getStats() as Promise<Stats>, getAnalyzeStatus()])
-      .then(([c, s, a]) => { setConfig(c); setStats(s); setAnalyzeStatus(a); })
+    Promise.all([
+      getConfig() as Promise<ConfigData>,
+      getStats() as Promise<Stats>,
+      getAnalyzeStatus(),
+      getAnalysisModels(),
+    ])
+      .then(([c, s, a, m]) => { setConfig(c); setStats(s); setAnalyzeStatus(a); setModels(m); })
       .catch(console.error);
   }, []);
+
+  function getModelLabel(modelId: string): string {
+    const m = models.find(m => m.id === modelId);
+    return m?.label || modelId;
+  }
 
   async function handleBulkAnalyze() {
     setAnalyzing(true);
     setAnalyzeResult("Starting analysis...");
 
-    // Poll status while processing
     const pollInterval = setInterval(async () => {
       try {
         const status = await getAnalyzeStatus();
@@ -81,7 +98,7 @@ export function Settings() {
     <div className="h-full flex flex-col">
       {/* Header */}
       <div className="px-6 py-4 border-b" style={{ background: "var(--bg-surface)", borderColor: "var(--border)" }}>
-        <Link to="/" className="text-[12px] mb-2 flex items-center gap-1 hover:text-[var(--text-primary)] transition-colors" style={{ color: "var(--text-muted)" }}>← Sessions</Link>
+        <Link to="/" className="text-[12px] mb-2 flex items-center gap-1 hover:text-[var(--text-primary)] transition-colors" style={{ color: "var(--text-muted)" }}>&larr; Sessions</Link>
         <h1 className="text-[17px] font-semibold">Settings</h1>
       </div>
 
@@ -175,9 +192,29 @@ export function Settings() {
                               <div className="text-[13px] font-medium">{info.name}</div>
                               <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{info.description}</div>
                             </div>
-                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0" style={{ background: "var(--bg-elevated)", color: "var(--text-muted)" }}>
-                              {info.tier === "fast" ? "Haiku" : "Sonnet"}
-                            </span>
+                            {/* Model selector */}
+                            <select
+                              value={feature.model}
+                              onChange={(e) => {
+                                const features = { ...config.analysis.features };
+                                features[key] = { ...feature, model: e.target.value };
+                                setConfig({ ...config, analysis: { ...config.analysis, features } });
+                              }}
+                              className="text-[11px] px-2 py-1 rounded-md shrink-0 outline-none cursor-pointer"
+                              style={{
+                                background: "var(--bg-elevated)",
+                                border: "1px solid var(--border)",
+                                color: TIER_COLORS[models.find(m => m.id === feature.model)?.tier || "fast"] || "var(--text-secondary)",
+                              }}
+                            >
+                              {models.map(m => (
+                                <option key={m.id} value={m.id}>{m.label}</option>
+                              ))}
+                              {/* Show current value if not in models list (legacy) */}
+                              {!models.find(m => m.id === feature.model) && (
+                                <option value={feature.model}>{feature.model}</option>
+                              )}
+                            </select>
                           </div>
                         );
                       })}

@@ -1,11 +1,21 @@
 import type { AnalysisConfig } from "../types.js";
 
-// Map friendly model names to actual Anthropic API model IDs
-const MODEL_ALIASES: Record<string, string> = {
-  "claude-haiku-4-5-latest": "claude-haiku-4-5-20251001",
-  "claude-sonnet-4-5-latest": "claude-sonnet-4-5-20250514",
-  "claude-opus-4-6": "claude-opus-4-6-20250610",
-};
+// Available models for analysis features
+export const ANALYSIS_MODELS = [
+  { id: "haiku", label: "Haiku 4.5", description: "Fastest, cheapest — great for titles & summaries", apiId: "claude-haiku-4-5-20251001", tier: "fast" as const },
+  { id: "sonnet", label: "Sonnet 4.6", description: "Balanced speed & intelligence", apiId: "claude-sonnet-4-6", tier: "smart" as const },
+  { id: "opus", label: "Opus 4.6", description: "Most intelligent, 1M context", apiId: "claude-opus-4-6", tier: "powerful" as const },
+];
+
+// Map friendly config names to actual Anthropic API model IDs
+const MODEL_ALIASES: Record<string, string> = Object.fromEntries([
+  ...ANALYSIS_MODELS.map(m => [m.id, m.apiId]),
+  ...ANALYSIS_MODELS.map(m => [m.apiId, m.apiId]),
+  // Legacy aliases
+  ["claude-haiku-4-5-latest", "claude-haiku-4-5-20251001"],
+  ["claude-haiku-4-5", "claude-haiku-4-5-20251001"],
+  ["claude-sonnet-4-5-latest", "claude-sonnet-4-5-20250929"],
+]);
 
 function resolveModel(model: string): string {
   return MODEL_ALIASES[model] || model;

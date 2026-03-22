@@ -12,11 +12,11 @@ function getDefaultConfig(): KeddyConfig {
       provider: "anthropic",
       apiKey: "",
       features: {
-        sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
-        segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
-        decisionExtraction: { enabled: true, model: "claude-haiku-4-5-latest" },
-        planDiffAnalysis: { enabled: true, model: "claude-sonnet-4-5-latest" },
-        sessionNotes: { enabled: true, model: "claude-sonnet-4-5-latest" },
+        sessionTitles: { enabled: true, model: "haiku" },
+        segmentSummaries: { enabled: true, model: "haiku" },
+        decisionExtraction: { enabled: true, model: "haiku" },
+        planDiffAnalysis: { enabled: true, model: "sonnet" },
+        sessionNotes: { enabled: true, model: "sonnet" },
       },
     },
   };

@@ -6,7 +6,7 @@ import { getSession, getSessionExchanges, analyzeSession, getConfig, updateConfi
 import { SEGMENT_COLORS, SEGMENT_LABELS } from "../lib/constants.js";
 import { ContentPanel } from "../components/ContentPanel.js";
 import { ClaudeIcon } from "../components/ClaudeIcon.js";
-import type { SessionDetail as SessionDetailType, Exchange, Segment, Milestone, Plan, CompactionEvent } from "../lib/types.js";
+import type { SessionDetail as SessionDetailType, Exchange, Segment, Milestone, Plan, CompactionEvent, Decision } from "../lib/types.js";
 
 // ── Helpers ────────────────────────────────────────────────────
 function fmtTime(d: string) { return new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
@@ -46,6 +46,13 @@ function cleanText(text: string): { cleaned: string; wasInterrupted: boolean } {
   cleaned = cleaned.replace(/<bash-input>[\s\S]*?<\/bash-input>/g, "");
   cleaned = cleaned.replace(/<bash-stdout>[\s\S]*?<\/bash-stdout>/g, "");
   cleaned = cleaned.replace(/<bash-stderr>[\s\S]*?<\/bash-stderr>/g, "");
+  cleaned = cleaned.replace(/<command-name>[\s\S]*?<\/command-name>/g, "");
+  cleaned = cleaned.replace(/<command-message>[\s\S]*?<\/command-message>/g, "");
+  cleaned = cleaned.replace(/<command-args>[\s\S]*?<\/command-args>/g, "");
+  cleaned = cleaned.replace(/<local-command-stdout>[\s\S]*?<\/local-command-stdout>/g, "");
+  cleaned = cleaned.replace(/<ide_opened_file>[\s\S]*?<\/ide_opened_file>/g, "");
+  // Strip any remaining XML-style tags
+  cleaned = cleaned.replace(/<[a-z_-]+>[\s\S]*?<\/[a-z_-]+>/g, "");
   // Strip image references with local paths
   cleaned = cleaned.replace(/\[Image:\s*source:\s*\/var\/folders\/[^\]]*\]/g, "(attached image)");
   // Strip /private/tmp/claude-501/... paths — show just the filename
@@ -391,6 +398,44 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
         </div>
       )}
 
+      {/* Decisions (from AI analysis) */}
+      {session.decisions && session.decisions.length > 0 && (
+        <div className="mb-6 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
+          <div className="px-5 py-3 border-b flex items-center gap-2" style={{ borderColor: "var(--border)" }}>
+            <span className="text-[14px] font-semibold">Key Decisions</span>
+            <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: "var(--accent-dim)", color: "var(--accent)" }}>AI</span>
+            <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>{session.decisions.length} found</span>
+          </div>
+          <div className="divide-y" style={{ borderColor: "var(--border)" }}>
+            {session.decisions.map((d: Decision) => {
+              const alts = (() => { try { return JSON.parse(d.alternatives || "[]"); } catch { return []; } })() as string[];
+              return (
+                <button key={d.id} onClick={() => {
+                  let content = `**Decision:** ${d.decision_text}`;
+                  if (d.context) content += `\n\n**Context:** ${d.context}`;
+                  if (alts.length > 0) content += `\n\n**Alternatives considered:**\n${alts.map(a => `- ${a}`).join("\n")}`;
+                  openPanel("Decision", content, `Exchange #${d.exchange_index}`);
+                }} className="w-full text-left px-5 py-3 hover:bg-[var(--bg-hover)] transition-colors group">
+                  <div className="flex items-start gap-3">
+                    <span className="text-[14px] mt-0.5 shrink-0" style={{ color: "var(--accent)" }}>◆</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-medium" style={{ color: "var(--text-primary)" }}>{d.decision_text}</p>
+                      {d.context && <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trunc(d.context, 120)}</p>}
+                      {alts.length > 0 && (
+                        <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+                          {alts.length} alternative{alts.length !== 1 ? "s" : ""} considered
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-[11px] tabular-nums shrink-0" style={{ color: "var(--text-muted)" }}>#{d.exchange_index}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Timeline */}
       {items.length > 0 && (
         <div className="relative pl-9">
@@ -419,75 +464,76 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
               const toolSummaryLine = Object.entries(tools).slice(0, 3).map(([k, v]) => `${v} ${k}`).join(" · ");
               const fileCount = files.length;
 
+              const hasSummary = !!seg.summary;
+              const previewCount = hasSummary ? 2 : 3;
+              const totalTools = Object.values(tools).reduce((a, b) => a + b, 0);
+
               return (
                 <div key={`s${i}`} className="relative pb-4">
-                  <div className="absolute left-[-27px] top-[14px] w-[10px] h-[10px] rounded-full" style={{ background: color }} />
+                  <div className="absolute left-[-27px] top-[14px] w-[10px] h-[10px] rounded-full" style={{ background: color, boxShadow: `0 0 0 2px var(--bg-root)` }} />
                   <button
                     onClick={() => { const sIdx = segmentItems.findIndex(si => si.data === seg); openSegment(sIdx >= 0 ? sIdx : 0); }}
                     className="w-full text-left rounded-xl border hover:border-[var(--border-bright)] transition-all group overflow-hidden"
                     style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}
                   >
-                    {/* Header */}
-                    <div className="flex items-center gap-2 px-5 pt-4 pb-3">
+                    {/* Header row */}
+                    <div className="flex items-center gap-2 px-5 pt-4 pb-2">
                       <span className="text-[12px] font-semibold px-2.5 py-0.5 rounded-full" style={{ background: `${color}12`, color }}>{label}</span>
-                      <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-                        {segEx.length} exchange{segEx.length !== 1 ? "s" : ""}{segDur ? ` · ${segDur}` : ""}{ts ? ` · ${fmtShortTime(ts)}` : ""}{ts ? ` · ${fmtRelative(ts)}` : ""}
+                      <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>
+                        {segEx.length} exchange{segEx.length !== 1 ? "s" : ""}{segDur ? ` · ${segDur}` : ""}{ts ? ` · ${fmtShortTime(ts)}` : ""}
                       </span>
-                      <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View conversation →</span>
+                      <span className="text-[11px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View →</span>
                     </div>
 
-                    {/* AI summary if available */}
-                    {seg.summary && (
-                      <div className="mx-5 mb-3 px-4 py-2.5 rounded-lg text-[13px] leading-relaxed" style={{ background: `${color}08`, color: "var(--text-secondary)", borderLeft: `3px solid ${color}40` }}>
-                        {seg.summary}
+                    {/* AI summary — styled card with gradient accent */}
+                    {hasSummary && (
+                      <div className="mx-5 mb-3 rounded-lg px-4 py-3 flex items-start gap-2.5" style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.06), rgba(168,85,247,0.04))", border: "1px solid rgba(99,102,241,0.1)" }}>
+                        <span className="text-[14px] shrink-0 mt-0.5" style={{ color: "#8b5cf6" }}>✦</span>
+                        <p className="text-[13px] leading-[1.65]" style={{ color: "var(--text-primary)" }}>
+                          {seg.summary}
+                        </p>
                       </div>
                     )}
 
-                    {/* Conversation flow — threaded style with left accent border */}
-                    <div className="mx-5 mb-4 rounded-lg overflow-hidden" style={{ background: "var(--bg-elevated)" }}>
-                      {flowPairs.slice(0, 3).map((pair, j) => (
-                        <div key={j} className="border-b last:border-b-0" style={{ borderColor: "var(--border)" }}>
-                          {/* User turn */}
+                    {/* Conversation preview — compact but readable with user/claude indicators */}
+                    <div className="mx-5 mb-3 rounded-lg overflow-hidden" style={{ background: "var(--bg-elevated)" }}>
+                      {flowPairs.slice(0, previewCount).map((pair, j) => (
+                        <div key={j} className="px-3.5 py-2 border-b last:border-b-0" style={{ borderColor: "var(--border)" }}>
                           {pair.user && (
-                            <div className="px-4 py-2.5 flex gap-3 items-start" style={{ borderLeft: `3px solid var(--user-accent)` }}>
-                              <span className="text-[11px] font-semibold shrink-0 mt-0.5 w-6" style={{ color: "var(--user-accent)" }}>You</span>
-                              <p className="text-[13px] leading-[1.6]" style={{ color: "var(--text-primary)" }}>
-                                {trunc(pair.user, 250)}
+                            <div className="flex items-start gap-2">
+                              <span className="text-[10px] font-semibold shrink-0 mt-0.5" style={{ color: "var(--user-accent)" }}>You</span>
+                              <p className="text-[12px] leading-[1.5] line-clamp-1" style={{ color: "var(--text-primary)" }}>
+                                {trunc(pair.user, hasSummary ? 120 : 200)}
                               </p>
                             </div>
                           )}
-                          {/* Claude turn */}
                           {pair.claude && (
-                            <div className="px-4 py-2.5 flex gap-3 items-start" style={{ borderLeft: `3px solid var(--claude-accent)` }}>
-                              <span className="shrink-0 mt-0.5 w-6 flex justify-center"><ClaudeIcon size={14} /></span>
-                              <p className="text-[13px] leading-[1.6]" style={{ color: "var(--text-secondary)" }}>
-                                {trunc(pair.claude, 200)}
+                            <div className="flex items-start gap-2 mt-1">
+                              <span className="shrink-0 mt-0.5"><ClaudeIcon size={11} /></span>
+                              <p className="text-[12px] leading-[1.5] line-clamp-1" style={{ color: "var(--text-tertiary)" }}>
+                                {trunc(pair.claude, hasSummary ? 80 : 140)}
                               </p>
                             </div>
                           )}
-                          {/* Tools indicator */}
                           {pair.tools > 0 && (
-                            <div className="px-4 py-1.5 flex gap-3 items-center" style={{ borderLeft: "3px solid var(--border)" }}>
-                              <span className="w-6" />
-                              <span className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }}>{pair.tools} tool{pair.tools !== 1 ? "s" : ""} used</span>
-                            </div>
+                            <span className="text-[10px] font-mono ml-5 mt-0.5 inline-block" style={{ color: "var(--text-muted)" }}>{pair.tools} tool{pair.tools !== 1 ? "s" : ""}</span>
                           )}
                         </div>
                       ))}
-                      {flowPairs.length > 3 && (
-                        <div className="px-4 py-2 text-center" style={{ borderTop: "1px solid var(--border)" }}>
-                          <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>+{flowPairs.length - 3} more exchange{flowPairs.length - 3 !== 1 ? "s" : ""}</span>
+                      {flowPairs.length > previewCount && (
+                        <div className="px-3.5 py-1.5 text-center">
+                          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>+{flowPairs.length - previewCount} more exchange{flowPairs.length - previewCount !== 1 ? "s" : ""}</span>
                         </div>
                       )}
                     </div>
 
-                    {/* Tool + file footer */}
-                    {(toolSummaryLine || fileCount > 0) && (
-                      <div className="flex items-center flex-wrap gap-2 text-[11px] px-5 pb-3.5 pt-0" style={{ color: "var(--text-muted)" }}>
-                        {toolSummaryLine && <span className="font-mono">{toolSummaryLine}</span>}
-                        {fileCount > 0 && <span>· {fileCount} file{fileCount !== 1 ? "s" : ""}</span>}
+                    {/* Footer — files + tools summary */}
+                    {(totalTools > 0 || fileCount > 0) && (
+                      <div className="flex items-center flex-wrap gap-2 text-[11px] px-5 pb-3" style={{ color: "var(--text-muted)" }}>
+                        {totalTools > 0 && <span className="font-mono">{totalTools} tools</span>}
+                        {fileCount > 0 && <span>{fileCount} file{fileCount !== 1 ? "s" : ""}</span>}
                         {files.slice(0, 3).map(f => (
-                          <span key={f} className="font-mono px-1.5 py-0.5 rounded" style={{ background: "var(--bg-root)" }}>{f.split("/").pop()}</span>
+                          <span key={f} className="font-mono px-1.5 py-0.5 rounded text-[10px]" style={{ background: "var(--bg-root)" }}>{f.split("/").pop()}</span>
                         ))}
                         {files.length > 3 && <span>+{files.length - 3}</span>}
                       </div>
@@ -522,31 +568,23 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
               };
 
               return (
-                <div key={`mg${i}`} className="relative pb-4">
-                  <div className="absolute left-[-25px] top-[12px] w-[6px] h-[6px] rounded-full" style={{ background: "var(--accent)" }} />
+                <div key={`mg${i}`} className="relative pb-3">
+                  <div className="absolute left-[-25px] top-[10px] w-[5px] h-[5px] rounded-full" style={{ background: "var(--accent)" }} />
                   <button
                     onClick={handleMilestoneClick}
-                    className="w-full text-left rounded-xl border p-4 hover:border-[var(--border-bright)] transition-all group"
+                    className="w-full text-left rounded-lg border px-3.5 py-2.5 hover:border-[var(--border-bright)] transition-all group"
                     style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}
                   >
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       {Array.from(summary.entries()).map(([type, count]) => {
                         const cfg = MS_CONFIG[type] || { icon: "·", label: type, color: "#888" };
-                        return <span key={type} className="text-[12px] font-medium px-2.5 py-1 rounded-full" style={{ background: `${cfg.color}10`, color: cfg.color }}>{cfg.icon} {count > 1 ? `${count}× ${cfg.label}` : cfg.label}</span>;
+                        return <span key={type} className="text-[11px] font-medium px-2 py-0.5 rounded-full" style={{ background: `${cfg.color}10`, color: cfg.color }}>{cfg.icon} {count > 1 ? `${count}× ${cfg.label}` : cfg.label}</span>;
                       })}
                       {(() => {
                         const msTs = exchanges.find(e => e.exchange_index === group[0].exchange_index)?.timestamp;
-                        return msTs ? <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtShortTime(msTs)} · {fmtRelative(msTs)}</span> : null;
+                        return msTs ? <span className="text-[10px] tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtShortTime(msTs)}</span> : null;
                       })()}
-                      <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity self-center" style={{ color: "var(--accent)" }}>View details →</span>
                     </div>
-                    {group.length <= 4 && (
-                      <div className="mt-2 space-y-0.5">
-                        {group.map((m, j) => (
-                          <div key={j} className="text-[12px] px-2 py-0.5" style={{ color: "var(--text-secondary)" }}>{m.description}</div>
-                        ))}
-                      </div>
-                    )}
                   </button>
                 </div>
               );
@@ -560,42 +598,34 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
             const hasAnalysis = !!ce.analysis_summary;
             const hasContent = hasContinuation || hasAnalysis;
             return (
-              <div key={`c${i}`} className="relative pb-4">
-                <div className="absolute left-[-25px] top-[12px] w-[6px] h-[6px] rounded-full" style={{ background: SEGMENT_COLORS.exploring }} />
-                <div className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
+              <div key={`c${i}`} className="relative pb-3">
+                <div className="absolute left-[-25px] top-[10px] w-[5px] h-[5px] rounded-full" style={{ background: SEGMENT_COLORS.exploring }} />
+                <div className="rounded-lg border overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
                   {/* Header */}
-                  <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: hasContent ? "1px solid var(--border)" : "none" }}>
-                    <span className="text-[12px] font-semibold" style={{ color: SEGMENT_COLORS.exploring }}>Context Compacted</span>
-                    {tokenInfo && <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}>{tokenInfo}</span>}
-                    {ceTs && <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtShortTime(ceTs)}</span>}
+                  <div className="flex items-center gap-2 px-3.5 py-2" style={{ borderBottom: hasContent ? "1px solid var(--border)" : "none" }}>
+                    <span className="text-[11px] font-semibold" style={{ color: SEGMENT_COLORS.exploring }}>Context Compacted</span>
+                    {tokenInfo && <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}>{tokenInfo}</span>}
+                    {ceTs && <span className="text-[10px] tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtShortTime(ceTs)}</span>}
                   </div>
 
-                  {/* Analysis summary — Claude's analysis of the compacted conversation */}
+                  {/* Analysis summary */}
                   {hasAnalysis && (
                     <button
                       onClick={() => openPanel("Compaction Analysis", ce.analysis_summary!, tokenInfo ? `Analysis of ${tokenInfo} before compaction` : "Analysis of compacted context")}
-                      className="w-full text-left px-4 py-2.5 hover:bg-[var(--bg-hover)] transition-colors group"
+                      className="w-full text-left px-3.5 py-2 hover:bg-[var(--bg-hover)] transition-colors group"
                       style={{ borderBottom: hasContinuation ? "1px solid var(--border)" : "none" }}
                     >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Analysis</span>
-                        <span className="text-[11px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View →</span>
-                      </div>
-                      <p className="text-[12px] line-clamp-2" style={{ color: "var(--text-tertiary)" }}>{trunc(ce.analysis_summary!, 150)}</p>
+                      <p className="text-[11px] line-clamp-2" style={{ color: "var(--text-tertiary)" }}>{trunc(ce.analysis_summary!, 150)}</p>
                     </button>
                   )}
 
-                  {/* Continuation context — the summary injected for the next turn */}
+                  {/* Continuation context */}
                   {hasContinuation && (
                     <button
                       onClick={() => openPanel("Continuation Context", ce.summary!, tokenInfo ? `Context carried forward after ${tokenInfo} compacted` : "Context carried forward")}
-                      className="w-full text-left px-4 py-2.5 hover:bg-[var(--bg-hover)] transition-colors group"
+                      className="w-full text-left px-3.5 py-2 hover:bg-[var(--bg-hover)] transition-colors group"
                     >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Continuation Context</span>
-                        <span className="text-[11px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View →</span>
-                      </div>
-                      <p className="text-[12px] line-clamp-2" style={{ color: "var(--text-tertiary)" }}>{trunc(ce.summary!, 150)}</p>
+                      <p className="text-[11px] line-clamp-1" style={{ color: "var(--text-muted)" }}>{trunc(ce.summary!, 120)}</p>
                     </button>
                   )}
 
@@ -626,6 +656,7 @@ export function SessionDetail() {
   const [tab, setTab] = useState<"timeline" | "transcript">("timeline");
   const [panel, setPanel] = useState<PanelContent>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeStep, setAnalyzeStep] = useState("");
   const [showAiSetup, setShowAiSetup] = useState(false);
   const [aiKey, setAiKey] = useState("");
   const [aiSaving, setAiSaving] = useState(false);
@@ -701,29 +732,48 @@ export function SessionDetail() {
             const hasAiSummaries = session.segments.some(s => s.summary);
             const isAiTitle = session.title && session.title.length < 80 && !session.title.startsWith("[") && !session.title.includes("implement the following") && !/^[a-f0-9-]{20,}$/.test(session.title);
 
+            const runAnalysis = async () => {
+              if (!id) return;
+              try {
+                const cfg = await getConfig() as any;
+                if (!cfg.analysis?.enabled || !cfg.analysis?.apiKey) {
+                  setAiKey(cfg.analysis?.apiKey || "");
+                  setShowAiSetup(true);
+                  return;
+                }
+                setAnalyzing(true);
+                setAnalyzeStep("Generating title...");
+                const steps = ["Generating title...", "Summarizing segments...", "Extracting decisions..."];
+                let step = 0;
+                const stepTimer = setInterval(() => {
+                  step = Math.min(step + 1, steps.length - 1);
+                  setAnalyzeStep(steps[step]);
+                }, 4000);
+                await analyzeSession(id);
+                clearInterval(stepTimer);
+                setAnalyzeStep("");
+                setAnalyzing(false);
+                fetchData(true);
+              } catch (e: any) {
+                if (e.message?.includes("not enabled") || e.message?.includes("No API key")) {
+                  setShowAiSetup(true);
+                }
+                setAnalyzeStep("");
+              } finally { setAnalyzing(false); }
+            };
+
             if (analyzing) {
               return (
-                <span className="text-[11px] font-medium px-2.5 py-1 rounded-lg ml-2 flex items-center gap-1.5" style={{ color: "var(--accent)", border: "1px solid var(--border)" }}>
+                <span className="text-[11px] font-medium px-3 py-1.5 rounded-lg ml-2 flex items-center gap-2" style={{ color: "var(--accent)", background: "var(--accent-dim)", border: "1px solid var(--accent)" }}>
                   <span className="w-3 h-3 border-2 border-current rounded-full animate-spin" style={{ borderTopColor: "transparent" }} />
-                  Analyzing...
+                  {analyzeStep || "Analyzing..."}
                 </span>
               );
             }
 
             if (hasAiSummaries) {
               return (
-                <button
-                  onClick={async () => {
-                    if (!id) return;
-                    try {
-                      const cfg = await getConfig() as any;
-                      if (!cfg.analysis?.enabled || !cfg.analysis?.apiKey) { setShowAiSetup(true); return; }
-                      setAnalyzing(true);
-                      await analyzeSession(id);
-                      fetchData(false);
-                    } catch { setShowAiSetup(true); }
-                    finally { setAnalyzing(false); }
-                  }}
+                <button onClick={runAnalysis}
                   className="text-[11px] font-medium px-2.5 py-1 rounded-lg ml-2 transition-colors hover:bg-[var(--bg-hover)] flex items-center gap-1"
                   style={{ color: "#10b981", border: "1px solid var(--border)" }}
                 >
@@ -734,25 +784,7 @@ export function SessionDetail() {
             }
 
             return (
-              <button
-                onClick={async () => {
-                  if (!id) return;
-                  try {
-                    const cfg = await getConfig() as any;
-                    if (!cfg.analysis?.enabled || !cfg.analysis?.apiKey) {
-                      setAiKey(cfg.analysis?.apiKey || "");
-                      setShowAiSetup(true);
-                      return;
-                    }
-                    setAnalyzing(true);
-                    await analyzeSession(id);
-                    fetchData(false);
-                  } catch (e: any) {
-                    if (e.message?.includes("not enabled") || e.message?.includes("No API key")) {
-                      setShowAiSetup(true);
-                    }
-                  } finally { setAnalyzing(false); }
-                }}
+              <button onClick={runAnalysis}
                 className="text-[11px] font-medium px-2.5 py-1 rounded-lg ml-2 transition-colors hover:bg-[var(--bg-hover)]"
                 style={{ color: "var(--accent)", border: "1px solid var(--border)" }}
               >

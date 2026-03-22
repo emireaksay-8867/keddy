@@ -16,6 +16,14 @@ export interface SessionListItem {
   parent_title?: string | null;
 }
 
+export interface Decision {
+  id: string;
+  exchange_index: number;
+  decision_text: string;
+  context: string | null;
+  alternatives: string | null; // JSON array string
+}
+
 export interface SessionDetail {
   id: string;
   session_id: string;
@@ -32,6 +40,7 @@ export interface SessionDetail {
   plans: Plan[];
   compaction_events: CompactionEvent[];
   tasks: Task[];
+  decisions: Decision[];
 }
 
 export interface Task {

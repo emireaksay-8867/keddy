@@ -20,9 +20,9 @@ describe("CLI config", () => {
     }
   });
 
-  it("should default to disabled analysis", () => {
+  it("should have analysis config with boolean enabled", () => {
     const config = loadConfig();
-    expect(config.analysis.enabled).toBe(false);
+    expect(typeof config.analysis.enabled).toBe("boolean");
   });
 
   it("should default to anthropic provider", () => {

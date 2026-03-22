@@ -188,6 +188,12 @@ sessionsRoutes.get("/:id", (c) => {
     FROM tasks WHERE session_id = ? ORDER BY task_index
   `).all(session.id);
 
+  // Get decisions (from AI analysis)
+  const decisions = db.prepare(`
+    SELECT id, exchange_index, decision_text, context, alternatives
+    FROM decisions WHERE session_id = ? ORDER BY exchange_index
+  `).all(session.id);
+
   return c.json({
     ...session,
     segments,
@@ -195,6 +201,7 @@ sessionsRoutes.get("/:id", (c) => {
     plans,
     compaction_events: compactions,
     tasks,
+    decisions,
   });
 });
 
