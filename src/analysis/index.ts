@@ -29,20 +29,8 @@ export async function runAnalysis(
 
   const result: AnalysisResult = {};
 
-  // Session titles
-  if (config.analysis.features.sessionTitles.enabled) {
-    try {
-      result.title = await generateTitle(
-        provider,
-        exchanges,
-        config.analysis.features.sessionTitles.model,
-      );
-    } catch {
-      // Non-critical
-    }
-  }
-
-  // Segment summaries
+  // Step 1: Segment summaries first
+  const summaryTexts: string[] = [];
   if (config.analysis.features.segmentSummaries.enabled) {
     try {
       result.segmentSummaries = await generateSegmentSummaries(
@@ -51,12 +39,29 @@ export async function runAnalysis(
         segments,
         config.analysis.features.segmentSummaries.model,
       );
+      for (const s of result.segmentSummaries.values()) {
+        summaryTexts.push(s.includes("|||") ? s.split("|||")[1].trim() : s);
+      }
     } catch {
       // Non-critical
     }
   }
 
-  // Decision extraction
+  // Step 2: Title using summaries as context
+  if (config.analysis.features.sessionTitles.enabled) {
+    try {
+      result.title = await generateTitle(
+        provider,
+        exchanges,
+        config.analysis.features.sessionTitles.model,
+        summaryTexts,
+      );
+    } catch {
+      // Non-critical
+    }
+  }
+
+  // Step 3: Decision extraction
   if (config.analysis.features.decisionExtraction.enabled) {
     try {
       result.decisions = await extractDecisions(

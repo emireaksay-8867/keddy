@@ -63,21 +63,8 @@ analyzeRoutes.post("/sessions/:id/analyze", async (c) => {
 
   const results: Record<string, unknown> = {};
 
-  // Generate title
-  if (config.analysis.features.sessionTitles.enabled) {
-    try {
-      const title = await generateTitle(provider, parsedExchanges, config.analysis.features.sessionTitles.model);
-      if (title) {
-        db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, session.id);
-        results.title = title;
-      }
-    } catch (e: any) {
-      console.error("[AI] Title generation failed:", e.message);
-      results.titleError = e.message;
-    }
-  }
-
-  // Generate segment summaries
+  // Step 1: Generate segment summaries FIRST (title will use them as context)
+  const generatedSummaries: string[] = [];
   if (config.analysis.features.segmentSummaries.enabled) {
     try {
       const summaries = await generateSegmentSummaries(provider, parsedExchanges, extractedSegments, config.analysis.features.segmentSummaries.model);
@@ -86,12 +73,29 @@ analyzeRoutes.post("/sessions/:id/analyze", async (c) => {
         if (segments[idx]) {
           db.prepare("UPDATE segments SET summary = ? WHERE id = ?").run(summary, segments[idx].id);
           updated++;
+          generatedSummaries.push(summary);
         }
       }
       results.segmentSummaries = updated;
     } catch (e: any) {
       console.error("[AI] Segment summaries failed:", e.message);
       results.summaryError = e.message;
+    }
+  }
+
+  // Step 2: Generate title AFTER summaries — uses them for better context
+  if (config.analysis.features.sessionTitles.enabled) {
+    try {
+      // Extract just the summary part (strip label prefix if present)
+      const summaryTexts = generatedSummaries.map(s => s.includes("|||") ? s.split("|||")[1].trim() : s);
+      const title = await generateTitle(provider, parsedExchanges, config.analysis.features.sessionTitles.model, summaryTexts);
+      if (title) {
+        db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, session.id);
+        results.title = title;
+      }
+    } catch (e: any) {
+      console.error("[AI] Title generation failed:", e.message);
+      results.titleError = e.message;
     }
   }
 
@@ -160,16 +164,8 @@ analyzeRoutes.post("/analyze/bulk", async (c) => {
 
       if (parsedExchanges.length === 0) continue;
 
-      // Generate title
-      if (config.analysis.features.sessionTitles.enabled) {
-        const title = await generateTitle(provider, parsedExchanges, config.analysis.features.sessionTitles.model);
-        if (title) {
-          db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, session.id);
-          results.push({ session_id: session.session_id, title });
-        }
-      }
-
-      // Generate segment summaries
+      // Generate segment summaries first
+      const bulkSummaries: string[] = [];
       if (config.analysis.features.segmentSummaries.enabled) {
         const segments = getSessionSegments(session.id);
         const extractedSegments: ExtractedSegment[] = segments.map((s) => ({
@@ -183,7 +179,18 @@ analyzeRoutes.post("/analyze/bulk", async (c) => {
         for (const [idx, summary] of summaries) {
           if (segments[idx]) {
             db.prepare("UPDATE segments SET summary = ? WHERE id = ?").run(summary, segments[idx].id);
+            bulkSummaries.push(summary);
           }
+        }
+      }
+
+      // Generate title using summaries as context
+      if (config.analysis.features.sessionTitles.enabled) {
+        const bulkSummaryTexts = bulkSummaries.map(s => s.includes("|||") ? s.split("|||")[1].trim() : s);
+        const title = await generateTitle(provider, parsedExchanges, config.analysis.features.sessionTitles.model, bulkSummaryTexts);
+        if (title) {
+          db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, session.id);
+          results.push({ session_id: session.session_id, title });
         }
       }
     } catch (e: any) {

@@ -203,7 +203,8 @@ function ExchangeBubble({ ex, openPanel }: { ex: Exchange; openPanel: (t: string
 // ── Inline Segment Marker (for transcript view) ────────────────
 function InlineSegmentMarker({ seg, exchanges }: { seg: Segment; exchanges: Exchange[] }) {
   const color = SEGMENT_COLORS[seg.segment_type] || "#555";
-  const label = SEGMENT_LABELS[seg.segment_type] || seg.segment_type;
+  const aiLabel = seg.summary?.includes("|||") ? seg.summary.split("|||")[0].trim() : "";
+  const label = aiLabel || SEGMENT_LABELS[seg.segment_type] || seg.segment_type;
   const ts = exchanges.find(e => e.exchange_index === seg.exchange_index_start)?.timestamp;
   return (
     <div className="flex items-center gap-2.5 py-3 my-2">
@@ -301,7 +302,8 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
     const seg = segmentItems[segIdx]?.data as Segment | undefined;
     if (!seg) return;
     const color = SEGMENT_COLORS[seg.segment_type] || "#555";
-    const label = SEGMENT_LABELS[seg.segment_type] || seg.segment_type;
+    const aiLabel = seg.summary?.includes("|||") ? seg.summary.split("|||")[0].trim() : "";
+    const label = aiLabel || SEGMENT_LABELS[seg.segment_type] || seg.segment_type;
     const segEx = exchanges.filter(e => e.exchange_index >= seg.exchange_index_start && e.exchange_index <= seg.exchange_index_end);
     const ts = segEx[0]?.timestamp;
     const tsEnd = segEx[segEx.length - 1]?.timestamp;
@@ -444,7 +446,24 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
             if (item.kind === "segment") {
               const seg = item.data as Segment;
               const color = SEGMENT_COLORS[seg.segment_type] || "#555";
-              const label = SEGMENT_LABELS[seg.segment_type] || seg.segment_type;
+              const baseLabel = SEGMENT_LABELS[seg.segment_type] || seg.segment_type;
+
+              // Parse AI label|||summary format
+              let aiLabel = "";
+              let aiSummary = "";
+              if (seg.summary) {
+                const parts = seg.summary.split("|||");
+                if (parts.length === 2) {
+                  aiLabel = parts[0].trim();
+                  aiSummary = parts[1].trim();
+                } else {
+                  // Old format — no label, just summary
+                  aiSummary = seg.summary;
+                }
+              }
+              const label = aiLabel || baseLabel;
+              const hasSummary = !!aiSummary;
+
               const files = safeJson<string[]>(seg.files_touched || "[]", []);
               const tools = safeJson<Record<string, number>>(seg.tool_counts || "{}", {});
               const segEx = exchanges.filter(e => e.exchange_index >= seg.exchange_index_start && e.exchange_index <= seg.exchange_index_end);
@@ -453,8 +472,6 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
               const segDur = ts && tsEnd ? fmtDuration(ts, tsEnd) : "";
               const range = seg.exchange_index_start === seg.exchange_index_end ? `#${seg.exchange_index_start}` : `#${seg.exchange_index_start}–${seg.exchange_index_end}`;
 
-              // Get a one-line summary from the first meaningful user prompt
-              // Build conversation flow preview (user→claude pairs)
               const flowPairs: Array<{ user: string; claude: string; tools: number }> = [];
               for (const e of segEx) {
                 const { cleaned: u } = cleanText(e.user_prompt);
@@ -463,8 +480,6 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
               }
               const toolSummaryLine = Object.entries(tools).slice(0, 3).map(([k, v]) => `${v} ${k}`).join(" · ");
               const fileCount = files.length;
-
-              const hasSummary = !!seg.summary;
               const previewCount = hasSummary ? 2 : 3;
               const totalTools = Object.values(tools).reduce((a, b) => a + b, 0);
 
@@ -490,7 +505,7 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
                       <div className="mx-5 mb-3 rounded-lg px-4 py-3 flex items-start gap-2.5" style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.06), rgba(168,85,247,0.04))", border: "1px solid rgba(99,102,241,0.1)" }}>
                         <span className="text-[14px] shrink-0 mt-0.5" style={{ color: "#8b5cf6" }}>✦</span>
                         <p className="text-[13px] leading-[1.65]" style={{ color: "var(--text-primary)" }}>
-                          {seg.summary}
+                          {aiSummary}
                         </p>
                       </div>
                     )}
