@@ -676,13 +676,22 @@ export function SessionDetail() {
         ))}
         <div className="flex-1" />
         {tab === "timeline" && (
-          <button
-            onClick={() => setSortNewest(!sortNewest)}
-            className="text-[11px] px-2.5 py-1 rounded-md hover:bg-[var(--bg-hover)] transition-colors mr-3"
-            style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
-          >
-            {sortNewest ? "↓ New → Old" : "↑ Old → New"}
-          </button>
+          <div className="flex rounded-lg overflow-hidden border mr-3" style={{ borderColor: "var(--border)" }}>
+            <button
+              onClick={() => setSortNewest(false)}
+              className="px-2.5 py-1 text-[11px] transition-colors"
+              style={{ background: !sortNewest ? "var(--accent)" : "transparent", color: !sortNewest ? "white" : "var(--text-muted)" }}
+            >
+              Oldest first
+            </button>
+            <button
+              onClick={() => setSortNewest(true)}
+              className="px-2.5 py-1 text-[11px] transition-colors"
+              style={{ background: sortNewest ? "var(--accent)" : "transparent", color: sortNewest ? "white" : "var(--text-muted)" }}
+            >
+              Latest first
+            </button>
+          </div>
         )}
         <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{exchanges.length} exchanges · {session.segments.length} segments</span>
       </div>
