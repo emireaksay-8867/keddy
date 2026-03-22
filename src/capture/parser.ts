@@ -142,7 +142,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     // Extract metadata from early entries
     if (entry.sessionId && !sessionId) sessionId = entry.sessionId;
     if (entry.cwd && !projectPath) projectPath = entry.cwd;
-    if (entry.gitBranch && !gitBranch) gitBranch = entry.gitBranch;
+    if (entry.gitBranch) gitBranch = entry.gitBranch; // Always update — use latest branch
     if (entry.version && !claudeVersion) claudeVersion = entry.version;
     if (entry.slug && !slug) slug = entry.slug;
     if (entry.forkedFrom && !forkedFrom) {

@@ -133,3 +133,75 @@ sessionsRoutes.post("/:id/title", async (c) => {
 
   return c.json({ ok: true });
 });
+
+// POST /api/sessions/:id/sync — re-sync a session from its JSONL file
+sessionsRoutes.post("/:id/sync", (c) => {
+  const id = c.req.param("id");
+  const session = getSession(id) ?? getSessionById(id);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+  if (!session.jsonl_path) return c.json({ error: "No JSONL file path" }, 400);
+
+  try {
+    const { existsSync } = require("node:fs");
+    if (!existsSync(session.jsonl_path)) return c.json({ error: "JSONL file not found" }, 404);
+
+    const { parseTranscript } = require("../../capture/parser.js");
+    const transcript = parseTranscript(session.jsonl_path);
+
+    const db = getDb();
+
+    // Update session metadata
+    db.prepare(`
+      UPDATE sessions SET
+        git_branch = COALESCE(?, git_branch),
+        ended_at = COALESCE(?, ended_at),
+        exchange_count = ?
+      WHERE id = ?
+    `).run(
+      transcript.git_branch,
+      transcript.ended_at,
+      transcript.exchanges.length,
+      session.id,
+    );
+
+    // Insert any missing exchanges
+    const { insertExchange, insertToolCall } = require("../../db/queries.js");
+    let added = 0;
+    for (const exchange of transcript.exchanges) {
+      const eid = insertExchange({
+        session_id: session.id,
+        exchange_index: exchange.index,
+        user_prompt: exchange.user_prompt,
+        assistant_response: exchange.assistant_response,
+        tool_call_count: exchange.tool_calls.length,
+        timestamp: exchange.timestamp,
+        is_interrupt: exchange.is_interrupt,
+        is_compact_summary: exchange.is_compact_summary,
+      });
+      // insertExchange returns existing ID if duplicate, but we don't know if it was new
+      for (const tc of exchange.tool_calls) {
+        try {
+          insertToolCall({
+            exchange_id: eid,
+            session_id: session.id,
+            tool_name: tc.name,
+            tool_input: JSON.stringify(tc.input),
+            tool_result: tc.result ?? null,
+            tool_use_id: tc.id,
+            is_error: tc.is_error ?? false,
+          });
+        } catch { /* duplicate tool call */ }
+      }
+      added++;
+    }
+
+    return c.json({
+      ok: true,
+      exchanges: transcript.exchanges.length,
+      branch: transcript.git_branch,
+      ended_at: transcript.ended_at,
+    });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});

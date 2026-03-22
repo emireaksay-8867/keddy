@@ -121,6 +121,40 @@ async function handleStop(input: HookStdin): Promise<void> {
         });
       }
     }
+
+    // Update session timestamp and metadata on every Stop call
+    // so the dashboard shows current activity
+    const lastExchange = latestExchanges[latestExchanges.length - 1];
+    if (lastExchange) {
+      const db = getDb();
+      db.prepare(`
+        UPDATE sessions SET
+          ended_at = COALESCE(?, ended_at),
+          exchange_count = (SELECT COUNT(*) FROM exchanges WHERE session_id = ?)
+        WHERE id = ?
+      `).run(lastExchange.timestamp || new Date().toISOString(), sessionRow.id, sessionRow.id);
+    }
+
+    // Update git branch from the latest JSONL entries
+    // Branch can change mid-session, so read the tail of the file
+    try {
+      const fs = await import("node:fs");
+      const stat = fs.statSync(input.transcript_path);
+      const readSize = Math.min(stat.size, 4096);
+      const buf = Buffer.alloc(readSize);
+      const fd = fs.openSync(input.transcript_path, "r");
+      fs.readSync(fd, buf, 0, readSize, stat.size - readSize);
+      fs.closeSync(fd);
+      const tail = buf.toString("utf8");
+      const matches = [...tail.matchAll(/"gitBranch"\s*:\s*"([^"]+)"/g)];
+      if (matches.length > 0) {
+        const latestBranch = matches[matches.length - 1][1];
+        const db = getDb();
+        db.prepare("UPDATE sessions SET git_branch = ? WHERE id = ?").run(latestBranch, sessionRow.id);
+      }
+    } catch {
+      // Non-critical
+    }
   } finally {
     closeDb();
   }
