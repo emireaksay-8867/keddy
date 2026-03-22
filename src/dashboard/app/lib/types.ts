@@ -29,6 +29,16 @@ export interface SessionDetail {
   milestones: Milestone[];
   plans: Plan[];
   compaction_events: CompactionEvent[];
+  tasks: Task[];
+}
+
+export interface Task {
+  id: string;
+  subject: string;
+  description: string;
+  status: string;
+  exchange_created: number;
+  exchange_completed: number | null;
 }
 
 export interface Exchange {

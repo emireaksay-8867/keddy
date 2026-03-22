@@ -350,6 +350,47 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
         </div>
       )}
 
+      {/* Tasks */}
+      {session.tasks && session.tasks.length > 0 && (
+        <div className="mb-6 rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}>
+          <div className="px-5 py-3 border-b flex items-center gap-2" style={{ borderColor: "var(--border)" }}>
+            <span className="text-[14px] font-semibold">Tasks</span>
+            <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+              {session.tasks.filter(t => t.status === "completed").length}/{session.tasks.length} completed
+            </span>
+            {/* Progress bar */}
+            <div className="flex-1 h-1.5 rounded-full ml-2" style={{ background: "var(--bg-elevated)" }}>
+              <div className="h-full rounded-full transition-all" style={{
+                width: `${(session.tasks.filter(t => t.status === "completed").length / session.tasks.length) * 100}%`,
+                background: session.tasks.every(t => t.status === "completed") ? "#10b981" : "var(--accent)",
+              }} />
+            </div>
+          </div>
+          <div className="divide-y" style={{ borderColor: "var(--border)" }}>
+            {session.tasks.map(task => {
+              const statusIcon = task.status === "completed" ? "✓" : task.status === "in_progress" ? "◐" : task.status === "stopped" ? "✗" : "○";
+              const statusColor = task.status === "completed" ? "#10b981" : task.status === "in_progress" ? "var(--accent)" : task.status === "stopped" ? "#ef4444" : "var(--text-muted)";
+              return (
+                <div key={task.id} className="px-5 py-2.5 flex items-start gap-3">
+                  <span className="text-[14px] mt-0.5 shrink-0" style={{ color: statusColor }}>{statusIcon}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-medium" style={{ color: task.status === "completed" ? "var(--text-tertiary)" : "var(--text-primary)", textDecoration: task.status === "completed" ? "line-through" : "none" }}>
+                      {task.subject}
+                    </p>
+                    {task.description && task.description !== task.subject && (
+                      <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trunc(task.description, 120)}</p>
+                    )}
+                  </div>
+                  <span className="text-[11px] tabular-nums shrink-0" style={{ color: "var(--text-muted)" }}>
+                    #{task.exchange_created}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Timeline */}
       {items.length > 0 && (
         <div className="relative pl-9">
