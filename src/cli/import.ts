@@ -175,10 +175,28 @@ export async function runImport(): Promise<void> {
         });
       }
 
-      for (const boundary of transcript.compaction_boundaries) {
+      for (const compaction of transcript.compactions) {
         insertCompactionEvent({
           session_id: session.id,
-          exchange_index: boundary,
+          exchange_index: compaction.exchange_index,
+          summary: compaction.summary,
+          pre_tokens: compaction.pre_tokens,
+        });
+      }
+
+      // Extract and store tasks
+      const { extractTasks } = await import("../capture/tasks.js");
+      const tasks = extractTasks(transcript.exchanges);
+      const { insertTask } = await import("../db/queries.js");
+      for (const task of tasks) {
+        insertTask({
+          session_id: session.id,
+          task_index: parseInt(task.id),
+          subject: task.subject,
+          description: task.description,
+          status: task.status,
+          exchange_index_created: task.exchange_index_created,
+          exchange_index_completed: task.exchange_index_completed,
         });
       }
 

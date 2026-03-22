@@ -106,7 +106,7 @@ describe("parseTranscript", () => {
       const result = parseTranscript(
         join(FIXTURES, "sample-with-compaction.jsonl"),
       );
-      expect(result.compaction_boundaries.length).toBe(1);
+      expect(result.compactions.length).toBe(1);
     });
 
     it("should detect compact summary messages", () => {

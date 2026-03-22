@@ -97,7 +97,20 @@ export function initSchema(db: Database.Database): void {
       summary TEXT,
       exchanges_before INTEGER NOT NULL DEFAULT 0,
       exchanges_after INTEGER NOT NULL DEFAULT 0,
+      pre_tokens INTEGER,
       timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      task_index INTEGER NOT NULL,
+      subject TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      exchange_index_created INTEGER NOT NULL,
+      exchange_index_completed INTEGER,
+      UNIQUE(session_id, task_index)
     );
 
     CREATE TABLE IF NOT EXISTS session_links (
@@ -121,6 +134,7 @@ export function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_session_links_target ON session_links(target_session_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_path);
     CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
+    CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id);
   `);
 
   // FTS5 virtual table for full-text search (both prompts and responses)

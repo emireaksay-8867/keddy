@@ -125,7 +125,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
   let forkedFrom: string | null = null;
   let startedAt: string | null = null;
   const exchanges: ParsedExchange[] = [];
-  const compactionBoundaries: number[] = [];
+  const compactions: Array<{ exchange_index: number; summary: string | null; pre_tokens: number | null }> = [];
 
   let currentUserPrompt = "";
   let currentAssistantText = "";
@@ -155,9 +155,14 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       // Always update — last one wins for ended_at
     }
 
-    // Compaction boundary
+    // Compaction boundary — capture metadata and content
     if (entry.type === "system" && entry.subtype === "compact_boundary") {
-      compactionBoundaries.push(exchangeIndex);
+      const meta = entry.compactMetadata as Record<string, unknown> | undefined;
+      compactions.push({
+        exchange_index: exchangeIndex,
+        summary: (entry as Record<string, unknown>).content as string || null,
+        pre_tokens: (meta?.preTokens as number) || null,
+      });
       continue;
     }
 
@@ -297,7 +302,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     started_at: firstTs,
     ended_at: lastTs,
     exchanges,
-    compaction_boundaries: compactionBoundaries,
+    compactions,
   };
 }
 

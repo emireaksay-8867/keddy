@@ -159,15 +159,15 @@ describe("SessionEnd handler simulation", () => {
     const session = getSession("sess-003")!;
     const transcript = parseTranscript(filePath);
 
-    for (const boundary of transcript.compaction_boundaries) {
+    for (const compaction of transcript.compactions) {
       insertCompactionEvent({
         session_id: session.id,
-        exchange_index: boundary,
+        exchange_index: compaction.exchange_index,
       });
     }
 
     const compactions = getSessionCompactionEvents(session.id);
-    expect(compactions.length).toBe(transcript.compaction_boundaries.length);
+    expect(compactions.length).toBe(transcript.compactions.length);
   });
 
   it("should handle idempotent re-import of same session", () => {

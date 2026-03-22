@@ -78,37 +78,12 @@ sessionsRoutes.get("/:id", (c) => {
   const plans = getSessionPlans(session.id);
   const compactions = getSessionCompactionEvents(session.id);
 
-  // Extract tasks from tool calls
+  // Get tasks from DB (stored during import/capture)
   const db = getDb();
-  const taskToolCalls = db.prepare(`
-    SELECT tc.tool_name, tc.tool_input, e.exchange_index
-    FROM tool_calls tc
-    JOIN exchanges e ON e.id = tc.exchange_id
-    WHERE tc.session_id = ? AND tc.tool_name IN ('TaskCreate', 'TaskUpdate', 'TaskStop')
-    ORDER BY e.exchange_index
-  `).all(session.id) as Array<{ tool_name: string; tool_input: string; exchange_index: number }>;
-
-  const tasks: Array<{ id: string; subject: string; description: string; status: string; exchange_created: number; exchange_completed: number | null }> = [];
-  let autoId = 0;
-  const taskMap = new Map<string, typeof tasks[0]>();
-
-  for (const tc of taskToolCalls) {
-    const input = (() => { try { return JSON.parse(tc.tool_input); } catch { return {}; } })();
-    if (tc.tool_name === "TaskCreate") {
-      autoId++;
-      const id = String(autoId);
-      const task = { id, subject: input.subject || "", description: input.description || "", status: "pending", exchange_created: tc.exchange_index, exchange_completed: null as number | null };
-      taskMap.set(id, task);
-      tasks.push(task);
-    } else if (tc.tool_name === "TaskUpdate") {
-      const task = taskMap.get(String(input.taskId));
-      if (task && input.status === "completed") { task.status = "completed"; task.exchange_completed = tc.exchange_index; }
-      else if (task && input.status === "in_progress") { task.status = "in_progress"; }
-    } else if (tc.tool_name === "TaskStop") {
-      const task = taskMap.get(String(input.taskId || input.task_id));
-      if (task) task.status = "stopped";
-    }
-  }
+  const tasks = db.prepare(`
+    SELECT id, task_index, subject, description, status, exchange_index_created as exchange_created, exchange_index_completed as exchange_completed
+    FROM tasks WHERE session_id = ? ORDER BY task_index
+  `).all(session.id);
 
   return c.json({
     ...session,

@@ -414,12 +414,13 @@ export function insertCompactionEvent(data: {
   summary?: string | null;
   exchanges_before?: number;
   exchanges_after?: number;
+  pre_tokens?: number | null;
 }): string {
   const db = getDb();
   const id = randomUUID();
   db.prepare(`
-    INSERT INTO compaction_events (id, session_id, exchange_index, summary, exchanges_before, exchanges_after)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO compaction_events (id, session_id, exchange_index, summary, exchanges_before, exchanges_after, pre_tokens)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.session_id,
@@ -427,6 +428,7 @@ export function insertCompactionEvent(data: {
     data.summary ?? null,
     data.exchanges_before ?? 0,
     data.exchanges_after ?? 0,
+    data.pre_tokens ?? null,
   );
   return id;
 }
@@ -516,6 +518,48 @@ export function getStats(): {
     projects,
     db_size_mb,
   };
+}
+
+// --- Tasks ---
+
+export function insertTask(data: {
+  session_id: string;
+  task_index: number;
+  subject: string;
+  description?: string;
+  status?: string;
+  exchange_index_created: number;
+  exchange_index_completed?: number | null;
+}): string {
+  const db = getDb();
+  const id = randomUUID();
+  db.prepare(`
+    INSERT OR IGNORE INTO tasks (id, session_id, task_index, subject, description, status, exchange_index_created, exchange_index_completed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    data.session_id,
+    data.task_index,
+    data.subject,
+    data.description ?? "",
+    data.status ?? "pending",
+    data.exchange_index_created,
+    data.exchange_index_completed ?? null,
+  );
+  return id;
+}
+
+export function getSessionTasks(sessionId: string): Array<{
+  id: string;
+  task_index: number;
+  subject: string;
+  description: string;
+  status: string;
+  exchange_index_created: number;
+  exchange_index_completed: number | null;
+}> {
+  const db = getDb();
+  return db.prepare("SELECT * FROM tasks WHERE session_id = ? ORDER BY task_index").all(sessionId) as any[];
 }
 
 // --- Search by file ---

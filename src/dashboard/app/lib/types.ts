@@ -97,6 +97,7 @@ export interface CompactionEvent {
   summary: string | null;
   exchanges_before: number;
   exchanges_after: number;
+  pre_tokens: number | null;
   timestamp: string;
 }
 

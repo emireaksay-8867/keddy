@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 
-const CURRENT_VERSION = 2;
+const CURRENT_VERSION = 3;
 
 interface Migration {
   version: number;
@@ -60,6 +60,34 @@ const migrations: Migration[] = [
       }
       // The UNIQUE constraint is part of the table definition — can't change it
       // without recreating the table. For now, just ensure INSERT OR IGNORE works.
+    },
+  },
+  {
+    version: 3,
+    description: "Add pre_tokens to compaction_events, add tasks table",
+    up: (db) => {
+      // Add pre_tokens column to compaction_events
+      try {
+        db.exec("ALTER TABLE compaction_events ADD COLUMN pre_tokens INTEGER");
+      } catch {
+        // Column might already exist
+      }
+
+      // Create tasks table for structured task tracking
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS tasks (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          task_index INTEGER NOT NULL,
+          subject TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pending',
+          exchange_index_created INTEGER NOT NULL,
+          exchange_index_completed INTEGER,
+          UNIQUE(session_id, task_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id);
+      `);
     },
   },
 ];

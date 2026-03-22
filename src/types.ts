@@ -157,7 +157,11 @@ export interface ParsedTranscript {
   started_at: string | null;
   ended_at: string | null;
   exchanges: ParsedExchange[];
-  compaction_boundaries: number[]; // exchange indices where compaction occurred
+  compactions: Array<{
+    exchange_index: number;
+    summary: string | null;
+    pre_tokens: number | null;
+  }>;
 }
 
 // --- Config Types ---

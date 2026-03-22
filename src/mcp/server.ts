@@ -118,7 +118,21 @@ server.tool(
         index: m.exchange_index,
         description: m.description,
       })),
-      compactions: compactions.length,
+      compactions: compactions.map((c) => ({
+        index: c.exchange_index,
+        summary: c.summary ? c.summary.substring(0, 200) : null,
+        pre_tokens: (c as any).pre_tokens || null,
+      })),
+      tasks: (() => {
+        try {
+          const { getSessionTasks } = require("../db/queries.js");
+          return getSessionTasks(session.id).map((t: any) => ({
+            subject: t.subject,
+            status: t.status,
+            description: t.description,
+          }));
+        } catch { return []; }
+      })(),
     });
   },
 );

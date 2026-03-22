@@ -552,16 +552,37 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
               );
             }
 
-            // compaction
+            // compaction — show token count and summary if available
             const ce = item.data as CompactionEvent;
+            const ceTs = exchanges.find(e => e.exchange_index === ce.exchange_index)?.timestamp;
+            const tokenInfo = (ce as any).pre_tokens ? `${Math.round((ce as any).pre_tokens / 1000)}K tokens` : null;
+            const hasCeSummary = ce.summary && ce.summary !== "Conversation compacted";
             return (
               <div key={`c${i}`} className="relative pb-4">
                 <div className="absolute left-[-25px] top-[12px] w-[6px] h-[6px] rounded-full" style={{ background: SEGMENT_COLORS.exploring }} />
-                <div className="flex items-center gap-3 py-2">
-                  <div className="h-px flex-1" style={{ background: SEGMENT_COLORS.exploring + "25" }} />
-                  <span className="text-[12px] font-medium" style={{ color: SEGMENT_COLORS.exploring }}>Context compacted ({ce.exchanges_before} → {ce.exchanges_after})</span>
-                  <div className="h-px flex-1" style={{ background: SEGMENT_COLORS.exploring + "25" }} />
-                </div>
+                {hasCeSummary ? (
+                  <button
+                    onClick={() => openPanel("Context Compacted", ce.summary!, tokenInfo ? `${tokenInfo} before compaction` : undefined)}
+                    className="w-full text-left rounded-xl border p-4 hover:border-[var(--border-bright)] transition-all group"
+                    style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[12px] font-semibold" style={{ color: SEGMENT_COLORS.exploring }}>Context Compacted</span>
+                      {tokenInfo && <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{tokenInfo}</span>}
+                      {ceTs && <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtShortTime(ceTs)}</span>}
+                      <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--accent)" }}>View summary →</span>
+                    </div>
+                    <p className="text-[12px] line-clamp-2" style={{ color: "var(--text-tertiary)" }}>{trunc(ce.summary!, 150)}</p>
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-3 py-2">
+                    <div className="h-px flex-1" style={{ background: SEGMENT_COLORS.exploring + "25" }} />
+                    <span className="text-[12px] font-medium" style={{ color: SEGMENT_COLORS.exploring }}>
+                      Context compacted{tokenInfo ? ` · ${tokenInfo}` : ""}{ceTs ? ` · ${fmtShortTime(ceTs)}` : ""}
+                    </span>
+                    <div className="h-px flex-1" style={{ background: SEGMENT_COLORS.exploring + "25" }} />
+                  </div>
+                )}
               </div>
             );
           })}

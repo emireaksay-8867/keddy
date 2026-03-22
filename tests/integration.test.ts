@@ -245,10 +245,10 @@ describe.skipIf(!hasRealSessions)("Full pipeline integration (parse â†’ store â†
       });
     }
 
-    for (const boundary of transcript.compaction_boundaries) {
+    for (const compaction of transcript.compactions) {
       insertCompactionEvent({
         session_id: session!.id,
-        exchange_index: boundary,
+        exchange_index: compaction.exchange_index,
       });
     }
 
