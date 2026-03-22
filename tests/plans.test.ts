@@ -45,12 +45,13 @@ describe("extractPlans", () => {
     expect(plans[2].status).toBe("approved");
   });
 
-  it("should detect rejected plans", () => {
+  it("should detect revised plans (rejected with feedback + next version)", () => {
     const transcript = parseTranscript(
       join(FIXTURES, "sample-with-plans.jsonl"),
     );
     const plans = extractPlans(transcript.exchanges);
-    expect(plans[1].status).toBe("rejected");
+    // v2 was "rejected" with feedback, and v3 exists → should be "revised"
+    expect(plans[1].status).toBe("revised");
   });
 
   it("should extract user feedback from rejection", () => {

@@ -18,21 +18,14 @@ function classifyExchange(exchange: ParsedExchange): SegmentType {
   const toolCalls = exchange.tool_calls;
   if (toolCalls.length === 0) return "discussion";
 
-  // Check for plan mode
   if (toolCalls.some((tc) => tc.name === "EnterPlanMode" || tc.name === "ExitPlanMode")) {
     return "planning";
   }
 
-  // Check for pivot (interrupt + direction change)
   if (exchange.is_interrupt) return "pivot";
 
   const toolNames = toolCalls.map((tc) => tc.name);
-  const toolCounts: Record<string, number> = {};
-  for (const name of toolNames) {
-    toolCounts[name] = (toolCounts[name] || 0) + 1;
-  }
 
-  // Check Bash commands for test/deploy patterns
   const bashInputs = toolCalls
     .filter((tc) => tc.name === "Bash")
     .map((tc) => {
@@ -42,33 +35,26 @@ function classifyExchange(exchange: ParsedExchange): SegmentType {
       return typeof tc.input === "string" ? tc.input : "";
     });
 
-  // Deploy detection
-  if (bashInputs.some((cmd) => DEPLOY_PATTERNS.some((p) => p.test(cmd)))) {
-    return "deploying";
-  }
-
-  // Test detection
+  if (bashInputs.some((cmd) => DEPLOY_PATTERNS.some((p) => p.test(cmd)))) return "deploying";
   if (bashInputs.some((cmd) => TEST_PATTERNS.some((p) => p.test(cmd)))) {
     const hasErrors = toolCalls.some((tc) => tc.is_error);
     return hasErrors ? "debugging" : "testing";
   }
 
-  // Debugging: errors followed by edits
   const hasErrors = toolCalls.some((tc) => tc.is_error);
   const hasEdits = toolNames.some((n) => EDIT_TOOLS.has(n));
   if (hasErrors && hasEdits) return "debugging";
 
-  // Implementing: majority edit/write tools
   const editCount = toolNames.filter((n) => EDIT_TOOLS.has(n)).length;
   if (editCount > 0 && editCount >= toolNames.length * 0.5) return "implementing";
 
-  // Exploring: mostly read tools, no edits
   const readCount = toolNames.filter((n) => READ_TOOLS.has(n)).length;
   if (readCount > 0 && !hasEdits && readCount >= toolNames.length * 0.5) return "exploring";
 
-  // If there are some edits mixed with reads
   if (hasEdits) return "implementing";
 
+  // If tools were used but they're not edit/read/test/deploy,
+  // it's likely discussion with tool-assisted answers (MCP queries, search, etc.)
   return "discussion";
 }
 
@@ -103,11 +89,7 @@ export function extractSegments(exchanges: ParsedExchange[]): ExtractedSegment[]
   }));
 
   // Merge adjacent same-type into segments
-  const rawSegments: {
-    type: SegmentType;
-    exchanges: ParsedExchange[];
-  }[] = [];
-
+  const rawSegments: { type: SegmentType; exchanges: ParsedExchange[] }[] = [];
   let current = { type: classifications[0].type, exchanges: [classifications[0].exchange] };
 
   for (let i = 1; i < classifications.length; i++) {
@@ -115,31 +97,43 @@ export function extractSegments(exchanges: ParsedExchange[]): ExtractedSegment[]
       current.exchanges.push(classifications[i].exchange);
     } else {
       rawSegments.push(current);
-      current = {
-        type: classifications[i].type,
-        exchanges: [classifications[i].exchange],
-      };
+      current = { type: classifications[i].type, exchanges: [classifications[i].exchange] };
     }
   }
   rawSegments.push(current);
 
-  // Merge segments that are too small (< 2 exchanges) into neighbors
+  // Merge small segments (< 2 exchanges) into neighbors
   const merged: typeof rawSegments = [];
   for (const seg of rawSegments) {
     if (seg.exchanges.length < 2 && merged.length > 0) {
-      // Absorb into previous segment
       merged[merged.length - 1].exchanges.push(...seg.exchanges);
     } else {
       merged.push(seg);
     }
   }
-
-  // If only 1 segment and it's small, just use it as-is
   if (merged.length === 0 && rawSegments.length > 0) {
     merged.push(...rawSegments);
   }
 
-  return merged.map((seg) => {
+  // KEY FIX: Merge consecutive discussion blocks.
+  // Two discussion blocks should not be split just because Claude
+  // used a few tools in between. Only a real activity segment
+  // (implementing, testing, deploying, planning) should break discussions apart.
+  const final: typeof rawSegments = [];
+  for (const seg of merged) {
+    if (
+      seg.type === "discussion" &&
+      final.length > 0 &&
+      final[final.length - 1].type === "discussion"
+    ) {
+      // Merge into previous discussion block
+      final[final.length - 1].exchanges.push(...seg.exchanges);
+    } else {
+      final.push(seg);
+    }
+  }
+
+  return final.map((seg) => {
     const allFiles = seg.exchanges.flatMap(extractFiles);
     return {
       segment_type: seg.type,

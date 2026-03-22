@@ -68,8 +68,9 @@ type PanelContent = {
 
 const STATUS_STYLE: Record<string, { bg: string; fg: string; label: string }> = {
   approved: { bg: "#10b98115", fg: "#10b981", label: "Approved" },
+  revised: { bg: "#f59e0b15", fg: "#f59e0b", label: "Revised" },
   rejected: { bg: "#ef444415", fg: "#ef4444", label: "Rejected" },
-  drafted: { bg: "#f59e0b15", fg: "#f59e0b", label: "Draft" },
+  drafted: { bg: "#71717a15", fg: "#71717a", label: "Draft" },
   superseded: { bg: "#71717a15", fg: "#71717a", label: "Superseded" },
 };
 
@@ -486,11 +487,15 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
                     className="w-full text-left rounded-xl border p-4 hover:border-[var(--border-bright)] transition-all group"
                     style={{ borderColor: "var(--border)", background: "var(--bg-surface)" }}
                   >
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       {Array.from(summary.entries()).map(([type, count]) => {
                         const cfg = MS_CONFIG[type] || { icon: "·", label: type, color: "#888" };
                         return <span key={type} className="text-[12px] font-medium px-2.5 py-1 rounded-full" style={{ background: `${cfg.color}10`, color: cfg.color }}>{cfg.icon} {count > 1 ? `${count}× ${cfg.label}` : cfg.label}</span>;
                       })}
+                      {(() => {
+                        const msTs = exchanges.find(e => e.exchange_index === group[0].exchange_index)?.timestamp;
+                        return msTs ? <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>{fmtShortTime(msTs)} · {fmtRelative(msTs)}</span> : null;
+                      })()}
                       <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100 transition-opacity self-center" style={{ color: "var(--accent)" }}>View details →</span>
                     </div>
                     {group.length <= 4 && (

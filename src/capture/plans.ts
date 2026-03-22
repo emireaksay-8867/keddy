@@ -3,7 +3,7 @@ import type { ParsedExchange } from "../types.js";
 export interface ExtractedPlan {
   version: number;
   plan_text: string;
-  status: "drafted" | "approved" | "rejected" | "superseded";
+  status: "drafted" | "approved" | "rejected" | "superseded" | "revised";
   user_feedback: string | null;
   exchange_index_start: number;
   exchange_index_end: number;
@@ -18,13 +18,11 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
 
   for (const exchange of exchanges) {
     for (const tc of exchange.tool_calls) {
-      // Detect plan mode enter
       if (tc.name === "EnterPlanMode") {
         planStart = exchange.index;
         continue;
       }
 
-      // Detect plan mode exit — this contains the plan text
       if (tc.name === "ExitPlanMode") {
         version++;
         const planText =
@@ -35,7 +33,6 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
         let status: ExtractedPlan["status"] = "drafted";
         let userFeedback: string | null = null;
 
-        // Check tool result for explicit approval/rejection
         if (tc.result) {
           if (tc.result.includes("User has approved your plan")) {
             status = "approved";
@@ -44,6 +41,10 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
             const feedbackMatch = tc.result.match(/the user said:\n([\s\S]*)/);
             if (feedbackMatch) {
               userFeedback = feedbackMatch[1].trim();
+              // Clean up the feedback
+              if (userFeedback.includes("Note: The user's next message")) {
+                userFeedback = userFeedback.split("Note: The user's next message")[0].trim();
+              }
             }
           }
         }
@@ -62,31 +63,46 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
     }
   }
 
-  // Detect implicit approval: if a "drafted" plan is the last plan version
-  // AND subsequent exchanges contain implementation tool calls (Edit, Write, Bash),
-  // the plan was implicitly approved by the user continuing with execution.
+  // Now determine the TRUE status of each plan:
+  //
+  // 1. If a "rejected" plan has user feedback AND a next version exists,
+  //    it was "revised" — the user asked for changes, not a full rejection
+  //
+  // 2. The LAST plan version that is followed by implementation tool calls
+  //    is "approved" (implicitly) — the user proceeded with execution
+  //
+  // 3. Earlier approved plans are "superseded" by later ones
+
   for (let i = 0; i < plans.length; i++) {
-    if (plans[i].status !== "drafted") continue;
+    const plan = plans[i];
+    const hasNextVersion = i + 1 < plans.length;
 
-    const planEndIdx = plans[i].exchange_index_end;
-    const nextPlanStartIdx = (i + 1 < plans.length) ? plans[i + 1].exchange_index_start : Infinity;
+    // "Rejected" with feedback + next version = "revised" (feedback incorporated)
+    if (plan.status === "rejected" && plan.user_feedback && hasNextVersion) {
+      plan.status = "revised";
+    }
 
-    // Check exchanges between this plan's end and the next plan's start
-    const followingExchanges = exchanges.filter(
-      (e) => e.index > planEndIdx && e.index < nextPlanStartIdx,
-    );
+    // Check for implicit approval: if this plan (drafted or rejected without feedback)
+    // is the LAST plan AND subsequent exchanges have implementation tools
+    if (plan.status === "drafted" || (plan.status === "rejected" && !hasNextVersion)) {
+      const planEndIdx = plan.exchange_index_end;
+      const nextPlanStartIdx = hasNextVersion ? plans[i + 1].exchange_index_start : Infinity;
 
-    // If there are implementation tool calls after the plan, it was implicitly approved
-    const hasImplementation = followingExchanges.some((e) =>
-      e.tool_calls.some((tc) => IMPLEMENTATION_TOOLS.has(tc.name)),
-    );
+      const followingExchanges = exchanges.filter(
+        (e) => e.index > planEndIdx && e.index < nextPlanStartIdx,
+      );
 
-    if (hasImplementation) {
-      plans[i].status = "approved";
+      const hasImplementation = followingExchanges.some((e) =>
+        e.tool_calls.some((tc) => IMPLEMENTATION_TOOLS.has(tc.name)),
+      );
+
+      if (hasImplementation) {
+        plan.status = "approved";
+      }
     }
   }
 
-  // Mark superseded plans (all approved plans before the last approved one)
+  // Mark superseded: all approved plans except the last one
   const approvedPlans = plans.filter((p) => p.status === "approved");
   if (approvedPlans.length > 1) {
     for (let i = 0; i < approvedPlans.length - 1; i++) {
