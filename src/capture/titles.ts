@@ -43,7 +43,13 @@ export function deriveTitle(exchanges: Array<{ user_prompt: string }>): string |
     if (cleaned.startsWith("Tool loaded.")) continue;
     // Skip image-only placeholders
     if (cleaned === "(attached image)" || /^\(\d+ attached images\)$/.test(cleaned)) continue;
-    return cleaned.substring(0, 80);
+    // Truncate at word boundary with ellipsis
+    if (cleaned.length <= 80) return cleaned;
+    const cut = cleaned.substring(0, 80);
+    const lastSpace = cut.lastIndexOf(" ");
+    // If there's a space in the last 20 chars, cut at the word boundary
+    if (lastSpace > 60) return cut.substring(0, lastSpace) + "...";
+    return cut + "...";
   }
   return null;
 }
