@@ -17,25 +17,7 @@ import { parseTranscript } from "../capture/parser.js";
 import { extractPlans } from "../capture/plans.js";
 import { extractSegments } from "../capture/segments.js";
 import { extractMilestones } from "../capture/milestones.js";
-
-/** Find first real user prompt, skipping IDE/system-injected metadata */
-function deriveTitle(exchanges: Array<{ user_prompt: string }>): string | null {
-  for (const ex of exchanges) {
-    const prompt = ex.user_prompt.trim();
-    if (!prompt) continue;
-    if (prompt.startsWith("<ide_")) continue;
-    if (prompt.startsWith("<local-command-caveat>")) continue;
-    if (prompt.startsWith("<file_")) continue;
-    if (prompt.startsWith("<task-notification>")) continue;
-    if (prompt.startsWith("<system-reminder>")) continue;
-    if (prompt.startsWith("<available-deferred-tools>")) continue;
-    if (prompt.startsWith("[Image:")) continue;
-    if (prompt.startsWith("Tool loaded.")) continue;
-    if (prompt === "[Request interrupted by user]") continue;
-    return prompt.substring(0, 80);
-  }
-  return exchanges[0]?.user_prompt.substring(0, 80) ?? null;
-}
+import { deriveTitle } from "../capture/titles.js";
 
 function findJsonlFiles(dir: string): string[] {
   const files: string[] = [];

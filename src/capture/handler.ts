@@ -17,29 +17,7 @@ import { parseTranscript, parseLatestExchanges } from "./parser.js";
 import { extractPlans } from "./plans.js";
 import { extractSegments } from "./segments.js";
 import { extractMilestones } from "./milestones.js";
-
-/** Find first real user prompt, skipping IDE/system-injected metadata */
-function deriveTitle(exchanges: Array<{ user_prompt: string }>): string | null {
-  for (const ex of exchanges) {
-    const prompt = ex.user_prompt.trim();
-    if (!prompt) continue;
-    // Skip IDE-injected metadata
-    if (prompt.startsWith("<ide_")) continue;
-    if (prompt.startsWith("<local-command-caveat>")) continue;
-    if (prompt.startsWith("<file_")) continue;
-    // Skip system-injected messages
-    if (prompt.startsWith("<task-notification>")) continue;
-    if (prompt.startsWith("<system-reminder>")) continue;
-    if (prompt.startsWith("<available-deferred-tools>")) continue;
-    // Skip image-only prompts
-    if (prompt.startsWith("[Image:")) continue;
-    if (prompt.startsWith("Tool loaded.")) continue;
-    // Skip interrupts as title
-    if (prompt === "[Request interrupted by user]") continue;
-    return prompt.substring(0, 80);
-  }
-  return exchanges[0]?.user_prompt.substring(0, 80) ?? null;
-}
+import { deriveTitle } from "./titles.js";
 
 interface HookStdin {
   session_id?: string;

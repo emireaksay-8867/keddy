@@ -262,6 +262,27 @@ export function parseTranscript(filePath: string): ParsedTranscript {
         continue;
       }
 
+      // Filter IDE-only noise: messages that are purely IDE metadata with no real user text
+      // e.g. "<ide_opened_file>...opened file X...</ide_opened_file>" with nothing else
+      if (text.startsWith("<ide_") || text.startsWith("<bash-input>") ||
+          text.startsWith("<bash-stdout>") || text.startsWith("<local-command-caveat>")) {
+        const stripped = text
+          .replace(/<ide_[a-z_]+>[\s\S]*?<\/ide_[a-z_]+>/g, "")
+          .replace(/<bash-input>[\s\S]*?<\/bash-input>/g, "")
+          .replace(/<bash-stdout>[\s\S]*?<\/bash-stdout>/g, "")
+          .replace(/<bash-stderr>[\s\S]*?<\/bash-stderr>/g, "")
+          .replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, "")
+          .replace(/<local-command-stdout>[\s\S]*?<\/local-command-stdout>/g, "")
+          .replace(/<command-name>[\s\S]*?<\/command-name>/g, "")
+          .replace(/<command-message>[\s\S]*?<\/command-message>/g, "")
+          .replace(/<command-args>[\s\S]*?<\/command-args>/g, "")
+          .trim();
+        if (!stripped) {
+          // Pure noise — no real user text. Drop entirely.
+          continue;
+        }
+      }
+
       // Bug fix 1c: Interrupt-only messages (user hit Esc) — mark previous exchange as interrupted, don't create new one
       if (isInterruptOnly(msgContent)) {
         if (inExchange) {
