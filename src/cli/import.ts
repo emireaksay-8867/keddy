@@ -100,7 +100,7 @@ export async function runImport(): Promise<void> {
         jsonl_path: filePath,
         forked_from: transcript.forked_from || null,
         started_at: transcript.started_at || null,
-        title: deriveTitle(transcript.exchanges) ?? null,
+        title: transcript.custom_title || deriveTitle(transcript.exchanges) || null,
         metadata: null,
       });
 
