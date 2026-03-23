@@ -679,3 +679,342 @@ export function setConfig(key: string, value: string): void {
     "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
   ).run(key, value);
 }
+
+// --- Project-Level Queries (for MCP tools) ---
+
+/** Lightweight project context for SessionStart hook — must be fast (<50ms) */
+export function getProjectContextForSessionStart(projectPath: string): {
+  sessionCount: number;
+  activePlan: { version: number; status: string; excerpt: string; sessionId: string } | null;
+  pendingTasks: string[];
+  lastMilestone: string | null;
+} {
+  const db = getDb();
+
+  const countRow = db.prepare(
+    "SELECT COUNT(*) as cnt FROM sessions WHERE project_path = ? AND exchange_count > 0",
+  ).get(projectPath) as { cnt: number };
+
+  // Find the most recent approved/implemented plan
+  const planRow = db.prepare(`
+    SELECT p.version, p.status, SUBSTR(p.plan_text, 1, 200) as excerpt, s.id as sid
+    FROM plans p
+    JOIN sessions s ON s.id = p.session_id
+    WHERE s.project_path = ? AND p.status IN ('approved', 'implemented')
+    ORDER BY s.started_at DESC, p.created_at DESC
+    LIMIT 1
+  `).get(projectPath) as { version: number; status: string; excerpt: string; sid: string } | undefined;
+
+  let pendingTasks: string[] = [];
+  if (planRow) {
+    const taskRows = db.prepare(
+      "SELECT subject FROM tasks WHERE session_id = ? AND status IN ('pending', 'in_progress') ORDER BY task_index LIMIT 5",
+    ).all(planRow.sid) as Array<{ subject: string }>;
+    pendingTasks = taskRows.map((t) => t.subject);
+  }
+
+  const milestoneRow = db.prepare(`
+    SELECT m.description
+    FROM milestones m
+    JOIN sessions s ON s.id = m.session_id
+    WHERE s.project_path = ?
+    ORDER BY s.started_at DESC, m.exchange_index DESC
+    LIMIT 1
+  `).get(projectPath) as { description: string } | undefined;
+
+  return {
+    sessionCount: countRow.cnt,
+    activePlan: planRow
+      ? { version: planRow.version, status: planRow.status, excerpt: planRow.excerpt, sessionId: planRow.sid }
+      : null,
+    pendingTasks,
+    lastMilestone: milestoneRow?.description ?? null,
+  };
+}
+
+/** Full project status for keddy_project_status MCP tool */
+export function getProjectStatus(projectPath: string): {
+  recentSessions: Array<{
+    session_id: string;
+    title: string | null;
+    started_at: string;
+    ended_at: string | null;
+    exchange_count: number;
+    git_branch: string | null;
+  }>;
+  activePlan: {
+    sessionId: string;
+    version: number;
+    plan_text: string;
+    status: string;
+    user_feedback: string | null;
+  } | null;
+  planHistory: Array<{
+    version: number;
+    status: string;
+    user_feedback: string | null;
+  }>;
+  tasks: Array<{
+    subject: string;
+    status: string;
+    description: string;
+  }>;
+  recentMilestones: Array<{
+    milestone_type: string;
+    description: string;
+    session_id: string;
+  }>;
+  segmentTypes: string[];
+  activeFiles: string[];
+} {
+  const db = getDb();
+
+  // Recent sessions
+  const recentSessions = db.prepare(`
+    SELECT session_id, title, started_at, ended_at, exchange_count, git_branch
+    FROM sessions
+    WHERE project_path = ? AND exchange_count > 0
+    ORDER BY COALESCE(ended_at, started_at) DESC
+    LIMIT 5
+  `).all(projectPath) as Array<{
+    session_id: string;
+    title: string | null;
+    started_at: string;
+    ended_at: string | null;
+    exchange_count: number;
+    git_branch: string | null;
+  }>;
+
+  // Active plan: most recent approved/implemented
+  const planRow = db.prepare(`
+    SELECT s.id as sid, s.session_id, p.version, p.plan_text, p.status, p.user_feedback, p.created_at
+    FROM plans p
+    JOIN sessions s ON s.id = p.session_id
+    WHERE s.project_path = ? AND p.status IN ('approved', 'implemented')
+    ORDER BY s.started_at DESC, p.created_at DESC
+    LIMIT 1
+  `).get(projectPath) as {
+    sid: string;
+    session_id: string;
+    version: number;
+    plan_text: string;
+    status: string;
+    user_feedback: string | null;
+    created_at: string;
+  } | undefined;
+
+  // Plan history (all versions from the active plan's session)
+  let planHistory: Array<{ version: number; status: string; user_feedback: string | null }> = [];
+  let tasks: Array<{ subject: string; status: string; description: string }> = [];
+
+  if (planRow) {
+    planHistory = db.prepare(
+      "SELECT version, status, user_feedback FROM plans WHERE session_id = ? ORDER BY version",
+    ).all(planRow.sid) as typeof planHistory;
+
+    tasks = db.prepare(
+      "SELECT subject, status, description FROM tasks WHERE session_id = ? ORDER BY task_index",
+    ).all(planRow.sid) as typeof tasks;
+  }
+
+  // Recent milestones across sessions
+  const recentMilestones = db.prepare(`
+    SELECT m.milestone_type, m.description, s.session_id
+    FROM milestones m
+    JOIN sessions s ON s.id = m.session_id
+    WHERE s.project_path = ?
+    ORDER BY s.started_at DESC, m.exchange_index DESC
+    LIMIT 5
+  `).all(projectPath) as Array<{
+    milestone_type: string;
+    description: string;
+    session_id: string;
+  }>;
+
+  // Segment types from most recent session
+  const latestSessionId = recentSessions[0]
+    ? db.prepare("SELECT id FROM sessions WHERE session_id = ?").get(recentSessions[0].session_id) as { id: string } | undefined
+    : undefined;
+
+  let segmentTypes: string[] = [];
+  if (latestSessionId) {
+    const segRows = db.prepare(
+      "SELECT DISTINCT segment_type FROM segments WHERE session_id = ? ORDER BY exchange_index_start",
+    ).all(latestSessionId.id) as Array<{ segment_type: string }>;
+    segmentTypes = segRows.map((r) => r.segment_type);
+  }
+
+  // Active files from recent segments
+  let activeFiles: string[] = [];
+  if (latestSessionId) {
+    const segFileRows = db.prepare(
+      "SELECT files_touched FROM segments WHERE session_id = ?",
+    ).all(latestSessionId.id) as Array<{ files_touched: string }>;
+    const allFiles = new Set<string>();
+    for (const row of segFileRows) {
+      try {
+        const files = JSON.parse(row.files_touched) as string[];
+        for (const f of files) allFiles.add(f);
+      } catch { /* skip */ }
+    }
+    activeFiles = [...allFiles].slice(0, 10);
+  }
+
+  return {
+    recentSessions,
+    activePlan: planRow
+      ? {
+          sessionId: planRow.session_id,
+          version: planRow.version,
+          plan_text: planRow.plan_text,
+          status: planRow.status,
+          user_feedback: planRow.user_feedback,
+          created_at: planRow.created_at,
+        }
+      : null,
+    planHistory,
+    tasks,
+    recentMilestones,
+    segmentTypes,
+    activeFiles,
+  };
+}
+
+/** Full active plan with version history for keddy_continue_plan MCP tool */
+export function getActivePlanForProject(projectPath: string): {
+  sessionId: string;
+  sessionTitle: string | null;
+  plans: Array<{
+    version: number;
+    plan_text: string;
+    status: string;
+    user_feedback: string | null;
+    exchange_index_start: number;
+    exchange_index_end: number;
+  }>;
+  tasks: Array<{
+    subject: string;
+    status: string;
+    description: string;
+  }>;
+  lastMilestone: {
+    milestone_type: string;
+    description: string;
+  } | null;
+} | null {
+  const db = getDb();
+
+  // Find session with most recent active plan
+  const planRow = db.prepare(`
+    SELECT s.id as sid, s.session_id, s.title
+    FROM plans p
+    JOIN sessions s ON s.id = p.session_id
+    WHERE s.project_path = ? AND p.status IN ('approved', 'implemented')
+    ORDER BY s.started_at DESC, p.created_at DESC
+    LIMIT 1
+  `).get(projectPath) as { sid: string; session_id: string; title: string | null } | undefined;
+
+  if (!planRow) return null;
+
+  // All plan versions for that session
+  const plans = db.prepare(`
+    SELECT version, plan_text, status, user_feedback, exchange_index_start, exchange_index_end
+    FROM plans WHERE session_id = ? ORDER BY version
+  `).all(planRow.sid) as Array<{
+    version: number;
+    plan_text: string;
+    status: string;
+    user_feedback: string | null;
+    exchange_index_start: number;
+    exchange_index_end: number;
+  }>;
+
+  // Tasks
+  const tasks = db.prepare(
+    "SELECT subject, status, description FROM tasks WHERE session_id = ? ORDER BY task_index",
+  ).all(planRow.sid) as Array<{ subject: string; status: string; description: string }>;
+
+  // Last milestone
+  const milestone = db.prepare(
+    "SELECT milestone_type, description FROM milestones WHERE session_id = ? ORDER BY exchange_index DESC LIMIT 1",
+  ).get(planRow.sid) as { milestone_type: string; description: string } | undefined;
+
+  return {
+    sessionId: planRow.session_id,
+    sessionTitle: planRow.title,
+    plans,
+    tasks,
+    lastMilestone: milestone ?? null,
+  };
+}
+
+/** Batch-enrich sessions with plan/milestone/segment data (avoids N+1 queries) */
+export function enrichSessionBatch(sessionInternalIds: string[]): Map<string, {
+  planCount: number;
+  latestPlanStatus: string | null;
+  milestoneHighlights: string[];
+  segmentTypes: string[];
+}> {
+  const result = new Map<string, {
+    planCount: number;
+    latestPlanStatus: string | null;
+    milestoneHighlights: string[];
+    segmentTypes: string[];
+  }>();
+
+  if (sessionInternalIds.length === 0) return result;
+
+  const db = getDb();
+  const placeholders = sessionInternalIds.map(() => "?").join(",");
+
+  // Initialize all entries
+  for (const id of sessionInternalIds) {
+    result.set(id, { planCount: 0, latestPlanStatus: null, milestoneHighlights: [], segmentTypes: [] });
+  }
+
+  // Plan counts + latest status per session
+  const planRows = db.prepare(`
+    SELECT session_id, COUNT(*) as cnt,
+      (SELECT status FROM plans p2 WHERE p2.session_id = plans.session_id ORDER BY version DESC LIMIT 1) as latest_status
+    FROM plans
+    WHERE session_id IN (${placeholders})
+    GROUP BY session_id
+  `).all(...sessionInternalIds) as Array<{ session_id: string; cnt: number; latest_status: string | null }>;
+
+  for (const row of planRows) {
+    const entry = result.get(row.session_id);
+    if (entry) {
+      entry.planCount = row.cnt;
+      entry.latestPlanStatus = row.latest_status;
+    }
+  }
+
+  // Milestone highlights per session (first 3)
+  const milestoneRows = db.prepare(`
+    SELECT session_id, description, exchange_index,
+      ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY exchange_index) as rn
+    FROM milestones
+    WHERE session_id IN (${placeholders})
+  `).all(...sessionInternalIds) as Array<{ session_id: string; description: string; rn: number }>;
+
+  for (const row of milestoneRows) {
+    if (row.rn <= 3) {
+      const entry = result.get(row.session_id);
+      if (entry) entry.milestoneHighlights.push(row.description);
+    }
+  }
+
+  // Segment types per session
+  const segRows = db.prepare(`
+    SELECT DISTINCT session_id, segment_type
+    FROM segments
+    WHERE session_id IN (${placeholders})
+  `).all(...sessionInternalIds) as Array<{ session_id: string; segment_type: string }>;
+
+  for (const row of segRows) {
+    const entry = result.get(row.session_id);
+    if (entry) entry.segmentTypes.push(row.segment_type);
+  }
+
+  return result;
+}

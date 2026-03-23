@@ -47,6 +47,104 @@ function extractHeredocMessage(cmd: string): string | null {
   return null;
 }
 
+/** Parse test runner output to extract pass/fail counts and first failure info */
+export function extractTestSummary(result: string | undefined): {
+  passed: number;
+  failed: number;
+  total: number;
+  firstFailFile: string | null;
+  firstFailTest: string | null;
+} | null {
+  if (!result) return null;
+  // Truncate to avoid pathological regex on huge output
+  const text = result.substring(0, 4000);
+
+  let passed = 0;
+  let failed = 0;
+  let firstFailFile: string | null = null;
+  let firstFailTest: string | null = null;
+
+  // Vitest/Jest: "Tests  X failed | Y passed" or "Test Suites:  X failed, Y passed"
+  const vitestTests = text.match(/Tests?\s+(\d+)\s+failed\s*[|,]\s*(\d+)\s+passed/i);
+  const vitestSuites = text.match(/Test (?:Suites|Files):?\s+(\d+)\s+failed\s*[|,]\s*(\d+)\s+passed/i);
+  // Vitest alt: "Y passed | X failed" (reversed order)
+  const vitestReversed = text.match(/Tests?\s+(\d+)\s+passed\s*[|,]\s*(\d+)\s+failed/i);
+
+  if (vitestTests) {
+    failed = parseInt(vitestTests[1]);
+    passed = parseInt(vitestTests[2]);
+  } else if (vitestSuites) {
+    failed = parseInt(vitestSuites[1]);
+    passed = parseInt(vitestSuites[2]);
+  } else if (vitestReversed) {
+    passed = parseInt(vitestReversed[1]);
+    failed = parseInt(vitestReversed[2]);
+  }
+
+  // pytest: "X failed, Y passed" or "X passed, Y failed" or "X passed"
+  if (passed === 0 && failed === 0) {
+    const pytestFP = text.match(/(\d+)\s+failed.*?(\d+)\s+passed/);
+    const pytestPF = text.match(/(\d+)\s+passed.*?(\d+)\s+failed/);
+    const pytestPass = text.match(/(\d+)\s+passed/);
+    if (pytestFP) { failed = parseInt(pytestFP[1]); passed = parseInt(pytestFP[2]); }
+    else if (pytestPF) { passed = parseInt(pytestPF[1]); failed = parseInt(pytestPF[2]); }
+    else if (pytestPass) { passed = parseInt(pytestPass[1]); }
+  }
+
+  // cargo test: "test result: FAILED. X passed; Y failed"
+  if (passed === 0 && failed === 0) {
+    const cargo = text.match(/test result:.*?(\d+)\s+passed.*?(\d+)\s+failed/);
+    if (cargo) { passed = parseInt(cargo[1]); failed = parseInt(cargo[2]); }
+  }
+
+  // go test: count "--- FAIL:" and "--- PASS:" occurrences
+  if (passed === 0 && failed === 0) {
+    const goFails = text.match(/--- FAIL:/g);
+    const goPasses = text.match(/--- PASS:/g);
+    if (goFails || goPasses) {
+      failed = goFails?.length ?? 0;
+      passed = goPasses?.length ?? 0;
+    }
+  }
+
+  // If we didn't find any counts, return null
+  if (passed === 0 && failed === 0) return null;
+
+  // Extract first failing test file: "FAIL src/auth.test.ts" or "FAIL  tests/auth.test.ts"
+  const failFileMatch = text.match(/FAIL\s+(\S+\.(?:test|spec)\.\w+)/);
+  if (failFileMatch) firstFailFile = failFileMatch[1];
+
+  // pytest: "FAILED test_file.py::test_name"
+  if (!firstFailFile) {
+    const pytestFile = text.match(/FAILED\s+(\S+?)(?:::|\s)/);
+    if (pytestFile) firstFailFile = pytestFile[1];
+  }
+
+  // Extract first failing test name: "✕ test name" or "> test name" after FAIL line
+  const failNameMatch = text.match(/[✕×✗>]\s+(.+?)(?:\s+\(\d|$)/m);
+  if (failNameMatch) firstFailTest = failNameMatch[1].trim();
+
+  // go test: "--- FAIL: TestName"
+  if (!firstFailTest) {
+    const goFail = text.match(/--- FAIL:\s+(\S+)/);
+    if (goFail) firstFailTest = goFail[1];
+  }
+
+  // cargo test: "test module::name ... FAILED"
+  if (!firstFailTest) {
+    const cargoFail = text.match(/test\s+(\S+)\s+\.\.\.\s+FAILED/);
+    if (cargoFail) firstFailTest = cargoFail[1];
+  }
+
+  return {
+    passed,
+    failed,
+    total: passed + failed,
+    firstFailFile,
+    firstFailTest,
+  };
+}
+
 function cleanPushDescription(args: string): string {
   // Remove noise like "2>&1", "| tail", etc.
   return args
@@ -140,11 +238,29 @@ export function extractMilestones(exchanges: ParsedExchange[]): ExtractedMilesto
       // Test commands
       if (TEST_COMMANDS.some((re) => re.test(cmd))) {
         const isError = tc.is_error === true;
+        const summary = extractTestSummary(tc.result);
+        let description: string;
+        if (summary && summary.total > 0) {
+          if (isError && summary.firstFailFile) {
+            const shortFile = summary.firstFailFile.split("/").pop() || summary.firstFailFile;
+            const testPart = summary.firstFailTest ? ` — ${summary.firstFailTest}` : "";
+            description = `Tests failed: ${shortFile}${testPart} (${summary.failed}/${summary.total})`;
+          } else if (isError) {
+            description = `Tests failed (${summary.failed}/${summary.total})`;
+          } else {
+            description = `Tests passed (${summary.passed}/${summary.total})`;
+          }
+        } else {
+          description = isError ? "Tests failed" : "Tests passed";
+        }
         milestones.push({
           milestone_type: isError ? "test_fail" : "test_pass",
           exchange_index: exchange.index,
-          description: isError ? "Tests failed" : "Tests passed",
-          metadata: { command: cmd.split(/\s*[|&2>]/).shift()?.trim() || cmd },
+          description,
+          metadata: {
+            command: cmd.split(/\s*[|&2>]/).shift()?.trim() || cmd,
+            ...(summary ? { passed: summary.passed, failed: summary.failed, total: summary.total } : {}),
+          },
         });
       }
     }

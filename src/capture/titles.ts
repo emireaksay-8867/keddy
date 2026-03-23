@@ -32,24 +32,57 @@ function stripNoiseTags(text: string): string {
   return cleaned.trim();
 }
 
+/** Truncate text at word boundary with ellipsis */
+function truncateAtWord(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  const cut = text.substring(0, maxLen);
+  const lastSpace = cut.lastIndexOf(" ");
+  if (lastSpace > maxLen - 20) return cut.substring(0, lastSpace) + "...";
+  return cut + "...";
+}
+
 /** Find first real user prompt, skipping noise and extracting text from inside tags */
-export function deriveTitle(exchanges: Array<{ user_prompt: string }>): string | null {
+export function deriveTitle(
+  exchanges: Array<{ user_prompt: string }>,
+  context?: {
+    plans?: Array<{ plan_text: string; status: string }>;
+    milestones?: Array<{ milestone_type: string; description: string }>;
+  },
+): string | null {
+  // Priority 1: Use the latest approved/implemented plan's first meaningful line
+  if (context?.plans) {
+    const activePlan = [...context.plans]
+      .reverse()
+      .find((p) => p.status === "implemented" || p.status === "approved");
+    if (activePlan) {
+      const firstLine = activePlan.plan_text
+        .split("\n")
+        .map((l) => l.trim())
+        .find((l) => l.length > 3 && !l.startsWith("#") && !l.startsWith("---") && !l.startsWith("##"));
+      if (firstLine) {
+        // Strip markdown formatting
+        const clean = firstLine.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "").replace(/\*\*/g, "");
+        if (clean.length > 3) return truncateAtWord(clean, 80);
+      }
+    }
+  }
+
+  // Priority 2: Use first commit message
+  if (context?.milestones) {
+    const firstCommit = context.milestones.find((m) => m.milestone_type === "commit");
+    if (firstCommit && firstCommit.description.length > 3) {
+      return truncateAtWord(firstCommit.description, 80);
+    }
+  }
+
+  // Priority 3: First real user prompt (original logic)
   for (const ex of exchanges) {
     const cleaned = stripNoiseTags(ex.user_prompt);
     if (!cleaned) continue;
-    // Skip very short text (likely fragments)
     if (cleaned.length < 3) continue;
-    // Skip "Tool loaded." prompts
     if (cleaned.startsWith("Tool loaded.")) continue;
-    // Skip image-only placeholders
     if (cleaned === "(attached image)" || /^\(\d+ attached images\)$/.test(cleaned)) continue;
-    // Truncate at word boundary with ellipsis
-    if (cleaned.length <= 80) return cleaned;
-    const cut = cleaned.substring(0, 80);
-    const lastSpace = cut.lastIndexOf(" ");
-    // If there's a space in the last 20 chars, cut at the word boundary
-    if (lastSpace > 60) return cut.substring(0, lastSpace) + "...";
-    return cut + "...";
+    return truncateAtWord(cleaned, 80);
   }
   return null;
 }

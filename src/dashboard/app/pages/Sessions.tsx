@@ -2,17 +2,35 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link } from "react-router";
 import { useAppContext } from "../App.js";
 import { getSessions } from "../lib/api.js";
-import { SEGMENT_COLORS, SEGMENT_LABELS } from "../lib/constants.js";
+import { SEGMENT_COLORS, SEGMENT_SHORT_LABELS } from "../lib/constants.js";
 import type { SessionListItem } from "../lib/types.js";
+import {
+  Compass,
+  Code,
+  ListChecks,
+  Bug,
+  Rocket,
+  Search,
+  FileSearch,
+  Database,
+  CornerDownRight,
+  MessageCircle,
+  ChevronRight,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
-function formatTime(dateStr: string): string {
-  return new Date(dateStr).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+const SEGMENT_ICONS: Record<string, LucideIcon> = {
+  planning: Compass,
+  implementing: Code,
+  testing: ListChecks,
+  debugging: Bug,
+  deploying: Rocket,
+  exploring: Search,
+  reviewing: FileSearch,
+  querying: Database,
+  pivot: CornerDownRight,
+  discussion: MessageCircle,
+};
 
 function formatDuration(start: string, end: string | null): string {
   if (!end) return "";
@@ -37,99 +55,143 @@ function formatRelative(dateStr: string): string {
   const days = Math.floor(hours / 24);
   if (days === 1) return "yesterday";
   if (days < 7) return `${days}d ago`;
-  return formatTime(dateStr);
+  return new Date(dateStr).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
 }
 
-function SegmentBar({ segments, total }: { segments: SessionListItem["segments"]; total: number }) {
-  if (!segments.length || total === 0) return null;
+/** Segment flow — icon + label for each segment, connected by chevrons. Max 5 shown. */
+function SegmentFlow({
+  segments,
+}: {
+  segments: SessionListItem["segments"];
+}) {
+  if (!segments.length) return null;
+
+  const maxShow = 5;
+  const visible = segments.slice(0, maxShow);
+  const overflow = segments.length - maxShow;
+
   return (
-    <div className="flex h-1 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
-      {segments.map((seg, i) => {
-        const width = Math.max(((seg.end - seg.start + 1) / total) * 100, 3);
+    <span className="inline-flex items-center gap-1.5">
+      {visible.map((seg, i) => {
+        const Icon = SEGMENT_ICONS[seg.type] || MessageCircle;
+        const label = SEGMENT_SHORT_LABELS[seg.type] || seg.type;
+        const iconColor = SEGMENT_COLORS[seg.type] || "var(--text-muted)";
+        const count = seg.end - seg.start + 1;
         return (
-          <div
-            key={i}
-            style={{ width: `${width}%`, background: SEGMENT_COLORS[seg.type] || "#555" }}
-            title={SEGMENT_LABELS[seg.type] || seg.type}
-          />
+          <span key={i} className="inline-flex items-center gap-1.5">
+            {i > 0 && (
+              <ChevronRight
+                size={12}
+                strokeWidth={2.5}
+                style={{ color: "var(--text-secondary)" }}
+                className="shrink-0"
+              />
+            )}
+            <span
+              className="inline-flex items-center gap-1 text-[12px]"
+              title={`${SEGMENT_SHORT_LABELS[seg.type] || seg.type} · ${count} exchange${count !== 1 ? "s" : ""}`}
+            >
+              <Icon size={14} className="shrink-0" style={{ color: iconColor }} />
+              <span style={{ color: "var(--text-tertiary)" }}>{label}</span>
+            </span>
+          </span>
         );
       })}
-    </div>
+      {overflow > 0 && (
+        <span className="text-[10px] ml-0.5" style={{ color: "var(--text-muted)" }}>
+          +{overflow}
+        </span>
+      )}
+    </span>
   );
 }
 
-function SessionRow({ session }: { session: SessionListItem }) {
+
+function SessionRow({
+  session,
+  showProject,
+}: {
+  session: SessionListItem;
+  showProject: boolean;
+}) {
   const title = session.title || session.session_id.substring(0, 20);
-  const project = session.project_path.split("/").slice(-2).join("/");
   const lastActivity = session.ended_at || session.started_at;
   const duration = formatDuration(session.started_at, session.ended_at);
+  const isActive = !session.ended_at;
+  const project = session.project_path.split("/").slice(-2).join("/");
 
-  const plans = session.plans || [];
-  const segTypes = [...new Set(session.segments.map(s => s.type))];
+  // Build metadata items for line 2
+  const meta: Array<{ text: string; mono?: boolean; color?: string }> = [];
 
-  // Build mini flow badges: show plan journey + key segment types
-  const flowBadges: Array<{ label: string; color: string }> = [];
-  for (const plan of plans) {
-    const statusColors: Record<string, string> = { implemented: "#10b981", approved: "#10b981", revised: "#f59e0b", rejected: "#ef4444", drafted: "#71717a", superseded: "#71717a" };
-    const statusIcons: Record<string, string> = { implemented: "●", approved: "✓", revised: "→", rejected: "✗", drafted: "…", superseded: "–" };
-    flowBadges.push({ label: `Plan v${plan.version} ${statusIcons[plan.status] || "…"}`, color: statusColors[plan.status] || "#888" });
+  if (showProject) {
+    meta.push({ text: project });
   }
+  if (session.git_branch) {
+    meta.push({ text: session.git_branch, mono: true });
+  }
+  if (duration) {
+    meta.push({ text: duration });
+  }
+  meta.push({ text: `${session.exchange_count} exchanges` });
 
   return (
     <Link
       to={`/sessions/${session.session_id}`}
-      className="block px-5 py-3.5 border-b transition-colors hover:bg-[var(--bg-hover)] animate-in"
+      className="block px-5 py-2.5 border-b transition-colors hover:bg-[var(--bg-hover)]"
       style={{ borderColor: "var(--border)" }}
     >
-      <div className="flex items-start gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <p className="text-[14px] font-medium truncate" style={{ color: "var(--text-primary)" }}>
-              {title}
-            </p>
-            {session.has_ai && <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--accent-dim)", color: "var(--accent)" }}>AI</span>}
-          </div>
-          {session.forked_from && (
-            <div className="flex items-center gap-1.5 mb-1 text-[11px]" style={{ color: "var(--text-muted)" }}>
-              <span style={{ color: "#f59e0b" }}>&#8618;</span>
-              <span>forked from</span>
-              {session.parent_title && <span className="font-medium" style={{ color: "var(--text-tertiary)" }}>{session.parent_title.substring(0, 50)}</span>}
-            </div>
+      {/* Line 1: Title + Meta pills + Time */}
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0 shrink">
+          {isActive && (
+            <span
+              className="shrink-0 rounded-full"
+              style={{
+                width: 7,
+                height: 7,
+                background: "#10b981",
+                boxShadow: "0 0 6px #10b98180",
+              }}
+            />
           )}
-          <div className="flex items-center gap-2 text-[12px] flex-wrap" style={{ color: "var(--text-tertiary)" }}>
-            <span>{project}</span>
-            {session.git_branch && (
-              <span className="px-1.5 py-0.5 rounded font-mono text-[11px]" style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}>
-                {session.git_branch}
-              </span>
-            )}
-            {duration && <span>{duration}</span>}
-            <span>{session.exchange_count} exchanges</span>
-            {session.milestone_count > 0 && <span>{session.milestone_count} milestones</span>}
-            {session.compaction_count > 0 && <span>{session.compaction_count} compaction{session.compaction_count !== 1 ? "s" : ""}</span>}
-          </div>
-          {/* Flow badges — plans + key segment types */}
-          {(flowBadges.length > 0 || segTypes.length > 1) && (
-            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-              {flowBadges.map((badge, i) => (
-                <span key={i} className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ background: `${badge.color}15`, color: badge.color }}>
-                  {badge.label}
-                </span>
-              ))}
-              {segTypes.slice(0, 4).map(type => (
-                <span key={type} className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: `${SEGMENT_COLORS[type] || "#555"}10`, color: SEGMENT_COLORS[type] || "#555" }}>
-                  {SEGMENT_LABELS[type] || type}
-                </span>
-              ))}
-            </div>
-          )}
+          <p
+            className="text-[13.5px] font-medium truncate"
+            style={{ color: "var(--text-primary)" }}
+          >
+            {title}
+          </p>
         </div>
-        <div className="text-right shrink-0">
-          <span className="text-[12px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-            {formatRelative(lastActivity)}
+        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+          {meta.map((item, i) => (
+            <span
+              key={i}
+              className={`text-[11px] px-2 py-0.5 rounded${item.mono ? " font-mono" : ""}`}
+              style={{
+                border: "1px solid var(--border)",
+                color: item.color || "var(--text-tertiary)",
+              }}
+            >
+              {item.text}
+            </span>
+          ))}
+          <span
+            className="text-[11px] tabular-nums ml-1"
+            style={{ color: isActive ? "#10b981" : "var(--text-muted)" }}
+          >
+            {isActive ? "Active" : formatRelative(lastActivity)}
           </span>
         </div>
       </div>
+
+      {/* Line 2: Segment flow */}
+      {session.segments.length > 0 && (
+        <div className="mt-1">
+          <SegmentFlow segments={session.segments} />
+        </div>
+      )}
     </Link>
   );
 }
@@ -145,33 +207,40 @@ export function Sessions() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchSessions = useCallback((isInitial = false) => {
-    if (isInitial) setLoading(true);
-    const params: Record<string, string | number> = { days: 365, limit: 500 };
-    if (selectedProject) params.project = selectedProject;
-    if (searchQuery) params.q = searchQuery;
-    getSessions(params as any)
-      .then((data) => {
-        setSessions(data as SessionListItem[]);
-        if (isInitial) setVisibleCount(50);
-        setLastUpdated(new Date());
-      })
-      .catch(console.error)
-      .finally(() => { if (isInitial) setLoading(false); });
-  }, [selectedProject, searchQuery]);
+  const fetchSessions = useCallback(
+    (isInitial = false) => {
+      if (isInitial) setLoading(true);
+      const params: Record<string, string | number> = {
+        days: 365,
+        limit: 500,
+      };
+      if (selectedProject) params.project = selectedProject;
+      if (searchQuery) params.q = searchQuery;
+      getSessions(params as any)
+        .then((data) => {
+          setSessions(data as SessionListItem[]);
+          if (isInitial) setVisibleCount(50);
+          setLastUpdated(new Date());
+        })
+        .catch(console.error)
+        .finally(() => {
+          if (isInitial) setLoading(false);
+        });
+    },
+    [selectedProject, searchQuery],
+  );
 
-  // Initial fetch + refetch on filter changes
   useEffect(() => {
     fetchSessions(true);
   }, [fetchSessions]);
 
-  // 30-second polling
   useEffect(() => {
     intervalRef.current = setInterval(() => fetchSessions(false), 30000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
   }, [fetchSessions]);
 
-  // Update "Updated X ago" text every 5 seconds
   useEffect(() => {
     const tick = () => {
       if (!lastUpdated) return;
@@ -182,7 +251,9 @@ export function Sessions() {
     };
     tick();
     tickRef.current = setInterval(tick, 5000);
-    return () => { if (tickRef.current) clearInterval(tickRef.current); };
+    return () => {
+      if (tickRef.current) clearInterval(tickRef.current);
+    };
   }, [lastUpdated]);
 
   const filtered = useMemo(() => {
@@ -197,15 +268,20 @@ export function Sessions() {
   }, [sessions, localSearch]);
 
   const visible = filtered.slice(0, visibleCount);
+  const showProject = !selectedProject;
   const projectName = selectedProject
     ? selectedProject.split("/").slice(-2).join("/")
     : "All Sessions";
 
+  // Compute header stats from loaded sessions
+  const lastActive = sessions.length > 0
+    ? sessions[0].ended_at || sessions[0].started_at
+    : null;
+
   // Group sessions by date
   const grouped = new Map<string, SessionListItem[]>();
   for (const s of visible) {
-    const lastActivity = s.ended_at || s.started_at;
-    const date = new Date(lastActivity);
+    const date = new Date(s.started_at);
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
@@ -216,7 +292,11 @@ export function Sessions() {
     } else if (date.toDateString() === yesterday.toDateString()) {
       key = "Yesterday";
     } else {
-      key = date.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+      key = date.toLocaleDateString("en-US", {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+      });
     }
 
     if (!grouped.has(key)) grouped.set(key, []);
@@ -227,18 +307,31 @@ export function Sessions() {
     <div className="h-full flex flex-col">
       {/* Header */}
       <div
-        className="px-5 py-3 border-b flex items-center gap-4"
-        style={{ background: "var(--bg-surface)", borderColor: "var(--border)" }}
+        className="px-5 py-3 flex items-center gap-4"
+        style={{ background: "var(--bg-root)" }}
       >
-        <h1 className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+        <h1
+          style={{
+            color: "var(--text-primary)",
+            fontSize: 15,
+            fontWeight: 450,
+            letterSpacing: "0.03em",
+          }}
+        >
           {projectName}
         </h1>
-        <span className="text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+        <span
+          className="text-[11px] tabular-nums"
+          style={{ color: "var(--text-tertiary)" }}
+        >
           {filtered.length} sessions
         </span>
-        {updateAgo && (
-          <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>
-            {updateAgo}
+        {lastActive && (
+          <span
+            className="text-[11px] tabular-nums"
+            style={{ color: "var(--text-muted)" }}
+          >
+            last active {formatRelative(lastActive)}
           </span>
         )}
         <div className="flex-1" />
@@ -246,8 +339,8 @@ export function Sessions() {
           type="text"
           value={localSearch}
           onChange={(e) => setLocalSearch(e.target.value)}
-          placeholder="filter..."
-          className="px-3 py-1.5 rounded text-xs w-48 outline-none transition-colors"
+          placeholder="Filter sessions..."
+          className="px-3 py-1.5 rounded text-xs w-52 outline-none transition-colors"
           style={{
             background: "var(--bg-elevated)",
             border: "1px solid var(--border)",
@@ -259,43 +352,61 @@ export function Sessions() {
       {/* Session list */}
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="p-8 text-center" style={{ color: "var(--text-tertiary)" }}>
+          <div
+            className="p-8 text-center"
+            style={{ color: "var(--text-tertiary)" }}
+          >
             <span className="text-xs">loading sessions...</span>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="p-12 text-center" style={{ color: "var(--text-tertiary)" }}>
+          <div
+            className="p-12 text-center"
+            style={{ color: "var(--text-tertiary)" }}
+          >
             <p className="text-sm mb-1">No sessions found</p>
             <p className="text-xs">
-              {selectedProject ? "Try selecting a different project" : "Run keddy init to start capturing"}
+              {selectedProject
+                ? "Try selecting a different project"
+                : "Run keddy init to start capturing"}
             </p>
           </div>
         ) : (
           <>
-            {Array.from(grouped.entries()).map(([date, dateSessions], groupIdx) => (
-              <div key={date}>
-                <div
-                  className="px-5 py-3 text-xs tracking-wider sticky top-0 z-10 flex items-center gap-3"
-                  style={{
-                    color: "var(--text-secondary)",
-                    background: "var(--bg-root)",
-                    borderBottom: "1px solid var(--border)",
-                    borderTop: groupIdx > 0 ? "1px solid var(--border-bright)" : undefined,
-                    marginTop: groupIdx > 0 ? 8 : 0,
-                    fontSize: 11,
-                    fontWeight: 500,
-                  }}
-                >
-                  <span>{date}</span>
-                  <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}>
-                    {dateSessions.length} {dateSessions.length === 1 ? "session" : "sessions"}
-                  </span>
-                  <div className="flex-1 h-px ml-2" style={{ background: "var(--border)" }} />
+            {Array.from(grouped.entries()).map(
+              ([date, dateSessions], groupIdx) => (
+                <div key={date}>
+                  <div
+                    className="px-5 py-2 sticky top-0 z-10 flex items-center gap-2"
+                    style={{
+                      background: "var(--bg-root)",
+                      marginTop: groupIdx > 0 ? 2 : 0,
+                    }}
+                  >
+                    <div
+                      className="flex-1 h-px"
+                      style={{ background: "var(--border)" }}
+                    />
+                    <span
+                      className="text-[11px] shrink-0"
+                      style={{ color: "var(--text-muted)", fontWeight: 500 }}
+                    >
+                      {date}
+                    </span>
+                    <div
+                      className="flex-1 h-px"
+                      style={{ background: "var(--border)" }}
+                    />
+                  </div>
+                  {dateSessions.map((session) => (
+                    <SessionRow
+                      key={session.id}
+                      session={session}
+                      showProject={showProject}
+                    />
+                  ))}
                 </div>
-                {dateSessions.map((session) => (
-                  <SessionRow key={session.id} session={session} />
-                ))}
-              </div>
-            ))}
+              ),
+            )}
             {visibleCount < filtered.length && (
               <div className="p-4 text-center">
                 <button

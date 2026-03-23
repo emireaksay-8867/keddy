@@ -84,6 +84,24 @@ sessionsRoutes.get("/", (c) => {
       } catch { /* invalid JSON */ }
     }
 
+    // Compute outcomes from milestones
+    // For tests, use the LAST test result — if you fix a failing test, the session outcome is "passed"
+    const testMilestones = milestones.filter(
+      (m) => m.milestone_type === "test_pass" || m.milestone_type === "test_fail",
+    );
+    const lastTest = testMilestones.length > 0 ? testMilestones[testMilestones.length - 1] : null;
+    const outcomes = {
+      commits: milestones.filter((m) => m.milestone_type === "commit").length,
+      has_pr: milestones.some((m) => m.milestone_type === "pr"),
+      tests_passed: lastTest?.milestone_type === "test_pass",
+      tests_failed: lastTest?.milestone_type === "test_fail",
+    };
+
+    // Find latest non-superseded plan status
+    const latestPlan = plans.length > 0
+      ? plans.filter((p) => p.status !== "superseded").pop() || plans[plans.length - 1]
+      : null;
+
     return {
       ...s,
       segments: segments.map((seg) => ({
@@ -93,7 +111,8 @@ sessionsRoutes.get("/", (c) => {
         has_summary: !!seg.summary,
       })),
       milestone_count: milestones.length,
-      plans: plans.map((p) => ({ version: p.version, status: p.status })),
+      outcomes,
+      latest_plan: latestPlan ? { version: latestPlan.version, status: latestPlan.status, total_versions: plans.length } : null,
       has_ai: hasAiSummaries,
       compaction_count: s.compaction_count,
       forked_from: s.forked_from,

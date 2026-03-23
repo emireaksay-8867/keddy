@@ -15,6 +15,8 @@ import {
   getStats,
   searchByFile,
   getSessionTranscript,
+  getSessionTasks,
+  getProjectStatus,
 } from "../db/queries.js";
 
 function textResult(text: string) {
@@ -78,6 +80,7 @@ server.tool(
     const milestones = getSessionMilestones(session.id);
     const compactions = getSessionCompactionEvents(session.id);
 
+    // Reordered: plans + tasks first (decisions), then segments/milestones (context), exchanges last (raw data)
     return jsonResult({
       session: {
         session_id: session.session_id,
@@ -88,18 +91,16 @@ server.tool(
         ended: session.ended_at,
         exchange_count: session.exchange_count,
       },
-      exchanges: exchanges.map((e) => ({
-        index: e.exchange_index,
-        prompt: e.user_prompt.substring(0, 500),
-        response_preview: (e.assistant_response || "").substring(0, 300),
-        tools: e.tool_call_count,
-        is_interrupt: !!e.is_interrupt,
-      })),
       plans: plans.map((p) => ({
         version: p.version,
         status: p.status,
         feedback: p.user_feedback,
-        text: p.plan_text.substring(0, 500),
+        text: p.plan_text, // Full text — not truncated
+      })),
+      tasks: getSessionTasks(session.id).map((t) => ({
+        subject: t.subject,
+        status: t.status,
+        description: t.description,
       })),
       segments: segments.map((s) => {
         let files: unknown = [];
@@ -111,6 +112,7 @@ server.tool(
           range: `${s.exchange_index_start}-${s.exchange_index_end}`,
           files,
           tools,
+          summary: s.summary || undefined,
         };
       }),
       milestones: milestones.map((m) => ({
@@ -123,16 +125,13 @@ server.tool(
         summary: c.summary ? c.summary.substring(0, 200) : null,
         pre_tokens: (c as any).pre_tokens || null,
       })),
-      tasks: (() => {
-        try {
-          const { getSessionTasks } = require("../db/queries.js");
-          return getSessionTasks(session.id).map((t: any) => ({
-            subject: t.subject,
-            status: t.status,
-            description: t.description,
-          }));
-        } catch { return []; }
-      })(),
+      exchanges: exchanges.map((e) => ({
+        index: e.exchange_index,
+        prompt: e.user_prompt.substring(0, 500),
+        response_preview: (e.assistant_response || "").substring(0, 300),
+        tools: e.tool_call_count,
+        is_interrupt: !!e.is_interrupt,
+      })),
     });
   },
 );
@@ -267,6 +266,66 @@ server.tool(
     }));
 
     return jsonResult({ file: file_path, sessions: formatted });
+  },
+);
+
+// Tool 7: Project status
+server.tool(
+  "keddy_project_status",
+  "Get the current state of a project: active plan with full text, task progress, recent milestones, segment types, and active files. Use this to understand where a project stands before starting work.",
+  {
+    project_path: z.string().describe("The project path (usually the current working directory)"),
+  },
+  async ({ project_path }) => {
+    const status = getProjectStatus(project_path);
+
+    if (status.recentSessions.length === 0) {
+      return textResult(`No sessions found for project: ${project_path}`);
+    }
+
+    const pendingTasks = status.tasks.filter((t) => t.status !== "completed");
+    const completedTasks = status.tasks.filter((t) => t.status === "completed");
+
+    return jsonResult({
+      project: project_path,
+      total_sessions: status.recentSessions.length,
+      active_plan: status.activePlan
+        ? {
+            session_id: status.activePlan.sessionId,
+            version: status.activePlan.version,
+            status: status.activePlan.status,
+            plan_text: status.activePlan.plan_text,
+            created_at: status.activePlan.created_at,
+            tasks: {
+              total: status.tasks.length,
+              completed: completedTasks.length,
+              pending: pendingTasks.length,
+              remaining: pendingTasks.map((t) => ({ subject: t.subject, status: t.status })),
+            },
+          }
+        : null,
+      plan_history: status.planHistory.map((p) => ({
+        version: p.version,
+        status: p.status,
+        feedback: p.user_feedback,
+      })),
+      recent_milestones: status.recentMilestones.map((m) => ({
+        type: m.milestone_type,
+        description: m.description,
+      })),
+      recent_work: {
+        segments: status.segmentTypes,
+        active_files: status.activeFiles,
+        last_session: status.recentSessions[0]
+          ? {
+              branch: status.recentSessions[0].git_branch,
+              exchanges: status.recentSessions[0].exchange_count,
+              started: status.recentSessions[0].started_at,
+              ended: status.recentSessions[0].ended_at,
+            }
+          : null,
+      },
+    });
   },
 );
 

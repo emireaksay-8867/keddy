@@ -24,6 +24,20 @@ export const SEGMENT_LABELS: Record<string, string> = {
   deploying: "Deployment",
 };
 
+/** Short labels for the segment flow display */
+export const SEGMENT_SHORT_LABELS: Record<string, string> = {
+  planning: "plan",
+  implementing: "build",
+  testing: "test",
+  debugging: "debug",
+  exploring: "explore",
+  querying: "query",
+  reviewing: "review",
+  discussion: "chat",
+  pivot: "pivot",
+  deploying: "deploy",
+};
+
 export const MILESTONE_ICONS: Record<string, string> = {
   commit: "\u25CB",
   push: "\u2191",

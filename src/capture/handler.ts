@@ -12,6 +12,7 @@ import {
   getSessionExchanges,
   getRecentSessions,
   insertSessionLink,
+  getProjectContextForSessionStart,
 } from "../db/queries.js";
 import { parseTranscript, parseLatestExchanges } from "./parser.js";
 import { extractPlans } from "./plans.js";
@@ -55,15 +56,33 @@ async function handleSessionStart(input: HookStdin): Promise<void> {
       jsonl_path: input.transcript_path ?? null,
     });
 
-    // Count previous sessions for context
-    const recentSessions = getRecentSessions(30, 5);
-    const projectSessions = recentSessions.filter(
-      (s) => s.project_path === input.cwd,
-    );
+    // Build project context for Claude
+    const ctx = getProjectContextForSessionStart(input.cwd!);
+    const parts: string[] = [`[Keddy] ${ctx.sessionCount} sessions tracked.`];
 
-    // Write additional context to stdout (sync hook)
+    if (ctx.activePlan) {
+      const firstLine = ctx.activePlan.excerpt
+        .split("\n")
+        .find((l: string) => l.trim().length > 3 && !l.trim().startsWith("#"))
+        ?.trim() || "";
+      const planLine = firstLine.length > 60 ? firstLine.substring(0, 60) + "..." : firstLine;
+      parts.push(`Active plan v${ctx.activePlan.version} (${ctx.activePlan.status}): ${planLine}`);
+    }
+
+    if (ctx.pendingTasks.length > 0) {
+      parts.push(`Remaining tasks: ${ctx.pendingTasks.join(", ")}`);
+    }
+
+    if (ctx.lastMilestone) {
+      parts.push(`Last: ${ctx.lastMilestone}`);
+    }
+
+    if (ctx.activePlan || ctx.lastMilestone) {
+      parts.push("Use keddy_project_status or keddy_continue_plan for full details.");
+    }
+
     const context = {
-      additionalContext: `[Keddy] Session tracked. ${projectSessions.length} recent sessions in this project.`,
+      additionalContext: parts.join(" | "),
     };
     process.stdout.write(JSON.stringify(context));
   } finally {
@@ -120,6 +139,110 @@ async function handleStop(input: HookStdin): Promise<void> {
           tool_use_id: tc.id,
           is_error: tc.is_error ?? false,
         });
+      }
+    }
+
+    // Extract plans from new exchanges in real-time (so plan cards appear mid-session)
+    const hasPlanTools = latestExchanges.some((ex) =>
+      ex.tool_calls.some((tc) => tc.name === "EnterPlanMode" || tc.name === "ExitPlanMode"),
+    );
+    if (hasPlanTools) {
+      // Re-extract plans from ALL exchanges (plan status depends on full context)
+      const allExchanges = getSessionExchanges(sessionRow.id);
+      const parsedForPlans = allExchanges.map((e: any) => {
+        const db = getDb();
+        const tcs = db
+          .prepare("SELECT tool_name as name, tool_input as input, tool_result as result, tool_use_id as id, is_error FROM tool_calls WHERE exchange_id = ?")
+          .all(e.id)
+          .map((tc: any) => ({
+            ...tc,
+            input: tc.input ? (() => { try { return JSON.parse(tc.input); } catch { return {}; } })() : {},
+            is_error: !!tc.is_error,
+          }));
+        return {
+          index: e.exchange_index,
+          user_prompt: e.user_prompt,
+          assistant_response: e.assistant_response,
+          tool_calls: tcs,
+          timestamp: e.timestamp,
+          is_interrupt: !!e.is_interrupt,
+          is_compact_summary: !!e.is_compact_summary,
+        };
+      });
+      const plans = extractPlans(parsedForPlans);
+      // Clear old plans and re-insert (status inference depends on full sequence)
+      const db = getDb();
+      db.prepare("DELETE FROM plans WHERE session_id = ?").run(sessionRow.id);
+      for (const plan of plans) {
+        insertPlan({
+          session_id: sessionRow.id,
+          version: plan.version,
+          plan_text: plan.plan_text,
+          status: plan.status,
+          user_feedback: plan.user_feedback,
+          exchange_index_start: plan.exchange_index_start,
+          exchange_index_end: plan.exchange_index_end,
+        });
+      }
+    }
+
+    // Extract milestones and tasks from new exchanges in real-time
+    // (so commits, test results, and tasks appear mid-session)
+    if (latestExchanges.length > 0) {
+      const newMilestones = extractMilestones(latestExchanges);
+      for (const milestone of newMilestones) {
+        insertMilestone({
+          session_id: sessionRow.id,
+          milestone_type: milestone.milestone_type,
+          exchange_index: milestone.exchange_index,
+          description: milestone.description,
+          metadata: milestone.metadata ? JSON.stringify(milestone.metadata) : null,
+        });
+      }
+
+      // Extract tasks from new exchanges
+      const hasTaskTools = latestExchanges.some((ex) =>
+        ex.tool_calls.some((tc) => tc.name === "TaskCreate" || tc.name === "TaskUpdate" || tc.name === "TaskStop"),
+      );
+      if (hasTaskTools) {
+        const { extractTasks } = await import("./tasks.js");
+        const { insertTask } = await import("../db/queries.js");
+        // Re-extract all tasks (status updates depend on full sequence)
+        const allExchanges = getSessionExchanges(sessionRow.id);
+        const parsedForTasks = allExchanges.map((e: any) => {
+          const db = getDb();
+          const tcs = db
+            .prepare("SELECT tool_name as name, tool_input as input, tool_result as result, tool_use_id as id, is_error FROM tool_calls WHERE exchange_id = ?")
+            .all(e.id)
+            .map((tc: any) => ({
+              ...tc,
+              input: tc.input ? (() => { try { return JSON.parse(tc.input); } catch { return {}; } })() : {},
+              is_error: !!tc.is_error,
+            }));
+          return {
+            index: e.exchange_index,
+            user_prompt: e.user_prompt,
+            assistant_response: e.assistant_response,
+            tool_calls: tcs,
+            timestamp: e.timestamp,
+            is_interrupt: !!e.is_interrupt,
+            is_compact_summary: !!e.is_compact_summary,
+          };
+        });
+        const tasks = extractTasks(parsedForTasks);
+        const db = getDb();
+        db.prepare("DELETE FROM tasks WHERE session_id = ?").run(sessionRow.id);
+        for (const task of tasks) {
+          insertTask({
+            session_id: sessionRow.id,
+            task_index: parseInt(task.id),
+            subject: task.subject,
+            description: task.description,
+            status: task.status,
+            exchange_index_created: task.exchange_index_created,
+            exchange_index_completed: task.exchange_index_completed,
+          });
+        }
       }
     }
 
@@ -315,6 +438,15 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
         description: milestone.description,
         metadata: milestone.metadata ? JSON.stringify(milestone.metadata) : null,
       });
+    }
+
+    // Update title with enriched context (plans + milestones now available)
+    const enrichedTitle = deriveTitle(
+      transcript.exchanges.map((e) => ({ user_prompt: e.user_prompt })),
+      { plans, milestones },
+    );
+    if (enrichedTitle) {
+      db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(enrichedTitle, session.id);
     }
 
     // Compaction events from transcript (previous events were cleared above)

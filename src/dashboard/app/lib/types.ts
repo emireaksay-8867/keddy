@@ -10,6 +10,17 @@ export interface SessionListItem {
   compaction_count: number;
   segments: Array<{ type: string; start: number; end: number; has_summary?: boolean }>;
   milestone_count: number;
+  outcomes?: {
+    commits: number;
+    has_pr: boolean;
+    tests_passed: boolean;
+    tests_failed: boolean;
+  };
+  latest_plan?: {
+    version: number;
+    status: string;
+    total_versions: number;
+  } | null;
   plans?: Array<{ version: number; status: string }>;
   has_ai?: boolean;
   forked_from?: string | null;
