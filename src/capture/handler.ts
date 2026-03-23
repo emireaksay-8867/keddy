@@ -251,13 +251,37 @@ async function handleStop(input: HookStdin): Promise<void> {
     const lastExchange = latestExchanges[latestExchanges.length - 1];
     if (lastExchange) {
       const db = getDb();
-      // Set title from first real user prompt if not already set
-      const currentTitle = db.prepare("SELECT title FROM sessions WHERE id = ?").get(sessionRow.id) as { title: string | null } | undefined;
-      if (!currentTitle?.title) {
-        const allExchanges = getSessionExchanges(sessionRow.id);
-        const title = deriveTitle(allExchanges.map(e => ({ user_prompt: e.user_prompt })));
-        if (title) {
-          db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, sessionRow.id);
+
+      // Check JSONL tail for custom-title (from /rename or auto-rename after plan mode)
+      // This is the highest priority title source — always overwrite
+      let customTitle: string | null = null;
+      try {
+        const fs2 = await import("node:fs");
+        const stat2 = fs2.statSync(input.transcript_path);
+        const tailSize = Math.min(stat2.size, 8192);
+        const tailBuf = Buffer.alloc(tailSize);
+        const fd2 = fs2.openSync(input.transcript_path, "r");
+        fs2.readSync(fd2, tailBuf, 0, tailSize, stat2.size - tailSize);
+        fs2.closeSync(fd2);
+        const tailText = tailBuf.toString("utf8");
+        const titleMatches = [...tailText.matchAll(/"customTitle"\s*:\s*"([^"]+)"/g)];
+        if (titleMatches.length > 0) {
+          customTitle = titleMatches[titleMatches.length - 1][1];
+        }
+      } catch { /* non-critical */ }
+
+      if (customTitle) {
+        // Custom title from Claude Code — always takes priority
+        db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(customTitle, sessionRow.id);
+      } else {
+        // Fallback: derive title from first real user prompt if not already set
+        const currentTitle = db.prepare("SELECT title FROM sessions WHERE id = ?").get(sessionRow.id) as { title: string | null } | undefined;
+        if (!currentTitle?.title) {
+          const allExchanges = getSessionExchanges(sessionRow.id);
+          const title = deriveTitle(allExchanges.map(e => ({ user_prompt: e.user_prompt })));
+          if (title) {
+            db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, sessionRow.id);
+          }
         }
       }
       db.prepare(`
@@ -356,7 +380,7 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
         claude_version: transcript.claude_version,
         slug: transcript.slug,
         forked_from: transcript.forked_from,
-        title: deriveTitle(transcript.exchanges) ?? null,
+        title: transcript.custom_title || deriveTitle(transcript.exchanges) || null,
       });
     }
 

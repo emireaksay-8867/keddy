@@ -165,6 +165,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
   let claudeVersion: string | null = null;
   let slug: string | null = null;
   let forkedFrom: string | null = null;
+  let customTitle: string | null = null;
   let startedAt: string | null = null;
   const exchanges: ParsedExchange[] = [];
   const compactions: Array<{ exchange_index: number; summary: string | null; pre_tokens: number | null }> = [];
@@ -195,6 +196,12 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     if (entry.timestamp) {
       if (!startedAt) startedAt = entry.timestamp;
       // Always update — last one wins for ended_at
+    }
+
+    // Custom title from /rename — last one wins
+    if (entry.type === "custom-title" && typeof (entry as any).customTitle === "string") {
+      customTitle = (entry as any).customTitle;
+      continue;
     }
 
     // Compaction boundary — capture metadata and content
@@ -428,6 +435,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     claude_version: claudeVersion,
     slug,
     forked_from: forkedFrom,
+    custom_title: customTitle,
     started_at: firstTs,
     ended_at: lastTs,
     exchanges,

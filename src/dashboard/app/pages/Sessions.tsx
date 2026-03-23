@@ -113,9 +113,11 @@ function SegmentFlow({
 function SessionRow({
   session,
   showProject,
+  isLast,
 }: {
   session: SessionListItem;
   showProject: boolean;
+  isLast: boolean;
 }) {
   const title = session.title || session.session_id.substring(0, 20);
   const lastActivity = session.ended_at || session.started_at;
@@ -140,8 +142,8 @@ function SessionRow({
   return (
     <Link
       to={`/sessions/${session.session_id}`}
-      className="block px-5 py-2.5 border-b transition-colors hover:bg-[var(--bg-hover)]"
-      style={{ borderColor: "var(--border)" }}
+      className={`block px-5 py-2.5 transition-colors hover:bg-[var(--bg-hover)]${isLast ? "" : " border-b"}`}
+      style={isLast ? undefined : { borderColor: "var(--border)" }}
     >
       {/* Line 1: Title + Meta pills + Time */}
       <div className="flex items-center gap-2">
@@ -321,8 +323,8 @@ export function Sessions() {
           {projectName}
         </h1>
         <span
-          className="text-[11px] tabular-nums"
-          style={{ color: "var(--text-tertiary)" }}
+          className="text-[11px] tabular-nums px-2.5 py-0.5 rounded-full"
+          style={{ border: "1px solid var(--border-bright)", color: "var(--text-secondary)" }}
         >
           {filtered.length} sessions
         </span>
@@ -376,32 +378,33 @@ export function Sessions() {
               ([date, dateSessions], groupIdx) => (
                 <div key={date}>
                   <div
-                    className="px-5 py-2 sticky top-0 z-10 flex items-center gap-2"
+                    className="px-5 py-3 sticky top-0 z-10 flex items-center gap-3"
                     style={{
                       background: "var(--bg-root)",
-                      marginTop: groupIdx > 0 ? 2 : 0,
+                      marginTop: groupIdx > 0 ? 4 : 0,
                     }}
                   >
                     <div
                       className="flex-1 h-px"
-                      style={{ background: "var(--border)" }}
+                      style={{ background: "var(--border-bright)" }}
                     />
                     <span
-                      className="text-[11px] shrink-0"
-                      style={{ color: "var(--text-muted)", fontWeight: 500 }}
+                      className="text-[12px] shrink-0"
+                      style={{ color: "var(--text-secondary)", fontWeight: 500 }}
                     >
                       {date}
                     </span>
                     <div
                       className="flex-1 h-px"
-                      style={{ background: "var(--border)" }}
+                      style={{ background: "var(--border-bright)" }}
                     />
                   </div>
-                  {dateSessions.map((session) => (
+                  {dateSessions.map((session, idx) => (
                     <SessionRow
                       key={session.id}
                       session={session}
                       showProject={showProject}
+                      isLast={idx === dateSessions.length - 1}
                     />
                   ))}
                 </div>

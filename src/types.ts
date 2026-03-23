@@ -156,6 +156,7 @@ export interface ParsedTranscript {
   claude_version: string | null;
   slug: string | null;
   forked_from: string | null;
+  custom_title: string | null;
   started_at: string | null;
   ended_at: string | null;
   exchanges: ParsedExchange[];
