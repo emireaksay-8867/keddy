@@ -293,6 +293,7 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
     db.prepare("DELETE FROM segments WHERE session_id = ?").run(session.id);
     db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
     db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM compaction_events WHERE session_id = ?").run(session.id);
     // Update forked_from if parser found it (branches set this on every JSONL entry)
     if (transcript.forked_from) {
       db.prepare("UPDATE sessions SET forked_from = ? WHERE id = ?").run(
@@ -338,26 +339,14 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
       });
     }
 
-    // Compaction events from transcript — merge with existing PostCompact data
+    // Compaction events from transcript (previous events were cleared above)
     for (const compaction of transcript.compactions) {
-      // Check if PostCompact already created an event for this exchange index
-      const existing = db.prepare(
-        "SELECT id, analysis_summary FROM compaction_events WHERE session_id = ? AND exchange_index = ?",
-      ).get(session.id, compaction.exchange_index) as { id: string; analysis_summary: string | null } | undefined;
-
-      if (existing) {
-        // Update with parser data (summary + pre_tokens) while preserving analysis_summary
-        db.prepare(
-          "UPDATE compaction_events SET summary = ?, pre_tokens = ? WHERE id = ?",
-        ).run(compaction.summary, compaction.pre_tokens, existing.id);
-      } else {
-        insertCompactionEvent({
-          session_id: session.id,
-          exchange_index: compaction.exchange_index,
-          summary: compaction.summary,
-          pre_tokens: compaction.pre_tokens,
-        });
-      }
+      insertCompactionEvent({
+        session_id: session.id,
+        exchange_index: compaction.exchange_index,
+        summary: compaction.summary,
+        pre_tokens: compaction.pre_tokens,
+      });
     }
 
     // Extract and store tasks

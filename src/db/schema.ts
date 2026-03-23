@@ -99,7 +99,8 @@ export function initSchema(db: Database.Database): void {
       exchanges_before INTEGER NOT NULL DEFAULT 0,
       exchanges_after INTEGER NOT NULL DEFAULT 0,
       pre_tokens INTEGER,
-      timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(session_id, exchange_index)
     );
 
     CREATE TABLE IF NOT EXISTS tasks (
@@ -171,4 +172,29 @@ export function initSchema(db: Database.Database): void {
       value TEXT NOT NULL
     );
   `);
+
+  // Migration: deduplicate compaction_events for existing databases
+  // The UNIQUE constraint only applies to newly created tables, so we
+  // need to clean up duplicates in existing databases manually.
+  try {
+    const dupeCount = (db.prepare(`
+      SELECT COUNT(*) as cnt FROM compaction_events
+      WHERE id NOT IN (
+        SELECT MIN(id) FROM compaction_events
+        GROUP BY session_id, exchange_index
+      )
+    `).get() as { cnt: number }).cnt;
+
+    if (dupeCount > 0) {
+      db.prepare(`
+        DELETE FROM compaction_events
+        WHERE id NOT IN (
+          SELECT MIN(id) FROM compaction_events
+          GROUP BY session_id, exchange_index
+        )
+      `).run();
+    }
+  } catch {
+    // Table may not exist yet on first run — safe to ignore
+  }
 }

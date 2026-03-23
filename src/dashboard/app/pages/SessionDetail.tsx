@@ -581,8 +581,10 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
             const ce = item.data as CompactionEvent;
             const ceTs = exchanges.find(e => e.exchange_index === ce.exchange_index)?.timestamp;
             const tokenInfo = ce.pre_tokens ? `${Math.round(ce.pre_tokens / 1000)}K tokens` : null;
-            const hasContinuation = ce.summary && ce.summary !== "Conversation compacted";
-            const hasAnalysis = !!ce.analysis_summary;
+            const cleanedSummary = ce.summary ? cleanText(ce.summary).cleaned : null;
+            const cleanedAnalysis = ce.analysis_summary ? cleanText(ce.analysis_summary).cleaned : null;
+            const hasContinuation = cleanedSummary && cleanedSummary !== "Conversation compacted";
+            const hasAnalysis = !!cleanedAnalysis;
             const hasContent = hasContinuation || hasAnalysis;
             return (
               <div key={`c${i}`} className="relative pb-3">
@@ -598,21 +600,21 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
                   {/* Analysis summary */}
                   {hasAnalysis && (
                     <button
-                      onClick={() => openPanel("Compaction Analysis", ce.analysis_summary!, tokenInfo ? `Analysis of ${tokenInfo} before compaction` : "Analysis of compacted context")}
+                      onClick={() => openPanel("Compaction Analysis", cleanedAnalysis!, tokenInfo ? `Analysis of ${tokenInfo} before compaction` : "Analysis of compacted context")}
                       className="w-full text-left px-3.5 py-2 hover:bg-[var(--bg-hover)] transition-colors group"
                       style={{ borderBottom: hasContinuation ? "1px solid var(--border)" : "none" }}
                     >
-                      <p className="text-[11px] line-clamp-2" style={{ color: "var(--text-tertiary)" }}>{trunc(ce.analysis_summary!, 150)}</p>
+                      <p className="text-[11px] line-clamp-2" style={{ color: "var(--text-tertiary)" }}>{trunc(cleanedAnalysis!, 150)}</p>
                     </button>
                   )}
 
                   {/* Continuation context */}
                   {hasContinuation && (
                     <button
-                      onClick={() => openPanel("Continuation Context", ce.summary!, tokenInfo ? `Context carried forward after ${tokenInfo} compacted` : "Context carried forward")}
+                      onClick={() => openPanel("Continuation Context", cleanedSummary!, tokenInfo ? `Context carried forward after ${tokenInfo} compacted` : "Context carried forward")}
                       className="w-full text-left px-3.5 py-2 hover:bg-[var(--bg-hover)] transition-colors group"
                     >
-                      <p className="text-[11px] line-clamp-1" style={{ color: "var(--text-muted)" }}>{trunc(ce.summary!, 120)}</p>
+                      <p className="text-[11px] line-clamp-1" style={{ color: "var(--text-muted)" }}>{trunc(cleanedSummary!, 120)}</p>
                     </button>
                   )}
 

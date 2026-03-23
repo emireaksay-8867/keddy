@@ -420,6 +420,33 @@ export function insertCompactionEvent(data: {
   pre_tokens?: number | null;
 }): string {
   const db = getDb();
+
+  // Dedup: check for existing compaction at this exchange index
+  const existing = db.prepare(
+    "SELECT id FROM compaction_events WHERE session_id = ? AND exchange_index = ?",
+  ).get(data.session_id, data.exchange_index) as { id: string } | undefined;
+
+  if (existing) {
+    // Merge new data into existing row — preserve fields that already have values
+    db.prepare(`
+      UPDATE compaction_events SET
+        summary = COALESCE(?, summary),
+        analysis_summary = COALESCE(?, analysis_summary),
+        exchanges_before = CASE WHEN ? > 0 THEN ? ELSE exchanges_before END,
+        exchanges_after = CASE WHEN ? > 0 THEN ? ELSE exchanges_after END,
+        pre_tokens = COALESCE(?, pre_tokens)
+      WHERE id = ?
+    `).run(
+      data.summary ?? null,
+      data.analysis_summary ?? null,
+      data.exchanges_before ?? 0, data.exchanges_before ?? 0,
+      data.exchanges_after ?? 0, data.exchanges_after ?? 0,
+      data.pre_tokens ?? null,
+      existing.id,
+    );
+    return existing.id;
+  }
+
   const id = randomUUID();
   db.prepare(`
     INSERT INTO compaction_events (id, session_id, exchange_index, summary, analysis_summary, exchanges_before, exchanges_after, pre_tokens)
