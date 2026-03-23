@@ -113,11 +113,9 @@ function SegmentFlow({
 function SessionRow({
   session,
   showProject,
-  isLast,
 }: {
   session: SessionListItem;
   showProject: boolean;
-  isLast: boolean;
 }) {
   const title = session.title || session.session_id.substring(0, 20);
   const lastActivity = session.ended_at || session.started_at;
@@ -142,8 +140,8 @@ function SessionRow({
   return (
     <Link
       to={`/sessions/${session.session_id}`}
-      className={`block px-5 py-2.5 transition-colors hover:bg-[var(--bg-hover)]${isLast ? "" : " border-b"}`}
-      style={isLast ? undefined : { borderColor: "var(--border)" }}
+      className="block px-5 py-2.5 transition-colors hover:bg-[var(--bg-hover)] border-b"
+      style={{ borderColor: "var(--border)" }}
     >
       {/* Line 1: Title + Meta pills + Time */}
       <div className="flex items-center gap-2">
@@ -188,12 +186,12 @@ function SessionRow({
         </div>
       </div>
 
-      {/* Line 2: Segment flow */}
-      {session.segments.length > 0 && (
-        <div className="mt-1">
+      {/* Line 2: Segment flow — always rendered for consistent height */}
+      <div className="mt-1" style={{ minHeight: 20 }}>
+        {session.segments.length > 0 && (
           <SegmentFlow segments={session.segments} />
-        </div>
-      )}
+        )}
+      </div>
     </Link>
   );
 }
@@ -237,7 +235,7 @@ export function Sessions() {
   }, [fetchSessions]);
 
   useEffect(() => {
-    intervalRef.current = setInterval(() => fetchSessions(false), 30000);
+    intervalRef.current = setInterval(() => fetchSessions(false), 5000);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
@@ -280,13 +278,29 @@ export function Sessions() {
     ? sessions[0].ended_at || sessions[0].started_at
     : null;
 
-  // Group sessions by date
-  const grouped = new Map<string, SessionListItem[]>();
+  // Split active sessions (last activity < 5min ago) from the rest
+  const now = Date.now();
+  const ACTIVE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+  const activeSessions: SessionListItem[] = [];
+  const restSessions: SessionListItem[] = [];
+
   for (const s of visible) {
+    const lastActivity = new Date(s.ended_at || s.started_at).getTime();
+    if (now - lastActivity < ACTIVE_THRESHOLD) {
+      activeSessions.push(s);
+    } else {
+      restSessions.push(s);
+    }
+  }
+
+  // Group non-active sessions by start date
+  const groupMap = new Map<string, { dateVal: number; sessions: SessionListItem[] }>();
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  for (const s of restSessions) {
     const date = new Date(s.started_at);
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
 
     let key: string;
     if (date.toDateString() === today.toDateString()) {
@@ -301,9 +315,22 @@ export function Sessions() {
       });
     }
 
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key)!.push(s);
+    if (!groupMap.has(key)) {
+      groupMap.set(key, { dateVal: date.getTime(), sessions: [] });
+    }
+    groupMap.get(key)!.sessions.push(s);
   }
+
+  // Build final groups: Active first, then date groups newest-first
+  const grouped: Array<[string, SessionListItem[]]> = [];
+  if (activeSessions.length > 0) {
+    grouped.push(["Active", activeSessions]);
+  }
+  grouped.push(
+    ...[...groupMap.entries()]
+      .sort((a, b) => b[1].dateVal - a[1].dateVal)
+      .map(([key, val]) => [key, val.sessions] as [string, SessionListItem[]]),
+  );
 
   return (
     <div className="h-full flex flex-col">
@@ -374,7 +401,7 @@ export function Sessions() {
           </div>
         ) : (
           <>
-            {Array.from(grouped.entries()).map(
+            {grouped.map(
               ([date, dateSessions], groupIdx) => (
                 <div key={date}>
                   <div
@@ -399,12 +426,11 @@ export function Sessions() {
                       style={{ background: "var(--border-bright)" }}
                     />
                   </div>
-                  {dateSessions.map((session, idx) => (
+                  {dateSessions.map((session) => (
                     <SessionRow
                       key={session.id}
                       session={session}
                       showProject={showProject}
-                      isLast={idx === dateSessions.length - 1}
                     />
                   ))}
                 </div>
