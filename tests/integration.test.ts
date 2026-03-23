@@ -383,6 +383,7 @@ describe("Edge cases", () => {
           project_path: "/test",
         }),
       );
+      updateSessionEnd(`concurrent-${i}`, 1);
     }
 
     const stats = getStats();

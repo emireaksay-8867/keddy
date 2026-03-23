@@ -91,10 +91,12 @@ describe("sessions", () => {
       session_id: "recent-1",
       project_path: "/test",
     });
+    updateSessionEnd("recent-1", 1);
     insertSession({
       session_id: "recent-2",
       project_path: "/test",
     });
+    updateSessionEnd("recent-2", 1);
 
     const sessions = getRecentSessions(7);
     expect(sessions.length).toBe(2);
@@ -361,6 +363,7 @@ describe("stats", () => {
       session_id: "stats-test",
       project_path: "/stats/project",
     });
+    updateSessionEnd("stats-test", 1);
 
     insertExchange({
       session_id: sessionId,

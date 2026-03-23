@@ -168,3 +168,126 @@ describe("parseLatestExchanges", () => {
     expect(result.length).toBe(0);
   });
 });
+
+describe("thinking block handling", () => {
+  it("should not create empty exchanges from thinking-only blocks", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-thinking-blocks.jsonl"));
+    // No exchange should have an empty assistant response
+    for (const ex of result.exchanges) {
+      expect(ex.assistant_response.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("should preserve assistant response after thinking block", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-thinking-blocks.jsonl"));
+    // First exchange: thinking block precedes the real text + tool response
+    expect(result.exchanges[0].assistant_response).toContain("architecture is simple");
+    expect(result.exchanges[0].tool_calls.length).toBeGreaterThan(0);
+  });
+
+  it("should handle multiple thinking blocks in a session", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-thinking-blocks.jsonl"));
+    expect(result.exchanges.length).toBe(2);
+    // Second exchange also has a thinking block before text
+    expect(result.exchanges[1].assistant_response).toContain("TypeScript strict mode");
+  });
+});
+
+describe("image handling", () => {
+  it("should add image placeholders for image-only messages", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-images.jsonl"));
+    // Entry with 2 images and no text should become "(2 attached images)"
+    const imgExchanges = result.exchanges.filter(e => e.user_prompt.includes("attached image"));
+    expect(imgExchanges.length).toBeGreaterThan(0);
+  });
+
+  it("should include image count alongside text prompts", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-images.jsonl"));
+    // "The button should look like this screenshot" + 1 image
+    const buttonEx = result.exchanges.find(e => e.user_prompt.includes("button"));
+    expect(buttonEx).toBeDefined();
+    expect(buttonEx!.user_prompt).toContain("attached image");
+    expect(buttonEx!.user_prompt).toContain("button");
+  });
+
+  it("should count multiple images correctly", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-images.jsonl"));
+    // Entry with 3 images + text
+    const refEx = result.exchanges.find(e => e.user_prompt.includes("references"));
+    expect(refEx).toBeDefined();
+    expect(refEx!.user_prompt).toContain("3 attached images");
+  });
+
+  it("should not create empty prompts from image-only messages", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-images.jsonl"));
+    const emptyPrompts = result.exchanges.filter(e => !e.user_prompt.trim() && !e.is_compact_summary);
+    expect(emptyPrompts.length).toBe(0);
+  });
+});
+
+describe("user interrupt handling", () => {
+  it("should mark interrupted exchanges correctly", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-user-interrupts.jsonl"));
+    const interrupted = result.exchanges.filter(e => e.is_interrupt);
+    // Two interrupt-only user messages should mark their preceding exchanges
+    expect(interrupted.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("should not create separate exchanges for interrupt-only messages", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-user-interrupts.jsonl"));
+    // "[Request interrupted by user]" should NOT appear as a user_prompt
+    for (const ex of result.exchanges) {
+      expect(ex.user_prompt).not.toBe("[Request interrupted by user]");
+      expect(ex.user_prompt.trim()).not.toBe("[Request interrupted by user]");
+    }
+  });
+
+  it("should merge image-ref-only messages into adjacent exchanges", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-user-interrupts.jsonl"));
+    // Image ref messages like "[Image: source: /var/...]" should not create standalone exchanges
+    for (const ex of result.exchanges) {
+      const isJustImageRef = /^\s*\[Image:\s*source:/.test(ex.user_prompt) && !ex.user_prompt.replace(/\[Image:\s*source:[^\]]*\]/g, "").trim();
+      expect(isJustImageRef).toBe(false);
+    }
+  });
+
+  it("should preserve real user messages after interrupts", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-user-interrupts.jsonl"));
+    // "Let me explain better" should still exist as a user prompt
+    const explainEx = result.exchanges.find(e => e.user_prompt.includes("explain better"));
+    expect(explainEx).toBeDefined();
+    // "Here is the error" should also exist
+    const errorEx = result.exchanges.find(e => e.user_prompt.includes("error I am seeing"));
+    expect(errorEx).toBeDefined();
+  });
+});
+
+describe("system-injected message filtering", () => {
+  it("should filter out task-notification messages", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-system-injected.jsonl"));
+    for (const ex of result.exchanges) {
+      expect(ex.user_prompt).not.toContain("<task-notification>");
+    }
+  });
+
+  it("should filter out system-reminder messages", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-system-injected.jsonl"));
+    for (const ex of result.exchanges) {
+      expect(ex.user_prompt).not.toContain("<system-reminder>");
+    }
+  });
+
+  it("should filter out available-deferred-tools messages", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-system-injected.jsonl"));
+    for (const ex of result.exchanges) {
+      expect(ex.user_prompt).not.toContain("<available-deferred-tools>");
+    }
+  });
+
+  it("should preserve real user messages around system messages", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-system-injected.jsonl"));
+    expect(result.exchanges.length).toBe(2);
+    expect(result.exchanges[0].user_prompt).toBe("Build a dashboard");
+    expect(result.exchanges[1].user_prompt).toBe("Looks good, now add a chart");
+  });
+});

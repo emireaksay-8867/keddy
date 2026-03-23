@@ -1,0 +1,10 @@
+{"type":"summary","sessionId":"sess-sysinjected","cwd":"/Users/test/project","gitBranch":"main","version":"1.0.0","timestamp":"2024-01-13T00:00:00Z"}
+{"type":"user","message":{"role":"user","content":"Build a dashboard"},"timestamp":"2024-01-13T00:01:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll build the dashboard."},{"type":"tool_use","name":"Agent","input":{"description":"Build sidebar","prompt":"Create sidebar component"},"id":"tool-s01"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-s01","content":"Sidebar component created"}]}}
+{"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n<summary>Agent completed sidebar</summary>\n</task-notification>"},"timestamp":"2024-01-13T00:01:30Z"}
+{"type":"user","message":{"role":"user","content":"<system-reminder>\nThe task tools haven't been used recently.\n</system-reminder>"},"timestamp":"2024-01-13T00:01:35Z"}
+{"type":"user","message":{"role":"user","content":"<available-deferred-tools>\nAskUserQuestion\nTaskCreate\n</available-deferred-tools>"},"timestamp":"2024-01-13T00:01:40Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Dashboard sidebar is ready. Now let me add the main content area."}]}}
+{"type":"user","message":{"role":"user","content":"Looks good, now add a chart"},"timestamp":"2024-01-13T00:02:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll add a chart component using recharts."}]}}

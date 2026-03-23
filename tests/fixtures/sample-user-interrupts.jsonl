@@ -1,0 +1,16 @@
+{"type":"summary","sessionId":"sess-uinterrupt","cwd":"/Users/test/project","gitBranch":"main","version":"1.0.0","timestamp":"2024-01-12T00:00:00Z"}
+{"type":"user","message":{"role":"user","content":"Fix the login bug"},"timestamp":"2024-01-12T00:01:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll investigate the login issue."},{"type":"tool_use","name":"Read","input":{"file_path":"./src/auth.ts"},"id":"tool-u01"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-u01","content":"export function login() { return false; }"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Found the bug — login always returns false. Let me fix it."}]}}
+{"type":"user","message":{"role":"user","content":"Actually wait, I want to rethink this"},"timestamp":"2024-01-12T00:02:00Z"}
+{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"},"timestamp":"2024-01-12T00:02:01Z"}
+{"type":"user","message":{"role":"user","content":"Let me explain better — the login should use OAuth instead of the current approach"},"timestamp":"2024-01-12T00:02:30Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Got it! I'll refactor login to use OAuth. Let me set up the OAuth flow."},{"type":"tool_use","name":"Edit","input":{"file_path":"./src/auth.ts","old_string":"return false","new_string":"return oauthLogin()"},"id":"tool-u02"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-u02","content":"File edited"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Refactored to use OAuth. The login function now delegates to oauthLogin()."}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]},"timestamp":"2024-01-12T00:03:00Z"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Image: source: /var/folders/rh/abc123/screenshot1.png]"},{"type":"text","text":"[Image: source: /var/folders/rh/abc123/screenshot2.png]"}]},"timestamp":"2024-01-12T00:03:05Z"}
+{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"},"timestamp":"2024-01-12T00:03:10Z"}
+{"type":"user","message":{"role":"user","content":"Here is the error I am seeing on the OAuth page, please fix it"},"timestamp":"2024-01-12T00:03:30Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I can see the error. The redirect URI is misconfigured. Let me fix it."}]}}

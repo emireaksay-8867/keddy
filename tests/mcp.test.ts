@@ -17,6 +17,7 @@ import {
   getRecentSessions,
   searchSessions,
   getStats,
+  updateSessionEnd,
 } from "../src/db/queries.js";
 
 let tmpDir: string;
@@ -188,10 +189,12 @@ describe("MCP tool: keddy_recent_activity (underlying queries)", () => {
       session_id: "mcp-recent-1",
       project_path: "/recent/test",
     });
+    updateSessionEnd("mcp-recent-1", 1);
     insertSession({
       session_id: "mcp-recent-2",
       project_path: "/recent/test",
     });
+    updateSessionEnd("mcp-recent-2", 1);
 
     const sessions = getRecentSessions(7);
     expect(sessions.length).toBeGreaterThanOrEqual(2);

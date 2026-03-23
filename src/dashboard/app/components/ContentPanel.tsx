@@ -2,30 +2,12 @@ import { useState, useEffect } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SEGMENT_COLORS } from "../lib/constants.js";
+import { cleanText } from "../lib/cleanText.js";
+import { toolSummary } from "../lib/toolSummary.js";
 import { ClaudeIcon } from "./ClaudeIcon.js";
 import type { Exchange } from "../lib/types.js";
 
-function cleanText(text: string): { cleaned: string; wasInterrupted: boolean } {
-  let wasInterrupted = false;
-  let cleaned = text;
-  if (/\[Request interrupted by user(?:\s+for tool use)?\]/.test(cleaned)) {
-    wasInterrupted = true;
-    cleaned = cleaned.replace(/\[Request interrupted by user(?:\s+for tool use)?\]/g, "").trim();
-  }
-  cleaned = cleaned.replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, "");
-  cleaned = cleaned.replace(/<task-notification>[\s\S]*?<\/task-notification>/g, "");
-  cleaned = cleaned.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "");
-  cleaned = cleaned.replace(/<bash-input>[\s\S]*?<\/bash-input>/g, "");
-  cleaned = cleaned.replace(/<bash-stdout>[\s\S]*?<\/bash-stdout>/g, "");
-  cleaned = cleaned.replace(/<bash-stderr>[\s\S]*?<\/bash-stderr>/g, "");
-  cleaned = cleaned.replace(/\[Image:\s*source:\s*\/var\/folders\/[^\]]*\]/g, "(attached image)");
-  cleaned = cleaned.replace(/\/private\/tmp\/claude-\d+\/[^\s)]*\/([^\s/)]+)/g, "$1");
-  cleaned = cleaned.replace(/Read the output file to retrieve the result:\s*\/private\/tmp\/[^\s]*/g, "(reading agent output)");
-  return { cleaned: cleaned.trim(), wasInterrupted };
-}
-
 function fmtShortTime(d: string) { return new Date(d).toLocaleString("en-US", { hour: "numeric", minute: "2-digit" }); }
-function toolSummary(input: string) { try { const o = JSON.parse(input); return o.file_path || o.command || o.pattern || o.query || input.substring(0, 60); } catch { return input.substring(0, 60); } }
 
 interface ContentPanelProps {
   title: string;
@@ -183,7 +165,7 @@ function PanelExchange({ ex }: { ex: Exchange }) {
               <div key={tc.id} className="text-[12px] flex items-center gap-2 py-1 px-3 rounded-md" style={{ color: "var(--text-tertiary)" }}>
                 <span className="w-1 h-1 rounded-full shrink-0" style={{ background: tc.is_error ? SEGMENT_COLORS.debugging : "var(--accent)" }} />
                 <span className="font-mono font-medium" style={{ color: tc.is_error ? SEGMENT_COLORS.debugging : "var(--accent)" }}>{tc.tool_name}</span>
-                <span className="font-mono truncate flex-1 opacity-50">{toolSummary(tc.tool_input)}</span>
+                <span className="font-mono truncate flex-1 opacity-50">{toolSummary(tc.tool_name, tc.tool_input)}</span>
                 {!!tc.is_error && <span className="text-[10px] px-1 rounded" style={{ background: `${SEGMENT_COLORS.debugging}20`, color: SEGMENT_COLORS.debugging }}>error</span>}
               </div>
             ))}

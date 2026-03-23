@@ -216,6 +216,7 @@ describe("database — session queries", () => {
         session_id: `limit-test-${i}`,
         project_path: "/test",
       });
+      updateSessionEnd(`limit-test-${i}`, 1);
     }
 
     const limited = getRecentSessions(30, 5);
@@ -409,6 +410,7 @@ describe("database — idempotency", () => {
       project_path: "/test",
       title: "First",
     });
+    updateSessionEnd("upsert-repeat", 1);
     upsertSession({
       session_id: "upsert-repeat",
       project_path: "/test",

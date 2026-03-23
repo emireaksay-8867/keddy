@@ -35,18 +35,26 @@ sessionsRoutes.get("/", (c) => {
     });
   } else {
     sessions = getRecentSessions(daysVal ?? 365, limitVal);
-    // Apply project filter — match exact path or by repo directory name
+    // Apply project filter — match exact path, repo directory name, or worktree repo name
     if (project) {
       const repoName = project.split("/").pop() || project;
+      // Also extract worktree repo name from filter path (e.g. .../worktrees/mano/branch → mano)
+      const filterParts = project.split("/");
+      const filterWtIdx = filterParts.indexOf("worktrees");
+      const filterWtRepo = filterWtIdx >= 0 ? filterParts[filterWtIdx + 1] : null;
+
       sessions = sessions.filter((s) => {
         if (s.project_path === project) return true;
-        // Match by repo directory name — exact match only
+        // Match by repo directory name
         const sessionRepo = s.project_path.split("/").pop() || "";
         if (sessionRepo === repoName) return true;
-        // Also match worktree paths: .../worktrees/reponame/branch
+        // Match session worktree repo name against filter repo name
         const parts = s.project_path.split("/");
         const wtIdx = parts.indexOf("worktrees");
         if (wtIdx >= 0 && parts[wtIdx + 1] === repoName) return true;
+        // Match if filter is a worktree path — match its repo name against session repo name
+        if (filterWtRepo && sessionRepo === filterWtRepo) return true;
+        if (filterWtRepo && wtIdx >= 0 && parts[wtIdx + 1] === filterWtRepo) return true;
         return false;
       });
     }

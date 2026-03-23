@@ -95,8 +95,12 @@ projectsRoutes.get("/projects", (c) => {
     if (p.org) continue;
     const key = p.repo.toLowerCase();
     if (merged.has(key)) {
-      // Merge into existing org project
+      // Merge into existing entry — prefer the path with more sessions as canonical
       const existing = merged.get(key)!;
+      if (p.session_count > existing.session_count) {
+        existing.project_path = p.project_path;
+        existing.short_path = existing.org ? `${existing.org}/${existing.repo}` : existing.repo;
+      }
       existing.session_count += p.session_count;
       existing.exchange_count += p.exchange_count;
       if (p.last_activity > existing.last_activity) existing.last_activity = p.last_activity;

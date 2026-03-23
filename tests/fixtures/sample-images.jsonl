@@ -1,0 +1,9 @@
+{"type":"summary","sessionId":"sess-images","cwd":"/Users/test/project","gitBranch":"main","version":"1.0.0","timestamp":"2024-01-11T00:00:00Z"}
+{"type":"user","message":{"role":"user","content":"Here is the design I want to implement"},"timestamp":"2024-01-11T00:01:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I see the design. Let me start implementing it."}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"The button should look like this screenshot"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]},"timestamp":"2024-01-11T00:02:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I can see the button design. I'll create a rounded blue button with that style."}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]},"timestamp":"2024-01-11T00:03:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I can see both screenshots. The layout uses a grid with cards."}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"And here are some more references"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]},"timestamp":"2024-01-11T00:04:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Thanks for all the references. I have a clear picture now."}]}}

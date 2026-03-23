@@ -46,6 +46,48 @@ function extractText(content: string | ContentBlock[] | undefined): string {
     .join("\n");
 }
 
+/** Check if a user message contains image blocks */
+function hasImages(content: string | ContentBlock[] | undefined): boolean {
+  if (!content || typeof content === "string") return false;
+  return content.some((b) => b.type === "image");
+}
+
+/** Count image blocks in content */
+function countImages(content: string | ContentBlock[] | undefined): number {
+  if (!content || typeof content === "string") return 0;
+  return content.filter((b) => b.type === "image").length;
+}
+
+/** Check if a user message is an interrupt-only message (no real content) */
+function isInterruptOnly(content: string | ContentBlock[] | undefined): boolean {
+  if (!content) return false;
+  if (typeof content === "string") {
+    return (
+      content.trim() === "[Request interrupted by user]" ||
+      content.trim() === "[Request interrupted by user for tool use]"
+    );
+  }
+  // All blocks are either interrupt text or empty
+  const textBlocks = content.filter((b) => b.type === "text" && b.text);
+  return (
+    textBlocks.length > 0 &&
+    textBlocks.every(
+      (b) =>
+        b.text?.trim() === "[Request interrupted by user]" ||
+        b.text?.trim() === "[Request interrupted by user for tool use]",
+    )
+  );
+}
+
+/** Check if content has only images and [Image: ...] text references (no real text) */
+function isImageRefOnly(content: string | ContentBlock[] | undefined): boolean {
+  if (!content || typeof content === "string") return false;
+  const textBlocks = content.filter((b) => b.type === "text" && b.text);
+  if (textBlocks.length === 0) return hasImages(content);
+  // All text blocks are just image reference markers
+  return textBlocks.every((b) => /^\s*\[Image:\s*source:/.test(b.text!));
+}
+
 function extractToolUses(content: string | ContentBlock[] | undefined): ParsedToolCall[] {
   if (!content || typeof content === "string") return [];
   return content
@@ -207,6 +249,52 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     }
 
     // User message with actual text content — starts a new exchange
+    // But first: skip system-injected messages that aren't real user input
+    if (role === "user") {
+      const text = extractText(msgContent);
+      const isSystemInjected =
+        text.startsWith("<task-notification>") ||
+        text.startsWith("<system-reminder>") ||
+        text.startsWith("<task-completed>") ||
+        text.startsWith("<available-deferred-tools>");
+      if (isSystemInjected) {
+        // Drop entirely — don't store system-injected content as user input
+        continue;
+      }
+
+      // Bug fix 1c: Interrupt-only messages (user hit Esc) — mark previous exchange as interrupted, don't create new one
+      if (isInterruptOnly(msgContent)) {
+        if (inExchange) {
+          exchanges.push({
+            index: exchangeIndex,
+            user_prompt: currentUserPrompt,
+            assistant_response: currentAssistantText,
+            tool_calls: pendingToolCalls,
+            timestamp: currentTimestamp,
+            is_interrupt: true,
+            is_compact_summary: currentIsCompactSummary,
+          });
+          exchangeIndex++;
+          pendingToolCalls = [];
+          currentAssistantText = "";
+          inExchange = false;
+        }
+        continue;
+      }
+
+      // Bug fix 1b: Image-only messages (screenshots with no text) — merge into adjacent exchange
+      if (isImageRefOnly(msgContent)) {
+        const imgCount = countImages(msgContent);
+        const imgTag = imgCount === 1 ? "(attached image)" : `(${imgCount} attached images)`;
+        if (inExchange) {
+          // Append image reference to current user prompt
+          currentUserPrompt += (currentUserPrompt ? "\n" : "") + imgTag;
+        }
+        // If not in an exchange, this will be picked up by the next user message below
+        continue;
+      }
+    }
+
     if (role === "user") {
       // If we had a pending exchange without assistant response, save it
       if (inExchange) {
@@ -224,7 +312,15 @@ export function parseTranscript(filePath: string): ParsedTranscript {
         currentAssistantText = "";
       }
 
-      currentUserPrompt = extractText(msgContent);
+      // Build user prompt — include image placeholders alongside text
+      let prompt = extractText(msgContent);
+      if (hasImages(msgContent)) {
+        const imgCount = countImages(msgContent);
+        const imgTag = imgCount === 1 ? "(attached image)" : `(${imgCount} attached images)`;
+        prompt += (prompt ? "\n" : "") + imgTag;
+      }
+
+      currentUserPrompt = prompt;
       currentTimestamp = entry.timestamp || new Date().toISOString();
       currentIsCompactSummary = false;
       inExchange = true;
@@ -236,6 +332,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       const assistantText = extractText(msgContent);
       const toolUses = extractToolUses(msgContent);
       const interrupt = isInterrupt(msgContent);
+      const hasThinking = Array.isArray(msgContent) && msgContent.some((b) => b.type === "thinking");
 
       // Accumulate assistant text across multi-turn tool exchanges
       if (assistantText) {
@@ -244,6 +341,11 @@ export function parseTranscript(filePath: string): ParsedTranscript {
 
       // Collect tool calls from this assistant message
       pendingToolCalls.push(...toolUses);
+
+      // Skip thinking-only blocks — they're intermediate, not a final response
+      if (!assistantText && toolUses.length === 0 && hasThinking) {
+        continue;
+      }
 
       // If there are no tool uses, this is the final response — finalize exchange
       if (inExchange && toolUses.length === 0) {

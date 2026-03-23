@@ -4,6 +4,8 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { getSession, getSessionExchanges, analyzeSession, getConfig, updateConfig } from "../lib/api.js";
 import { SEGMENT_COLORS, SEGMENT_LABELS } from "../lib/constants.js";
+import { cleanText } from "../lib/cleanText.js";
+import { toolSummary } from "../lib/toolSummary.js";
 import { ContentPanel } from "../components/ContentPanel.js";
 import { ClaudeIcon } from "../components/ClaudeIcon.js";
 import type { SessionDetail as SessionDetailType, Exchange, Segment, Milestone, Plan, CompactionEvent, Decision } from "../lib/types.js";
@@ -31,36 +33,6 @@ function fmtDuration(a: string, b: string | null) {
 }
 function safeJson<T>(s: string, d: T): T { try { return JSON.parse(s); } catch { return d; } }
 function trunc(s: string, n: number) { return s.length > n ? s.substring(0, n) + "..." : s; }
-function toolSummary(input: string) { try { const o = JSON.parse(input); return o.file_path || o.command || o.pattern || o.query || input.substring(0, 60); } catch { return input.substring(0, 60); } }
-
-function cleanText(text: string): { cleaned: string; wasInterrupted: boolean } {
-  let wasInterrupted = false;
-  let cleaned = text;
-  if (/\[Request interrupted by user(?:\s+for tool use)?\]/.test(cleaned)) {
-    wasInterrupted = true;
-    cleaned = cleaned.replace(/\[Request interrupted by user(?:\s+for tool use)?\]/g, "").trim();
-  }
-  cleaned = cleaned.replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, "");
-  cleaned = cleaned.replace(/<task-notification>[\s\S]*?<\/task-notification>/g, "");
-  cleaned = cleaned.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "");
-  cleaned = cleaned.replace(/<bash-input>[\s\S]*?<\/bash-input>/g, "");
-  cleaned = cleaned.replace(/<bash-stdout>[\s\S]*?<\/bash-stdout>/g, "");
-  cleaned = cleaned.replace(/<bash-stderr>[\s\S]*?<\/bash-stderr>/g, "");
-  cleaned = cleaned.replace(/<command-name>[\s\S]*?<\/command-name>/g, "");
-  cleaned = cleaned.replace(/<command-message>[\s\S]*?<\/command-message>/g, "");
-  cleaned = cleaned.replace(/<command-args>[\s\S]*?<\/command-args>/g, "");
-  cleaned = cleaned.replace(/<local-command-stdout>[\s\S]*?<\/local-command-stdout>/g, "");
-  cleaned = cleaned.replace(/<ide_opened_file>[\s\S]*?<\/ide_opened_file>/g, "");
-  // Strip any remaining XML-style tags
-  cleaned = cleaned.replace(/<[a-z_-]+>[\s\S]*?<\/[a-z_-]+>/g, "");
-  // Strip image references with local paths
-  cleaned = cleaned.replace(/\[Image:\s*source:\s*\/var\/folders\/[^\]]*\]/g, "(attached image)");
-  // Strip /private/tmp/claude-501/... paths — show just the filename
-  cleaned = cleaned.replace(/\/private\/tmp\/claude-\d+\/[^\s)]*\/([^\s/)]+)/g, "$1");
-  // Strip "Read the output file to retrieve the result: /private/tmp/..."
-  cleaned = cleaned.replace(/Read the output file to retrieve the result:\s*\/private\/tmp\/[^\s]*/g, "(reading agent output)");
-  return { cleaned: cleaned.trim(), wasInterrupted };
-}
 
 type PanelContent = {
   title: string;
@@ -144,7 +116,7 @@ function ExchangeBubble({ ex, openPanel }: { ex: Exchange; openPanel: (t: string
           {/* Always show first few tools visually */}
           <div className="space-y-0.5">
             {tools.slice(0, toolsOpen ? tools.length : Math.min(tools.length, 3)).map((tc) => {
-              const summary = toolSummary(tc.tool_input);
+              const summary = toolSummary(tc.tool_name, tc.tool_input);
               return (
                 <button key={tc.id} onClick={() => {
                   let c = `**Input:**\n\`\`\`json\n${(() => { try { return JSON.stringify(JSON.parse(tc.tool_input), null, 2); } catch { return tc.tool_input; } })()}\n\`\`\``;

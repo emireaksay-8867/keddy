@@ -118,6 +118,7 @@ export function getRecentSessions(days: number = 7, limit: number = 50, offset: 
     .prepare(
       `SELECT * FROM sessions
        WHERE started_at >= datetime('now', ?)
+         AND exchange_count > 0
        ORDER BY COALESCE(ended_at, started_at) DESC
        LIMIT ? OFFSET ?`,
     )
@@ -134,6 +135,7 @@ export function getProjects(): Array<{ project_path: string; session_count: numb
         MAX(COALESCE(ended_at, started_at)) as last_activity,
         SUM(exchange_count) as exchange_count
        FROM sessions
+       WHERE exchange_count > 0
        GROUP BY project_path
        ORDER BY last_activity DESC`,
     )
@@ -479,7 +481,7 @@ export function getStats(): {
 } {
   const db = getDb();
   const sessions = (
-    db.prepare("SELECT COUNT(*) as count FROM sessions").get() as {
+    db.prepare("SELECT COUNT(*) as count FROM sessions WHERE exchange_count > 0").get() as {
       count: number;
     }
   ).count;
@@ -501,7 +503,7 @@ export function getStats(): {
   const projects = (
     db
       .prepare(
-        "SELECT COUNT(DISTINCT project_path) as count FROM sessions",
+        "SELECT COUNT(DISTINCT project_path) as count FROM sessions WHERE exchange_count > 0",
       )
       .get() as { count: number }
   ).count;

@@ -24,17 +24,18 @@ app.route("/api", configRoutes);
 app.route("/api", projectsRoutes);
 app.route("/api", analyzeRoutes);
 
-// Static files (built dashboard)
+// Static files — resolve from dist root (works even when bundled into cli/index.js)
+const distRoot = join(__dirname, "..");
+const publicDir = join(distRoot, "dashboard", "public");
+
 app.use(
   "/*",
-  serveStatic({
-    root: join(__dirname, "public"),
-  }),
+  serveStatic({ root: publicDir }),
 );
 
 // SPA fallback
 app.get("*", (c) => {
-  const indexPath = join(__dirname, "public", "index.html");
+  const indexPath = join(publicDir, "index.html");
   if (existsSync(indexPath)) {
     return c.html(readFileSync(indexPath, "utf8"));
   }
@@ -45,14 +46,5 @@ export function startServer(port: number = 3737) {
   return serve({
     fetch: app.fetch,
     port,
-  });
-}
-
-// Direct execution (works in CJS bundled output)
-if (typeof require !== "undefined" && require.main === module) {
-  import("../db/index.js").then(({ initDb }) => {
-    initDb();
-    startServer();
-    console.log("Keddy dashboard running at http://localhost:3737");
   });
 }

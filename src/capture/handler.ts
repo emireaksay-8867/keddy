@@ -18,6 +18,29 @@ import { extractPlans } from "./plans.js";
 import { extractSegments } from "./segments.js";
 import { extractMilestones } from "./milestones.js";
 
+/** Find first real user prompt, skipping IDE/system-injected metadata */
+function deriveTitle(exchanges: Array<{ user_prompt: string }>): string | null {
+  for (const ex of exchanges) {
+    const prompt = ex.user_prompt.trim();
+    if (!prompt) continue;
+    // Skip IDE-injected metadata
+    if (prompt.startsWith("<ide_")) continue;
+    if (prompt.startsWith("<local-command-caveat>")) continue;
+    if (prompt.startsWith("<file_")) continue;
+    // Skip system-injected messages
+    if (prompt.startsWith("<task-notification>")) continue;
+    if (prompt.startsWith("<system-reminder>")) continue;
+    if (prompt.startsWith("<available-deferred-tools>")) continue;
+    // Skip image-only prompts
+    if (prompt.startsWith("[Image:")) continue;
+    if (prompt.startsWith("Tool loaded.")) continue;
+    // Skip interrupts as title
+    if (prompt === "[Request interrupted by user]") continue;
+    return prompt.substring(0, 80);
+  }
+  return exchanges[0]?.user_prompt.substring(0, 80) ?? null;
+}
+
 interface HookStdin {
   session_id?: string;
   transcript_path?: string;
@@ -122,11 +145,20 @@ async function handleStop(input: HookStdin): Promise<void> {
       }
     }
 
-    // Update session timestamp and metadata on every Stop call
+    // Update session timestamp, title, and metadata on every Stop call
     // so the dashboard shows current activity
     const lastExchange = latestExchanges[latestExchanges.length - 1];
     if (lastExchange) {
       const db = getDb();
+      // Set title from first real user prompt if not already set
+      const currentTitle = db.prepare("SELECT title FROM sessions WHERE id = ?").get(sessionRow.id) as { title: string | null } | undefined;
+      if (!currentTitle?.title) {
+        const allExchanges = getSessionExchanges(sessionRow.id);
+        const title = deriveTitle(allExchanges.map(e => ({ user_prompt: e.user_prompt })));
+        if (title) {
+          db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, sessionRow.id);
+        }
+      }
       db.prepare(`
         UPDATE sessions SET
           ended_at = COALESCE(?, ended_at),
@@ -223,8 +255,7 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
         claude_version: transcript.claude_version,
         slug: transcript.slug,
         forked_from: transcript.forked_from,
-        title:
-          transcript.exchanges[0]?.user_prompt.substring(0, 80) ?? null,
+        title: deriveTitle(transcript.exchanges) ?? null,
       });
     }
 
