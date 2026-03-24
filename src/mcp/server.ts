@@ -18,6 +18,7 @@ import {
   getSessionTasks,
   getProjectStatus,
 } from "../db/queries.js";
+import { getDb } from "../db/index.js";
 
 function textResult(text: string) {
   return { content: [{ type: "text" as const, text }] };
@@ -132,6 +133,62 @@ server.tool(
         tools: e.tool_call_count,
         is_interrupt: !!e.is_interrupt,
       })),
+      // Facts-first additions
+      activity_groups: segments.filter((s) => s.boundary_type).map((s) => {
+        let toolCounts: unknown = {};
+        let filesRead: unknown = [];
+        let filesWritten: unknown = [];
+        let markers: unknown = [];
+        let models: unknown = [];
+        try { toolCounts = JSON.parse(s.tool_counts); } catch {}
+        try { filesRead = JSON.parse(s.files_read || "[]"); } catch {}
+        try { filesWritten = JSON.parse(s.files_written || "[]"); } catch {}
+        try { markers = JSON.parse(s.markers || "[]"); } catch {}
+        try { models = JSON.parse(s.models || "[]"); } catch {}
+        return {
+          range: `${s.exchange_index_start}-${s.exchange_index_end}`,
+          exchange_count: s.exchange_count,
+          tokens: { input: s.total_input_tokens, output: s.total_output_tokens, cache_read: s.total_cache_read_tokens },
+          tools: toolCounts,
+          errors: s.error_count,
+          files_read: filesRead,
+          files_written: filesWritten,
+          models,
+          markers,
+          boundary: s.boundary_type,
+          ai_summary: s.ai_summary || undefined,
+        };
+      }),
+      token_summary: (() => {
+        try {
+          const db = getDb();
+          const row = db.prepare(`
+            SELECT SUM(input_tokens) as ti, SUM(output_tokens) as to2, SUM(cache_read_tokens) as tcr
+            FROM exchanges WHERE session_id = ? AND input_tokens IS NOT NULL
+          `).get(session.id) as any;
+          if (row && row.ti != null) {
+            return {
+              total_input: row.ti || 0, total_output: row.to2 || 0,
+              total_cache_read: row.tcr || 0, total: (row.ti || 0) + (row.to2 || 0),
+              cache_hit_rate: row.ti > 0 ? Math.round(((row.tcr || 0) / row.ti) * 100) : 0,
+            };
+          }
+        } catch {}
+        return undefined;
+      })(),
+      file_operations: (() => {
+        try {
+          const db = getDb();
+          return db.prepare(`
+            SELECT file_path as file,
+              SUM(CASE WHEN tool_name IN ('Read','Grep','Glob') THEN 1 ELSE 0 END) as reads,
+              SUM(CASE WHEN tool_name = 'Edit' THEN 1 ELSE 0 END) as edits,
+              SUM(CASE WHEN tool_name = 'Write' THEN 1 ELSE 0 END) as writes
+            FROM tool_calls WHERE session_id = ? AND file_path IS NOT NULL
+            GROUP BY file_path ORDER BY (edits + writes) DESC, reads DESC LIMIT 20
+          `).all(session.id);
+        } catch { return undefined; }
+      })(),
     });
   },
 );
@@ -316,14 +373,32 @@ server.tool(
       recent_work: {
         segments: status.segmentTypes,
         active_files: status.activeFiles,
-        last_session: status.recentSessions[0]
-          ? {
-              branch: status.recentSessions[0].git_branch,
-              exchanges: status.recentSessions[0].exchange_count,
-              started: status.recentSessions[0].started_at,
-              ended: status.recentSessions[0].ended_at,
+        last_session: (() => {
+          const ls = status.recentSessions[0];
+          if (!ls) return null;
+          const base: Record<string, unknown> = {
+            branch: ls.git_branch,
+            exchanges: ls.exchange_count,
+            started: ls.started_at,
+            ended: ls.ended_at,
+          };
+          // Enrich with facts-first data if available
+          try {
+            const db = getDb();
+            const sid = db.prepare("SELECT id FROM sessions WHERE session_id = ?").get(ls.session_id) as { id: string } | undefined;
+            if (sid) {
+              const modelRow = db.prepare("SELECT model, COUNT(*) as cnt FROM exchanges WHERE session_id = ? AND model IS NOT NULL GROUP BY model ORDER BY cnt DESC LIMIT 1").get(sid.id) as any;
+              if (modelRow) base.model = modelRow.model;
+              const tokenRow = db.prepare("SELECT SUM(input_tokens) as ti, SUM(output_tokens) as to2 FROM exchanges WHERE session_id = ? AND input_tokens IS NOT NULL").get(sid.id) as any;
+              if (tokenRow && tokenRow.ti != null) base.total_tokens = (tokenRow.ti || 0) + (tokenRow.to2 || 0);
+              const errorRow = db.prepare("SELECT COUNT(*) as cnt FROM tool_calls WHERE session_id = ? AND is_error = 1").get(sid.id) as any;
+              base.error_count = errorRow?.cnt || 0;
+              const filesRow = db.prepare("SELECT file_path FROM tool_calls WHERE session_id = ? AND file_path IS NOT NULL AND tool_name IN ('Edit','Write') GROUP BY file_path ORDER BY COUNT(*) DESC LIMIT 5").all(sid.id) as any[];
+              if (filesRow.length > 0) base.files_written = filesRow.map((r: any) => r.file_path);
             }
-          : null,
+          } catch { /* non-critical */ }
+          return base;
+        })(),
       },
     });
   },

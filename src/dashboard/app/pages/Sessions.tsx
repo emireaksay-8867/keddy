@@ -4,6 +4,7 @@ import { useAppContext } from "../App.js";
 import { getSessions } from "../lib/api.js";
 import { SEGMENT_COLORS, SEGMENT_SHORT_LABELS } from "../lib/constants.js";
 import type { SessionListItem } from "../lib/types.js";
+import { ActivityStrip } from "../components/ActivityStrip.js";
 import {
   Compass,
   Code,
@@ -136,7 +137,23 @@ function SessionRow({
   if (duration) {
     meta.push({ text: duration });
   }
-  meta.push({ text: `${session.exchange_count} exchanges` });
+  meta.push({ text: `${session.exchange_count} ex` });
+
+  // Facts-first meta
+  if (session.model) {
+    const shortModel = session.model.replace("claude-", "").replace(/-\d+$/, "");
+    meta.push({ text: shortModel });
+  }
+  if (session.token_summary && session.token_summary.total > 0) {
+    const t = session.token_summary.total;
+    const label = t >= 1_000_000 ? `${(t / 1_000_000).toFixed(1)}M tokens` : `${Math.round(t / 1000)}k tokens`;
+    meta.push({ text: label });
+  }
+  if (session.file_count && session.file_count > 0) {
+    meta.push({ text: `${session.file_count} files` });
+  }
+
+  const hasActivityGroups = session.activity_groups && session.activity_groups.length > 0;
 
   return (
     <Link
@@ -145,7 +162,7 @@ function SessionRow({
       style={isLast ? undefined : { borderColor: "var(--border)" }}
     >
       <div className="flex gap-2">
-        {/* Left: Title + Segment flow */}
+        {/* Left: Title + Activity strip or Segment flow */}
         <div className="flex-1 min-w-0">
           <p
             className="text-[13.5px] font-medium truncate"
@@ -154,9 +171,15 @@ function SessionRow({
             {title}
           </p>
           <div className="mt-1" style={{ minHeight: 20 }}>
-            {session.segments.length > 0 && (
+            {hasActivityGroups ? (
+              <ActivityStrip
+                groups={session.activity_groups!}
+                milestones={session.milestones || []}
+                totalExchanges={session.exchange_count}
+              />
+            ) : session.segments.length > 0 ? (
               <SegmentFlow segments={session.segments} />
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -187,7 +210,7 @@ function SessionRow({
 }
 
 export function Sessions() {
-  const { selectedProject, searchQuery, setSearchQuery } = useAppContext();
+  const { selectedProject, projects, searchQuery, setSearchQuery } = useAppContext();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [visibleCount, setVisibleCount] = useState(50);
@@ -260,7 +283,7 @@ export function Sessions() {
   const visible = filtered.slice(0, visibleCount);
   const showProject = !selectedProject;
   const projectName = selectedProject
-    ? selectedProject.split("/").slice(-2).join("/")
+    ? (projects.find(p => p.project_path === selectedProject)?.repo || selectedProject.split("/").pop() || selectedProject)
     : "All Sessions";
 
   // Compute header stats from loaded sessions

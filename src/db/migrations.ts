@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 
-const CURRENT_VERSION = 4;
+const CURRENT_VERSION = 5;
 
 interface Migration {
   version: number;
@@ -99,6 +99,84 @@ const migrations: Migration[] = [
       } catch {
         // Column might already exist
       }
+    },
+  },
+  {
+    version: 5,
+    description: "Facts-first data foundation: exchange metadata, tool enrichment, activity groups",
+    up: (db) => {
+      // --- Exchanges: per-exchange metadata from JSONL ---
+      const exchangeCols = [
+        "ALTER TABLE exchanges ADD COLUMN model TEXT",
+        "ALTER TABLE exchanges ADD COLUMN input_tokens INTEGER",
+        "ALTER TABLE exchanges ADD COLUMN output_tokens INTEGER",
+        "ALTER TABLE exchanges ADD COLUMN cache_read_tokens INTEGER",
+        "ALTER TABLE exchanges ADD COLUMN cache_write_tokens INTEGER",
+        "ALTER TABLE exchanges ADD COLUMN stop_reason TEXT",
+        "ALTER TABLE exchanges ADD COLUMN has_thinking INTEGER",
+        "ALTER TABLE exchanges ADD COLUMN permission_mode TEXT",
+        "ALTER TABLE exchanges ADD COLUMN is_sidechain INTEGER",
+        "ALTER TABLE exchanges ADD COLUMN entrypoint TEXT",
+        "ALTER TABLE exchanges ADD COLUMN cwd TEXT",
+        "ALTER TABLE exchanges ADD COLUMN git_branch TEXT",
+        "ALTER TABLE exchanges ADD COLUMN turn_duration_ms INTEGER",
+      ];
+      for (const sql of exchangeCols) {
+        try { db.exec(sql); } catch { /* column may already exist */ }
+      }
+
+      // --- Tool calls: structured field extraction ---
+      const toolCols = [
+        "ALTER TABLE tool_calls ADD COLUMN skill_name TEXT",
+        "ALTER TABLE tool_calls ADD COLUMN subagent_type TEXT",
+        "ALTER TABLE tool_calls ADD COLUMN subagent_desc TEXT",
+        "ALTER TABLE tool_calls ADD COLUMN file_path TEXT",
+        "ALTER TABLE tool_calls ADD COLUMN bash_command TEXT",
+        "ALTER TABLE tool_calls ADD COLUMN bash_desc TEXT",
+        "ALTER TABLE tool_calls ADD COLUMN web_query TEXT",
+        "ALTER TABLE tool_calls ADD COLUMN web_url TEXT",
+      ];
+      for (const sql of toolCols) {
+        try { db.exec(sql); } catch { /* column may already exist */ }
+      }
+
+      // --- Segments: activity group enrichment ---
+      const segCols = [
+        "ALTER TABLE segments ADD COLUMN boundary_type TEXT",
+        "ALTER TABLE segments ADD COLUMN files_read TEXT DEFAULT '[]'",
+        "ALTER TABLE segments ADD COLUMN files_written TEXT DEFAULT '[]'",
+        "ALTER TABLE segments ADD COLUMN error_count INTEGER DEFAULT 0",
+        "ALTER TABLE segments ADD COLUMN total_input_tokens INTEGER DEFAULT 0",
+        "ALTER TABLE segments ADD COLUMN total_output_tokens INTEGER DEFAULT 0",
+        "ALTER TABLE segments ADD COLUMN total_cache_read_tokens INTEGER DEFAULT 0",
+        "ALTER TABLE segments ADD COLUMN total_cache_write_tokens INTEGER DEFAULT 0",
+        "ALTER TABLE segments ADD COLUMN duration_ms INTEGER DEFAULT 0",
+        "ALTER TABLE segments ADD COLUMN models TEXT DEFAULT '[]'",
+        "ALTER TABLE segments ADD COLUMN markers TEXT DEFAULT '[]'",
+        "ALTER TABLE segments ADD COLUMN exchange_count INTEGER DEFAULT 0",
+        "ALTER TABLE segments ADD COLUMN started_at TEXT",
+        "ALTER TABLE segments ADD COLUMN ended_at TEXT",
+        "ALTER TABLE segments ADD COLUMN ai_label TEXT",
+        "ALTER TABLE segments ADD COLUMN ai_summary TEXT",
+      ];
+      for (const sql of segCols) {
+        try { db.exec(sql); } catch { /* column may already exist */ }
+      }
+
+      // --- Sessions: entrypoint ---
+      try {
+        db.exec("ALTER TABLE sessions ADD COLUMN entrypoint TEXT");
+      } catch { /* column may already exist */ }
+
+      // --- Indexes ---
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_tool_calls_skill ON tool_calls(skill_name) WHERE skill_name IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_tool_calls_file_path ON tool_calls(file_path) WHERE file_path IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_tool_calls_subagent ON tool_calls(subagent_type) WHERE subagent_type IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_tool_calls_web_query ON tool_calls(web_query) WHERE web_query IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_exchanges_model ON exchanges(model);
+        CREATE INDEX IF NOT EXISTS idx_segments_boundary ON segments(session_id, boundary_type);
+      `);
     },
   },
 ];

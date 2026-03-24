@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { extractSegments } from "../../capture/segments.js";
+import { extractActivityGroups, deriveDisplayType } from "../../capture/activity-groups.js";
 import { extractMilestones } from "../../capture/milestones.js";
 import { extractPlans } from "../../capture/plans.js";
 import {
@@ -130,6 +130,77 @@ sessionsRoutes.get("/", (c) => {
       ? plans.filter((p) => p.status !== "superseded").pop() || plans[plans.length - 1]
       : null;
 
+    // Facts-first: activity group summaries for the activity strip
+    const activityGroups = segments
+      .filter((seg) => seg.boundary_type != null)
+      .map((seg) => {
+        const toolCounts = (() => { try { return JSON.parse(seg.tool_counts); } catch { return {}; } })() as Record<string, number>;
+        // Classify dominant tool category
+        const readTools = new Set(["Read", "Grep", "Glob"]);
+        const editTools = new Set(["Edit", "Write", "NotebookEdit"]);
+        let readC = 0, editC = 0, bashC = 0, planC = 0, total = 0;
+        for (const [tool, count] of Object.entries(toolCounts)) {
+          total += count;
+          if (readTools.has(tool)) readC += count;
+          else if (editTools.has(tool)) editC += count;
+          else if (tool === "Bash") bashC += count;
+          else if (tool === "EnterPlanMode" || tool === "ExitPlanMode") planC += count;
+        }
+        let dominant = "none";
+        if (total > 0) {
+          if (planC > 0) dominant = "plan";
+          else {
+            const max = Math.max(readC, editC, bashC);
+            if (max > 0) {
+              if (max === editC && editC >= total * 0.4) dominant = "edit";
+              else if (max === readC && readC >= total * 0.5) dominant = "read";
+              else if (max === bashC && bashC >= total * 0.5) dominant = "bash";
+              else dominant = "mixed";
+            }
+          }
+        }
+        return {
+          exchange_start: seg.exchange_index_start,
+          exchange_end: seg.exchange_index_end,
+          exchange_count: seg.exchange_count || (seg.exchange_index_end - seg.exchange_index_start + 1),
+          dominant_tool_category: dominant,
+          has_errors: (seg.error_count || 0) > 0,
+          boundary: seg.boundary_type,
+        };
+      });
+
+    // Token summary (only if we have facts-first data)
+    let tokenSummary = null;
+    let dominantModel: string | null = null;
+    let fileCount = 0;
+    if (activityGroups.length > 0) {
+      try {
+        const tokenRow = db.prepare(`
+          SELECT SUM(input_tokens) as ti, SUM(output_tokens) as to2, SUM(cache_read_tokens) as tcr
+          FROM exchanges WHERE session_id = ? AND input_tokens IS NOT NULL
+        `).get(s.id) as { ti: number | null; to2: number | null; tcr: number | null };
+        if (tokenRow && tokenRow.ti != null) {
+          tokenSummary = {
+            total_input: tokenRow.ti || 0,
+            total_output: tokenRow.to2 || 0,
+            total_cache_read: tokenRow.tcr || 0,
+            total: (tokenRow.ti || 0) + (tokenRow.to2 || 0),
+          };
+        }
+        const modelRow = db.prepare(`
+          SELECT model, COUNT(*) as cnt FROM exchanges
+          WHERE session_id = ? AND model IS NOT NULL
+          GROUP BY model ORDER BY cnt DESC LIMIT 1
+        `).get(s.id) as { model: string; cnt: number } | undefined;
+        dominantModel = modelRow?.model ?? null;
+        const fileRow = db.prepare(`
+          SELECT COUNT(DISTINCT file_path) as cnt FROM tool_calls
+          WHERE session_id = ? AND file_path IS NOT NULL
+        `).get(s.id) as { cnt: number };
+        fileCount = fileRow?.cnt ?? 0;
+      } catch { /* non-critical */ }
+    }
+
     return {
       ...s,
       segments: segments.map((seg) => ({
@@ -145,6 +216,16 @@ sessionsRoutes.get("/", (c) => {
       compaction_count: s.compaction_count,
       forked_from: s.forked_from,
       parent_title: parentTitle,
+      // Facts-first additions
+      activity_groups: activityGroups,
+      milestones: milestones.map((m) => ({
+        type: m.milestone_type,
+        exchange_index: m.exchange_index,
+        description: m.description,
+      })),
+      token_summary: tokenSummary,
+      model: dominantModel,
+      file_count: fileCount,
     };
   });
 
@@ -189,20 +270,36 @@ sessionsRoutes.get("/:id", (c) => {
         is_compact_summary: !!e.is_compact_summary,
       }));
 
-      const newSegments = extractSegments(parsedExchanges);
       const newMilestones = extractMilestones(parsedExchanges);
       const newPlans = extractPlans(parsedExchanges);
+      const newGroups = extractActivityGroups(parsedExchanges, newMilestones);
       const db = getDb();
       const { insertSegment, insertMilestone, insertPlan } = require("../../db/queries.js");
 
-      for (const seg of newSegments) {
+      for (const group of newGroups) {
+        const { deriveDisplayType: ddt } = require("../../capture/activity-groups.js");
+        const allFiles = [...new Set([...group.files_read, ...group.files_written])];
         insertSegment({
           session_id: session.id,
-          segment_type: seg.segment_type,
-          exchange_index_start: seg.exchange_index_start,
-          exchange_index_end: seg.exchange_index_end,
-          files_touched: JSON.stringify(seg.files_touched),
-          tool_counts: JSON.stringify(seg.tool_counts),
+          segment_type: ddt(group),
+          exchange_index_start: group.exchange_index_start,
+          exchange_index_end: group.exchange_index_end,
+          files_touched: JSON.stringify(allFiles),
+          tool_counts: JSON.stringify(group.tool_counts),
+          boundary_type: group.boundary,
+          files_read: JSON.stringify(group.files_read),
+          files_written: JSON.stringify(group.files_written),
+          error_count: group.error_count,
+          total_input_tokens: group.total_input_tokens,
+          total_output_tokens: group.total_output_tokens,
+          total_cache_read_tokens: group.total_cache_read_tokens,
+          total_cache_write_tokens: group.total_cache_write_tokens,
+          duration_ms: group.duration_ms,
+          models: JSON.stringify(group.models),
+          markers: JSON.stringify(group.markers),
+          exchange_count: group.exchange_count,
+          started_at: group.started_at,
+          ended_at: group.ended_at,
         });
       }
       for (const m of newMilestones) {
@@ -249,6 +346,81 @@ sessionsRoutes.get("/:id", (c) => {
     FROM decisions WHERE session_id = ? ORDER BY exchange_index
   `).all(session.id);
 
+  // Facts-first: build activity group details from segments with boundary_type
+  const activityGroups = segments
+    .filter((seg) => seg.boundary_type != null)
+    .map((seg) => ({
+      exchange_start: seg.exchange_index_start,
+      exchange_end: seg.exchange_index_end,
+      exchange_count: seg.exchange_count || (seg.exchange_index_end - seg.exchange_index_start + 1),
+      started_at: seg.started_at,
+      ended_at: seg.ended_at,
+      tool_counts: (() => { try { return JSON.parse(seg.tool_counts); } catch { return {}; } })(),
+      error_count: seg.error_count || 0,
+      files_read: (() => { try { return JSON.parse(seg.files_read || "[]"); } catch { return []; } })(),
+      files_written: (() => { try { return JSON.parse(seg.files_written || "[]"); } catch { return []; } })(),
+      total_input_tokens: seg.total_input_tokens || 0,
+      total_output_tokens: seg.total_output_tokens || 0,
+      total_cache_read_tokens: seg.total_cache_read_tokens || 0,
+      total_cache_write_tokens: seg.total_cache_write_tokens || 0,
+      duration_ms: seg.duration_ms || 0,
+      models: (() => { try { return JSON.parse(seg.models || "[]"); } catch { return []; } })(),
+      markers: (() => { try { return JSON.parse(seg.markers || "[]"); } catch { return []; } })(),
+      boundary: seg.boundary_type,
+      ai_summary: seg.ai_summary,
+      ai_label: seg.ai_label,
+    }));
+
+  // Token summary
+  let tokenSummary = null;
+  try {
+    const tokenRow = db.prepare(`
+      SELECT SUM(input_tokens) as ti, SUM(output_tokens) as to2,
+        SUM(cache_read_tokens) as tcr, SUM(cache_write_tokens) as tcw
+      FROM exchanges WHERE session_id = ? AND input_tokens IS NOT NULL
+    `).get(session.id) as any;
+    if (tokenRow && tokenRow.ti != null) {
+      const total = (tokenRow.ti || 0) + (tokenRow.to2 || 0);
+      const cacheRead = tokenRow.tcr || 0;
+      tokenSummary = {
+        total_input: tokenRow.ti || 0,
+        total_output: tokenRow.to2 || 0,
+        total_cache_read: cacheRead,
+        total_cache_write: tokenRow.tcw || 0,
+        total,
+        cache_hit_rate: total > 0 ? Math.round((cacheRead / (tokenRow.ti || 1)) * 100) : 0,
+      };
+    }
+  } catch { /* non-critical */ }
+
+  // Model breakdown
+  let modelBreakdown: Array<{ model: string; exchange_count: number; total_tokens: number }> = [];
+  try {
+    modelBreakdown = db.prepare(`
+      SELECT model, COUNT(*) as exchange_count,
+        SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as total_tokens
+      FROM exchanges WHERE session_id = ? AND model IS NOT NULL
+      GROUP BY model ORDER BY exchange_count DESC
+    `).all(session.id) as any[];
+  } catch { /* non-critical */ }
+
+  // File operations
+  let fileOperations: Array<{ file_path: string; short_name: string; reads: number; edits: number; writes: number }> = [];
+  try {
+    const rows = db.prepare(`
+      SELECT file_path,
+        SUM(CASE WHEN tool_name IN ('Read', 'Grep', 'Glob') THEN 1 ELSE 0 END) as reads,
+        SUM(CASE WHEN tool_name = 'Edit' THEN 1 ELSE 0 END) as edits,
+        SUM(CASE WHEN tool_name = 'Write' THEN 1 ELSE 0 END) as writes
+      FROM tool_calls WHERE session_id = ? AND file_path IS NOT NULL
+      GROUP BY file_path ORDER BY (edits + writes) DESC, reads DESC
+    `).all(session.id) as any[];
+    fileOperations = rows.map((r: any) => ({
+      ...r,
+      short_name: r.file_path.split("/").pop() || r.file_path,
+    }));
+  } catch { /* non-critical */ }
+
   return c.json({
     ...session,
     segments,
@@ -257,6 +429,111 @@ sessionsRoutes.get("/:id", (c) => {
     compaction_events: compactions,
     tasks,
     decisions,
+    // Facts-first additions
+    activity_groups: activityGroups,
+    token_summary: tokenSummary,
+    model_breakdown: modelBreakdown,
+    file_operations: fileOperations,
+  });
+});
+
+// GET /api/sessions/:id/stats — token, tool, file, model, timing stats
+sessionsRoutes.get("/:id/stats", (c) => {
+  const id = c.req.param("id");
+  const session = getSession(id) ?? getSessionById(id);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+
+  const db = getDb();
+
+  // Per-exchange token data
+  const perExchange = db.prepare(`
+    SELECT exchange_index as index, timestamp, model,
+      input_tokens as input, output_tokens as output,
+      cache_read_tokens as cache_read, cache_write_tokens as cache_write
+    FROM exchanges WHERE session_id = ? ORDER BY exchange_index
+  `).all(session.id) as any[];
+
+  const totalInput = perExchange.reduce((s: number, e: any) => s + (e.input || 0), 0);
+  const totalOutput = perExchange.reduce((s: number, e: any) => s + (e.output || 0), 0);
+  const totalCacheRead = perExchange.reduce((s: number, e: any) => s + (e.cache_read || 0), 0);
+  const totalCacheWrite = perExchange.reduce((s: number, e: any) => s + (e.cache_write || 0), 0);
+
+  // Tool usage
+  const toolRows = db.prepare(`
+    SELECT tool_name, COUNT(*) as count,
+      SUM(CASE WHEN is_error = 1 THEN 1 ELSE 0 END) as errors
+    FROM tool_calls WHERE session_id = ?
+    GROUP BY tool_name ORDER BY count DESC
+  `).all(session.id) as any[];
+  const toolCounts: Record<string, number> = {};
+  const toolErrors: Record<string, number> = {};
+  let toolTotal = 0, errorTotal = 0;
+  for (const r of toolRows) {
+    toolCounts[r.tool_name] = r.count;
+    if (r.errors > 0) toolErrors[r.tool_name] = r.errors;
+    toolTotal += r.count;
+    errorTotal += r.errors;
+  }
+
+  // File operations
+  const fileRows = db.prepare(`
+    SELECT file_path,
+      SUM(CASE WHEN tool_name IN ('Read', 'Grep', 'Glob') THEN 1 ELSE 0 END) as reads,
+      SUM(CASE WHEN tool_name = 'Edit' THEN 1 ELSE 0 END) as edits,
+      SUM(CASE WHEN tool_name = 'Write' THEN 1 ELSE 0 END) as writes
+    FROM tool_calls WHERE session_id = ? AND file_path IS NOT NULL
+    GROUP BY file_path ORDER BY (edits + writes) DESC, reads DESC
+  `).all(session.id) as any[];
+
+  // Model breakdown
+  const modelRows = db.prepare(`
+    SELECT model, COUNT(*) as exchange_count,
+      SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as total_tokens
+    FROM exchanges WHERE session_id = ? AND model IS NOT NULL
+    GROUP BY model ORDER BY exchange_count DESC
+  `).all(session.id) as any[];
+  const totalExchangesWithModel = modelRows.reduce((s: number, r: any) => s + r.exchange_count, 0);
+
+  // Timing
+  const timestamps = perExchange.filter((e: any) => e.timestamp).map((e: any) => ({
+    index: e.index, timestamp: e.timestamp,
+  }));
+  let totalDurationMs = 0, avgTurnMs = 0;
+  let longestTurn: { index: number; duration_ms: number } | null = null;
+  if (timestamps.length >= 2) {
+    totalDurationMs = new Date(timestamps[timestamps.length - 1].timestamp).getTime() -
+      new Date(timestamps[0].timestamp).getTime();
+    avgTurnMs = Math.round(totalDurationMs / timestamps.length);
+    for (let i = 1; i < timestamps.length; i++) {
+      const gap = new Date(timestamps[i].timestamp).getTime() - new Date(timestamps[i - 1].timestamp).getTime();
+      if (!longestTurn || gap > longestTurn.duration_ms) {
+        longestTurn = { index: timestamps[i].index, duration_ms: gap };
+      }
+    }
+  }
+
+  return c.json({
+    tokens: {
+      total_input: totalInput,
+      total_output: totalOutput,
+      total_cache_read: totalCacheRead,
+      total_cache_write: totalCacheWrite,
+      total: totalInput + totalOutput,
+      cache_hit_rate: totalInput > 0 ? Math.round((totalCacheRead / totalInput) * 100) : 0,
+      per_exchange: perExchange,
+    },
+    tools: { counts: toolCounts, errors: toolErrors, total: toolTotal, error_total: errorTotal },
+    files: fileRows.map((r: any) => ({
+      file_path: r.file_path,
+      short_name: r.file_path.split("/").pop() || r.file_path,
+      reads: r.reads, edits: r.edits, writes: r.writes,
+    })),
+    models: modelRows.map((r: any) => ({
+      model: r.model, exchange_count: r.exchange_count,
+      total_tokens: r.total_tokens,
+      percentage: totalExchangesWithModel > 0 ? Math.round((r.exchange_count / totalExchangesWithModel) * 100) : 0,
+    })),
+    timing: { total_duration_ms: totalDurationMs, avg_turn_ms: avgTurnMs, longest_turn: longestTurn, exchange_timestamps: timestamps },
   });
 });
 

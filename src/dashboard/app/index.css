@@ -18,6 +18,7 @@
 
 :root {
   --bg-root: #09090b;
+  --bg-sidebar: #111114;
   --bg-surface: #111113;
   --bg-elevated: #18181b;
   --bg-hover: #1f1f23;
@@ -52,6 +53,8 @@ body {
 /* Monospace only for code */
 code, pre, .font-mono {
   font-family: 'Geist Mono', 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+}
+code, pre {
   font-size: 12px;
 }
 

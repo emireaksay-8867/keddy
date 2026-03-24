@@ -8,7 +8,10 @@ import { cleanText } from "../lib/cleanText.js";
 import { toolSummary } from "../lib/toolSummary.js";
 import { ContentPanel } from "../components/ContentPanel.js";
 import { ClaudeIcon } from "../components/ClaudeIcon.js";
-import type { SessionDetail as SessionDetailType, Exchange, Segment, Milestone, Plan, CompactionEvent, Decision } from "../lib/types.js";
+import { GroupCard } from "../components/GroupCard.js";
+import { ActivityStrip } from "../components/ActivityStrip.js";
+import { StatsTab } from "../components/StatsTab.js";
+import type { SessionDetail as SessionDetailType, Exchange, Segment, Milestone, Plan, CompactionEvent, Decision, ActivityGroupDetail } from "../lib/types.js";
 
 // ── Helpers ────────────────────────────────────────────────────
 function fmtTime(d: string) { return new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
@@ -642,7 +645,8 @@ export function SessionDetail() {
   const [session, setSession] = useState<SessionDetailType | null>(null);
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"timeline" | "transcript">("timeline");
+  const [tab, setTab] = useState<"timeline" | "transcript" | "stats">("timeline");
+  const [stats, setStats] = useState<any>(null);
   const [panel, setPanel] = useState<PanelContent>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeStep, setAnalyzeStep] = useState("");
@@ -715,6 +719,15 @@ export function SessionDetail() {
           <span>{fmtTime(session.started_at)}{session.ended_at ? ` → ${fmtTime(session.ended_at)}` : ""}</span>
           {dur && <span>({dur})</span>}
           <span>{exchanges.length} exchanges</span>
+          {session.model_breakdown && session.model_breakdown.length > 0 && (
+            <span className="font-mono text-[11px]">{session.model_breakdown[0].model.replace("claude-", "")}</span>
+          )}
+          {session.token_summary && session.token_summary.total > 0 && (
+            <span>{session.token_summary.total >= 1_000_000 ? `${(session.token_summary.total / 1_000_000).toFixed(1)}M` : `${Math.round(session.token_summary.total / 1000)}k`} tokens</span>
+          )}
+          {session.file_operations && session.file_operations.length > 0 && (
+            <span>{session.file_operations.length} files</span>
+          )}
           {session.milestones.length > 0 && <span>{session.milestones.length} milestones</span>}
           {session.plans.length > 0 && <span style={{ color: SEGMENT_COLORS.planning }}>{session.plans.length} plans</span>}
           {(() => {
@@ -786,9 +799,14 @@ export function SessionDetail() {
 
       {/* Tabs + sort */}
       <div className="flex items-center border-b px-6" style={{ background: "var(--bg-surface)", borderColor: "var(--border)" }}>
-        {(["timeline", "transcript"] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)} className="px-4 py-2.5 text-[13px] transition-colors relative font-medium" style={{ color: tab === t ? "var(--text-primary)" : "var(--text-muted)" }}>
-            {t === "timeline" ? "Timeline" : "Full Transcript"}
+        {(["timeline", "transcript", "stats"] as const).map(t => (
+          <button key={t} onClick={() => {
+            setTab(t);
+            if (t === "stats" && !stats) {
+              fetch(`/api/sessions/${session.session_id}/stats`).then(r => r.json()).then(setStats).catch(() => {});
+            }
+          }} className="px-4 py-2.5 text-[13px] transition-colors relative font-medium" style={{ color: tab === t ? "var(--text-primary)" : "var(--text-muted)" }}>
+            {t === "timeline" ? "Timeline" : t === "transcript" ? "Full Transcript" : "Stats"}
             {tab === t && <div className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full" style={{ background: "var(--accent)" }} />}
           </button>
         ))}
@@ -817,9 +835,76 @@ export function SessionDetail() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto relative" ref={contentRef}>
         {tab === "timeline" ? (
-          <TimelineView session={session} exchanges={exchanges} openPanel={openPanel} sortNewest={sortNewest} />
-        ) : (
+          <>
+            {/* Activity strip at top for new-style data */}
+            {session.activity_groups && session.activity_groups.length > 0 && (
+              <div className="px-8 pt-4 pb-2">
+                <ActivityStrip
+                  groups={session.activity_groups.map(g => ({
+                    exchange_start: g.exchange_start,
+                    exchange_end: g.exchange_end,
+                    exchange_count: g.exchange_count,
+                    dominant_tool_category: (() => {
+                      const tc = g.tool_counts;
+                      const readTools = new Set(["Read", "Grep", "Glob"]);
+                      const editTools = new Set(["Edit", "Write", "NotebookEdit"]);
+                      let readC = 0, editC = 0, bashC = 0, planC = 0, total = 0;
+                      for (const [tool, count] of Object.entries(tc)) {
+                        total += count;
+                        if (readTools.has(tool)) readC += count;
+                        else if (editTools.has(tool)) editC += count;
+                        else if (tool === "Bash") bashC += count;
+                        else if (tool === "EnterPlanMode" || tool === "ExitPlanMode") planC += count;
+                      }
+                      if (total === 0) return "none";
+                      if (planC > 0) return "plan";
+                      const max = Math.max(readC, editC, bashC);
+                      if (max > 0) {
+                        if (max === editC && editC >= total * 0.4) return "edit";
+                        if (max === readC && readC >= total * 0.5) return "read";
+                        if (max === bashC && bashC >= total * 0.5) return "bash";
+                        return "mixed";
+                      }
+                      return "none";
+                    })(),
+                    has_errors: g.error_count > 0,
+                    boundary: g.boundary,
+                  }))}
+                  milestones={session.milestones.map(m => ({ type: m.milestone_type, exchange_index: m.exchange_index, description: m.description }))}
+                  totalExchanges={session.exchange_count}
+                />
+              </div>
+            )}
+            {/* GroupCard timeline for new data, legacy TimelineView for old */}
+            {session.activity_groups && session.activity_groups.length > 0 ? (
+              <div className="py-4 px-8 space-y-1">
+                {/* Plans section */}
+                {session.plans.length > 0 && (
+                  <div className="mb-4">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>Plans</div>
+                    {session.plans.map(p => (
+                      <div key={p.id} className="text-[12px] px-3 py-1.5 rounded mb-1" style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}>
+                        <span className="font-medium" style={{ color: p.status === "approved" || p.status === "implemented" ? "#10b981" : "var(--text-tertiary)" }}>v{p.version} [{p.status}]</span>
+                        {" "}{p.plan_text.split("\n").find(l => l.trim().length > 3)?.trim().substring(0, 80) || ""}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* Activity groups */}
+                {(sortNewest ? [...session.activity_groups].reverse() : session.activity_groups).map((g, i) => (
+                  <GroupCard key={i} group={g} />
+                ))}
+              </div>
+            ) : (
+              <TimelineView session={session} exchanges={exchanges} openPanel={openPanel} sortNewest={sortNewest} />
+            )}
+          </>
+        ) : tab === "transcript" ? (
           <TranscriptView exchanges={exchanges} segments={session.segments} milestones={session.milestones} compactionEvents={session.compaction_events} openPanel={openPanel} />
+        ) : (
+          <div className="p-8">
+            <StatsTab stats={stats} />
+          </div>
         )}
 
         {/* New updates notification */}

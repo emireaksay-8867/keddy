@@ -198,6 +198,20 @@ export function insertExchange(data: {
   is_interrupt?: boolean;
   is_compact_summary?: boolean;
   metadata?: string | null;
+  // Facts-first fields
+  model?: string | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_read_tokens?: number | null;
+  cache_write_tokens?: number | null;
+  stop_reason?: string | null;
+  has_thinking?: boolean;
+  permission_mode?: string | null;
+  is_sidechain?: boolean;
+  entrypoint?: string | null;
+  cwd?: string | null;
+  git_branch?: string | null;
+  turn_duration_ms?: number | null;
 }): string {
   const db = getDb();
 
@@ -210,8 +224,12 @@ export function insertExchange(data: {
 
   const id = randomUUID();
   db.prepare(`
-    INSERT INTO exchanges (id, session_id, exchange_index, user_prompt, assistant_response, tool_call_count, timestamp, duration_ms, is_interrupt, is_compact_summary, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO exchanges (id, session_id, exchange_index, user_prompt, assistant_response,
+      tool_call_count, timestamp, duration_ms, is_interrupt, is_compact_summary, metadata,
+      model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+      stop_reason, has_thinking, permission_mode, is_sidechain, entrypoint, cwd, git_branch,
+      turn_duration_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.session_id,
@@ -224,6 +242,19 @@ export function insertExchange(data: {
     data.is_interrupt ? 1 : 0,
     data.is_compact_summary ? 1 : 0,
     data.metadata ?? null,
+    data.model ?? null,
+    data.input_tokens ?? null,
+    data.output_tokens ?? null,
+    data.cache_read_tokens ?? null,
+    data.cache_write_tokens ?? null,
+    data.stop_reason ?? null,
+    data.has_thinking ? 1 : null,
+    data.permission_mode ?? null,
+    data.is_sidechain ? 1 : null,
+    data.entrypoint ?? null,
+    data.cwd ?? null,
+    data.git_branch ?? null,
+    data.turn_duration_ms ?? null,
   );
   return id;
 }
@@ -248,12 +279,23 @@ export function insertToolCall(data: {
   tool_use_id: string;
   is_error?: boolean;
   duration_ms?: number | null;
+  // Facts-first enrichment
+  skill_name?: string | null;
+  subagent_type?: string | null;
+  subagent_desc?: string | null;
+  file_path?: string | null;
+  bash_command?: string | null;
+  bash_desc?: string | null;
+  web_query?: string | null;
+  web_url?: string | null;
 }): string {
   const db = getDb();
   const id = randomUUID();
   db.prepare(`
-    INSERT OR IGNORE INTO tool_calls (id, exchange_id, session_id, tool_name, tool_input, tool_result, tool_use_id, is_error, duration_ms)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO tool_calls (id, exchange_id, session_id, tool_name, tool_input, tool_result,
+      tool_use_id, is_error, duration_ms, skill_name, subagent_type, subagent_desc,
+      file_path, bash_command, bash_desc, web_query, web_url)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.exchange_id,
@@ -264,8 +306,54 @@ export function insertToolCall(data: {
     data.tool_use_id,
     data.is_error ? 1 : 0,
     data.duration_ms ?? null,
+    data.skill_name ?? null,
+    data.subagent_type ?? null,
+    data.subagent_desc ?? null,
+    data.file_path ?? null,
+    data.bash_command ?? null,
+    data.bash_desc ?? null,
+    data.web_query ?? null,
+    data.web_url ?? null,
   );
   return id;
+}
+
+/** Extract structured fields from tool call inputs at insert time */
+export function extractToolCallFields(toolName: string, toolInput: unknown): {
+  skill_name: string | null;
+  subagent_type: string | null;
+  subagent_desc: string | null;
+  file_path: string | null;
+  bash_command: string | null;
+  bash_desc: string | null;
+  web_query: string | null;
+  web_url: string | null;
+} {
+  const input = (typeof toolInput === "object" && toolInput !== null)
+    ? toolInput as Record<string, unknown>
+    : {};
+
+  return {
+    skill_name: toolName === "Skill" && typeof input.skill === "string"
+      ? input.skill : null,
+    subagent_type: toolName === "Agent" && typeof input.subagent_type === "string"
+      ? input.subagent_type : null,
+    subagent_desc: toolName === "Agent" && typeof input.description === "string"
+      ? (input.description as string).substring(0, 500) : null,
+    file_path: ["Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit"].includes(toolName)
+      ? (typeof input.file_path === "string" ? input.file_path
+         : typeof input.path === "string" ? input.path
+         : null)
+      : null,
+    bash_command: toolName === "Bash" && typeof input.command === "string"
+      ? (input.command as string).substring(0, 1000) : null,
+    bash_desc: toolName === "Bash" && typeof input.description === "string"
+      ? (input.description as string).substring(0, 500) : null,
+    web_query: toolName === "WebSearch" && typeof input.query === "string"
+      ? input.query as string : null,
+    web_url: toolName === "WebFetch" && typeof input.url === "string"
+      ? input.url as string : null,
+  };
 }
 
 // --- Plans ---
@@ -321,12 +409,33 @@ export function insertSegment(data: {
   files_touched?: string;
   tool_counts?: string;
   summary?: string | null;
+  // Facts-first activity group fields
+  boundary_type?: string | null;
+  files_read?: string;
+  files_written?: string;
+  error_count?: number;
+  total_input_tokens?: number;
+  total_output_tokens?: number;
+  total_cache_read_tokens?: number;
+  total_cache_write_tokens?: number;
+  duration_ms?: number;
+  models?: string;
+  markers?: string;
+  exchange_count?: number;
+  started_at?: string | null;
+  ended_at?: string | null;
+  ai_label?: string | null;
+  ai_summary?: string | null;
 }): string {
   const db = getDb();
   const id = randomUUID();
   db.prepare(`
-    INSERT OR IGNORE INTO segments (id, session_id, segment_type, exchange_index_start, exchange_index_end, files_touched, tool_counts, summary)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO segments (id, session_id, segment_type, exchange_index_start, exchange_index_end,
+      files_touched, tool_counts, summary, boundary_type, files_read, files_written,
+      error_count, total_input_tokens, total_output_tokens, total_cache_read_tokens,
+      total_cache_write_tokens, duration_ms, models, markers, exchange_count,
+      started_at, ended_at, ai_label, ai_summary)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.session_id,
@@ -336,6 +445,22 @@ export function insertSegment(data: {
     data.files_touched ?? "[]",
     data.tool_counts ?? "{}",
     data.summary ?? null,
+    data.boundary_type ?? null,
+    data.files_read ?? "[]",
+    data.files_written ?? "[]",
+    data.error_count ?? 0,
+    data.total_input_tokens ?? 0,
+    data.total_output_tokens ?? 0,
+    data.total_cache_read_tokens ?? 0,
+    data.total_cache_write_tokens ?? 0,
+    data.duration_ms ?? 0,
+    data.models ?? "[]",
+    data.markers ?? "[]",
+    data.exchange_count ?? 0,
+    data.started_at ?? null,
+    data.ended_at ?? null,
+    data.ai_label ?? null,
+    data.ai_summary ?? null,
   );
   return id;
 }

@@ -25,6 +25,27 @@ export interface SessionListItem {
   has_ai?: boolean;
   forked_from?: string | null;
   parent_title?: string | null;
+  // Facts-first
+  activity_groups?: ActivityGroupSummary[];
+  milestones?: MilestoneMarker[];
+  token_summary?: { total_input: number; total_output: number; total_cache_read: number; total: number } | null;
+  model?: string | null;
+  file_count?: number;
+}
+
+export interface ActivityGroupSummary {
+  exchange_start: number;
+  exchange_end: number;
+  exchange_count: number;
+  dominant_tool_category: string;
+  has_errors: boolean;
+  boundary: string;
+}
+
+export interface MilestoneMarker {
+  type: string;
+  exchange_index: number;
+  description: string;
 }
 
 export interface Decision {
@@ -33,6 +54,28 @@ export interface Decision {
   decision_text: string;
   context: string | null;
   alternatives: string | null; // JSON array string
+}
+
+export interface ActivityGroupDetail {
+  exchange_start: number;
+  exchange_end: number;
+  exchange_count: number;
+  started_at: string | null;
+  ended_at: string | null;
+  tool_counts: Record<string, number>;
+  error_count: number;
+  files_read: string[];
+  files_written: string[];
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_tokens: number;
+  total_cache_write_tokens: number;
+  duration_ms: number;
+  models: string[];
+  markers: Array<{ exchange_index: number; type: string; label: string }>;
+  boundary: string;
+  ai_summary: string | null;
+  ai_label: string | null;
 }
 
 export interface SessionDetail {
@@ -52,6 +95,11 @@ export interface SessionDetail {
   compaction_events: CompactionEvent[];
   tasks: Task[];
   decisions: Decision[];
+  // Facts-first
+  activity_groups?: ActivityGroupDetail[];
+  token_summary?: { total_input: number; total_output: number; total_cache_read: number; total_cache_write: number; total: number; cache_hit_rate: number } | null;
+  model_breakdown?: Array<{ model: string; exchange_count: number; total_tokens: number }>;
+  file_operations?: Array<{ file_path: string; short_name: string; reads: number; edits: number; writes: number }>;
 }
 
 export interface Task {
