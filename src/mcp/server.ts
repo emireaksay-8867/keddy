@@ -30,7 +30,7 @@ function jsonResult(data: unknown) {
 
 const server = new McpServer({
   name: "keddy",
-  version: "0.1.0",
+  version: process.env.KEDDY_VERSION || "0.0.0",
 });
 
 // Tool 1: Search sessions

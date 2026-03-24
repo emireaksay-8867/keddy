@@ -38,7 +38,7 @@ async function main(): Promise<void> {
     case "version":
     case "--version":
     case "-v":
-      console.log("keddy v0.1.0");
+      console.log(`keddy v${process.env.KEDDY_VERSION || "0.0.0"}`);
       break;
     case "help":
     case "--help":
@@ -63,6 +63,7 @@ Usage:
   keddy status     Show hook status and stats
   keddy config     Read/write configuration
   keddy import     Import historical sessions
+  keddy reimport   Re-import all sessions (refresh data)
   keddy version    Show version
   keddy help       Show this help
 
