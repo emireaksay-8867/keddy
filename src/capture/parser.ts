@@ -11,12 +11,14 @@ interface JsonlEntry {
   };
   isCompactSummary?: boolean;
   sessionId?: string;
+  uuid?: string;
   cwd?: string;
   gitBranch?: string;
   version?: string;
   slug?: string;
   timestamp?: string;
-  forkedFrom?: string;
+  forkedFrom?: string | { sessionId?: string; messageUuid?: string };
+  isSidechain?: boolean;
   compactMetadata?: {
     exchangesBefore?: number;
     exchangesAfter?: number;
@@ -178,6 +180,11 @@ export function parseTranscript(filePath: string): ParsedTranscript {
   let exchangeIndex = 0;
   let inExchange = false;
 
+  // Fork detection: track when we pass the fork point
+  let forkMessageUuid: string | null = null;
+  let passedForkPoint = false;
+  let forkExchangeIndex: number | null = null;
+
   for (const entry of entries) {
     // Skip noise types
     if (entry.type && SKIP_TYPES.has(entry.type)) continue;
@@ -192,6 +199,20 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       forkedFrom = typeof entry.forkedFrom === "string"
         ? entry.forkedFrom
         : JSON.stringify(entry.forkedFrom);
+      // Extract fork point messageUuid for divergence detection
+      if (typeof entry.forkedFrom === "object" && entry.forkedFrom?.messageUuid) {
+        forkMessageUuid = entry.forkedFrom.messageUuid;
+      }
+    }
+
+    // Detect fork divergence: once we see an entry WITHOUT forkedFrom,
+    // or whose uuid matches the fork point, we've passed it
+    if (forkMessageUuid && !passedForkPoint) {
+      if (!entry.forkedFrom) {
+        // Entry without forkedFrom = new content after fork
+        passedForkPoint = true;
+        forkExchangeIndex = exchangeIndex;
+      }
     }
     if (entry.timestamp) {
       if (!startedAt) startedAt = entry.timestamp;
@@ -200,7 +221,26 @@ export function parseTranscript(filePath: string): ParsedTranscript {
 
     // Custom title from /rename — last one wins
     if (entry.type === "custom-title" && typeof (entry as any).customTitle === "string") {
-      customTitle = (entry as any).customTitle;
+      // The first custom-title in a forked session marks the fork divergence point
+      // (Claude Code auto-generates a "(Branch)" or "(Fork)" title at fork time)
+      if (forkMessageUuid && forkExchangeIndex === null) {
+        forkExchangeIndex = exchangeIndex;
+      }
+      let title = (entry as any).customTitle as string;
+      // Strip noise tags that Claude Code sometimes includes in auto-generated titles
+      title = title
+        .replace(/<[a-z_-]+>[\s\S]*?<\/[a-z_-]+>/g, "")
+        .replace(/<[a-z_-]+>[^<]*/g, "")
+        .trim();
+      // Skip auto-generated fork titles that are just truncated parent prompts
+      // (they end with "(Fork)", "(Branch)", "(Fork 2)" etc. and are >60 chars)
+      if (title.length > 60 && /\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/.test(title)) {
+        // Don't set as custom title — let deriveTitle find a better one
+        continue;
+      }
+      if (title) {
+        customTitle = title;
+      }
       continue;
     }
 
@@ -440,6 +480,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     ended_at: lastTs,
     exchanges,
     compactions,
+    fork_exchange_index: forkExchangeIndex,
   };
 }
 

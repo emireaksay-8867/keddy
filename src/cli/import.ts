@@ -72,15 +72,19 @@ export async function runImport(): Promise<void> {
     try {
       const transcript = parseTranscript(filePath);
 
-      // Use filename as session ID fallback (filenames are UUIDs)
-      if (!transcript.session_id) {
-        const fileName = filePath.split("/").pop()?.replace(".jsonl", "") || "";
-        if (fileName && /^[0-9a-f]{8}-/.test(fileName)) {
-          transcript.session_id = fileName;
-        } else {
-          skipped++;
-          continue;
+      // The filename UUID is the true session identity.
+      // For forked sessions, the JSONL's sessionId field contains the PARENT's ID,
+      // so we must always prefer the filename UUID.
+      const fileName = filePath.split("/").pop()?.replace(".jsonl", "") || "";
+      if (fileName && /^[0-9a-f]{8}-/.test(fileName)) {
+        // If filename differs from JSONL sessionId, this is a fork
+        if (transcript.session_id && transcript.session_id !== fileName) {
+          transcript.forked_from = transcript.forked_from || transcript.session_id;
         }
+        transcript.session_id = fileName;
+      } else if (!transcript.session_id) {
+        skipped++;
+        continue;
       }
 
       // Check if already imported
@@ -100,7 +104,7 @@ export async function runImport(): Promise<void> {
         jsonl_path: filePath,
         forked_from: transcript.forked_from || null,
         started_at: transcript.started_at || null,
-        title: transcript.custom_title || deriveTitle(transcript.exchanges) || null,
+        title: transcript.custom_title || deriveTitle(transcript.exchanges, { forkExchangeIndex: transcript.fork_exchange_index }) || null,
         metadata: null,
       });
 

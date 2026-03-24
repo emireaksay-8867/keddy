@@ -160,6 +160,12 @@ function registerMcpProject(): void {
 function registerMcpGlobal(): boolean {
   const serverPath = getMcpServerPath();
   try {
+    // Remove first in case it already exists (claude mcp add fails on duplicates)
+    try {
+      execSync(`claude mcp remove keddy --scope user`, { stdio: "pipe" });
+    } catch {
+      // Not registered yet — that's fine
+    }
     execSync(
       `claude mcp add keddy --scope user -- node ${serverPath}`,
       { stdio: "pipe" },
@@ -185,6 +191,7 @@ function registerMcpGlobal(): boolean {
 
     const servers = claudeJson.mcpServers as Record<string, unknown>;
     servers.keddy = {
+      type: "stdio",
       command: "node",
       args: [serverPath],
     };

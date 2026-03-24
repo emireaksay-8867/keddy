@@ -165,6 +165,8 @@ export interface ParsedTranscript {
     summary: string | null;
     pre_tokens: number | null;
   }>;
+  /** Exchange index where forked session diverges from parent (new content starts) */
+  fork_exchange_index: number | null;
 }
 
 // --- Config Types ---

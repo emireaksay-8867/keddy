@@ -47,8 +47,15 @@ export function deriveTitle(
   context?: {
     plans?: Array<{ plan_text: string; status: string }>;
     milestones?: Array<{ milestone_type: string; description: string }>;
+    /** For forked sessions: index where new content starts (skip inherited exchanges) */
+    forkExchangeIndex?: number | null;
   },
 ): string | null {
+  // For forked sessions, only consider exchanges after the fork point
+  const relevantExchanges = context?.forkExchangeIndex != null
+    ? exchanges.slice(context.forkExchangeIndex)
+    : exchanges;
+
   // Priority 1: Use the latest approved/implemented plan's first meaningful line
   if (context?.plans) {
     const activePlan = [...context.plans]
@@ -74,8 +81,8 @@ export function deriveTitle(
     }
   }
 
-  // Priority 3: First real user prompt
-  for (const ex of exchanges) {
+  // Priority 3: First real user prompt (from fork-relevant exchanges)
+  for (const ex of relevantExchanges) {
     const cleaned = stripNoiseTags(ex.user_prompt);
     if (!cleaned) continue;
     if (cleaned.length < 3) continue;

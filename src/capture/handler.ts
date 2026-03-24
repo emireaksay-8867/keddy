@@ -380,7 +380,7 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
         claude_version: transcript.claude_version,
         slug: transcript.slug,
         forked_from: transcript.forked_from,
-        title: transcript.custom_title || deriveTitle(transcript.exchanges) || null,
+        title: transcript.custom_title || deriveTitle(transcript.exchanges, { forkExchangeIndex: transcript.fork_exchange_index }) || null,
       });
     }
 
@@ -470,7 +470,7 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
     } else {
       const enrichedTitle = deriveTitle(
         transcript.exchanges.map((e) => ({ user_prompt: e.user_prompt })),
-        { plans, milestones },
+        { plans, milestones, forkExchangeIndex: transcript.fork_exchange_index },
       );
       if (enrichedTitle) {
         db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(enrichedTitle, session.id);
@@ -531,6 +531,22 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
   }
 }
 
+/**
+ * Resolve the true session ID.
+ * For forked sessions, Claude Code sends the PARENT's sessionId in hook stdin,
+ * but the transcript filename contains the fork's own UUID. The filename is
+ * the canonical identity, so prefer it when available.
+ */
+function resolveSessionId(input: HookStdin): string | undefined {
+  if (input.transcript_path) {
+    const filename = input.transcript_path.split("/").pop()?.replace(".jsonl", "") || "";
+    if (filename && /^[0-9a-f]{8}-/.test(filename)) {
+      return filename;
+    }
+  }
+  return input.session_id;
+}
+
 // Main entry point
 async function main(): Promise<void> {
   const hookType = process.argv[2];
@@ -540,6 +556,12 @@ async function main(): Promise<void> {
   }
 
   const input = await readStdin();
+
+  // Resolve fork session IDs: use filename UUID over hook-provided sessionId
+  const resolvedId = resolveSessionId(input);
+  if (resolvedId && resolvedId !== input.session_id) {
+    input.session_id = resolvedId;
+  }
 
   switch (hookType) {
     case "SessionStart":
