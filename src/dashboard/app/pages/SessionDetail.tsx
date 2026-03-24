@@ -431,6 +431,7 @@ export function SessionDetail() {
                 session={session}
                 exchanges={exchanges}
                 onViewPlan={handleViewPlan}
+                onViewGroup={(title, subtitle, content, rawData) => openDetail(title, subtitle, content, rawData)}
               />
             </div>
           ) : tab === "transcript" ? (

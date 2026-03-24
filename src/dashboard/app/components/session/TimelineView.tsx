@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, type ReactNode } from "react";
 import type { SessionDetail, Exchange, ActivityGroupDetail, Plan } from "../../lib/types.js";
 import { cleanText } from "../../lib/cleanText.js";
 
@@ -31,14 +31,15 @@ const MS_CONFIG: Record<string, { symbol: string; color: string }> = {
 
 type FilterType = "all" | "prompts" | "tools" | "git" | "errors";
 
-// ── Activity Group Card — clean, compact ───────────────────────
+// ── Activity Group Card ────────────────────────────────────────
 function ActivityGroupCard({
-  group, exchanges, defaultOpen, filter,
+  group, exchanges, defaultOpen, filter, onSelect,
 }: {
   group: ActivityGroupDetail;
   exchanges: Exchange[];
   defaultOpen: boolean;
   filter: FilterType;
+  onSelect: (group: ActivityGroupDetail, exchanges: Exchange[]) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const borderColor = BOUNDARY_COLORS[group.boundary] || "#6b7280";
@@ -48,23 +49,26 @@ function ActivityGroupCard({
     e => e.exchange_index >= group.exchange_start && e.exchange_index <= group.exchange_end
   );
 
-  // Filter-aware content: what to show inside the card
   const showPrompts = filter === "all" || filter === "prompts" || filter === "errors";
   const showTools = filter === "all" || filter === "tools" || filter === "errors";
+  // For git filter, don't show the card body — just the header as context
+  const showBody = filter !== "git";
 
   const [showAll, setShowAll] = useState(false);
   const maxVisible = 3;
   const visibleExchanges = showAll ? groupExchanges : groupExchanges.slice(0, maxVisible);
 
+  const errCount = group.error_count || 0;
+
   return (
     <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)", borderLeft: `3px solid ${borderColor}` }}>
-      {/* Compact header — just title + key stats */}
+      {/* Header */}
       <div
         className="px-3 py-2 cursor-pointer hover:bg-[var(--bg-hover)] flex items-center justify-between gap-3"
-        onClick={() => setOpen(!open)}
+        onClick={() => showBody ? setOpen(!open) : onSelect(group, groupExchanges)}
       >
         <div className="min-w-0 flex-1 flex items-center gap-2">
-          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{open ? "\u25BC" : "\u25B6"}</span>
+          {showBody && <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{open ? "\u25BC" : "\u25B6"}</span>}
           {group.ai_label ? (
             <span className="text-[13px] font-medium truncate" style={{ color: "var(--text-primary)" }}>{group.ai_label}</span>
           ) : (
@@ -82,12 +86,18 @@ function ActivityGroupCard({
           <span>#{group.exchange_start}{group.exchange_end !== group.exchange_start ? `-${group.exchange_end}` : ""}</span>
           {group.duration_ms ? <span>{fmtMs(group.duration_ms)}</span> : null}
           {tokens > 0 && <span>{fmtTokens(tokens)} tok</span>}
-          {(group.error_count || 0) > 0 && <span style={{ color: "#ef4444" }}>{group.error_count} err</span>}
+          {errCount > 0 && <span className="text-[10px]" style={{ color: "#ef444480" }}>{errCount} err</span>}
+          {/* View detail button */}
+          <button
+            className="text-[10px] px-1.5 py-0.5 rounded hover:bg-[var(--bg-elevated)]"
+            style={{ color: "var(--text-muted)" }}
+            onClick={(e) => { e.stopPropagation(); onSelect(group, groupExchanges); }}
+          >view</button>
         </div>
       </div>
 
-      {/* Expanded body — exchanges only, clean */}
-      {open && (
+      {/* Body */}
+      {open && showBody && (
         <div className="px-3 py-2 space-y-1" style={{ borderTop: "1px solid var(--border)" }}>
           {group.ai_summary && (
             <div className="text-[11px] italic pb-1" style={{ color: "var(--text-tertiary)" }}>{group.ai_summary}</div>
@@ -103,7 +113,7 @@ function ActivityGroupCard({
                 {showPrompts && prompt && (
                   <div className="flex items-start gap-2 text-[12px]">
                     <span className="shrink-0 text-[10px] w-[48px] text-right font-mono" style={{ color: "var(--text-muted)" }}>{time}</span>
-                    <span className="min-w-0 truncate" style={{ color: hasErrors ? "#ef4444" : "var(--text-secondary)" }}>
+                    <span className="min-w-0 truncate" style={{ color: hasErrors ? "#ef444480" : "var(--text-secondary)" }}>
                       {trunc(prompt, 90)}
                     </span>
                   </div>
@@ -115,8 +125,8 @@ function ActivityGroupCard({
                       let label = tc.file_path ? tc.file_path.split("/").pop()! : tc.bash_command ? trunc(tc.bash_command, 50) : tc.bash_desc || tc.subagent_desc || "";
                       return (
                         <div key={i} className="flex items-center gap-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
-                          <span className="shrink-0 w-[40px] text-right font-medium" style={{ color: isErr ? "#ef4444" : "var(--text-tertiary)" }}>{tc.tool_name}</span>
-                          <span className="truncate font-mono" style={{ color: isErr ? "#ef4444" : "var(--text-muted)" }}>{label}</span>
+                          <span className="shrink-0 w-[40px] text-right font-medium" style={{ color: isErr ? "#ef444480" : "var(--text-tertiary)" }}>{tc.tool_name}</span>
+                          <span className="truncate font-mono" style={{ color: isErr ? "#ef444480" : "var(--text-muted)" }}>{label}</span>
                         </div>
                       );
                     })}
@@ -141,7 +151,7 @@ function ActivityGroupCard({
   );
 }
 
-// ── Milestone Divider — left-aligned ───────────────────────────
+// ── Milestone Divider ──────────────────────────────────────────
 function MilestoneDivider({ type, description }: { type: string; description: string }) {
   const cfg = MS_CONFIG[type] || { symbol: "\u00B7", color: "var(--text-tertiary)" };
   return (
@@ -152,34 +162,15 @@ function MilestoneDivider({ type, description }: { type: string; description: st
   );
 }
 
-// ── Plan Card ──────────────────────────────────────────────────
-function PlanCard({ plan, onViewPlan }: { plan: Plan; onViewPlan: (p: Plan) => void }) {
-  const lines = plan.plan_text.split("\n").filter(l => l.trim());
-  const heading = lines.find(l => l.startsWith("#"))?.replace(/^#+\s*/, "") || "";
-
-  return (
-    <div
-      className="rounded-lg px-3 py-2 cursor-pointer hover:bg-[var(--bg-hover)]"
-      style={{ background: "var(--bg-surface)", border: "1px solid var(--accent)30", borderLeft: "3px solid var(--accent)" }}
-      onClick={() => onViewPlan(plan)}
-    >
-      <div className="flex items-center justify-between text-[12px]">
-        <span className="font-medium" style={{ color: "var(--accent)" }}>Plan V{plan.version} &middot; {plan.status}</span>
-        <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>View &rarr;</span>
-      </div>
-      {heading && <div className="text-[12px] mt-0.5 truncate" style={{ color: "var(--text-secondary)" }}>{trunc(heading, 80)}</div>}
-    </div>
-  );
-}
-
 // ── Main Timeline View ─────────────────────────────────────────
 interface TimelineViewProps {
   session: SessionDetail;
   exchanges: Exchange[];
   onViewPlan: (plan: Plan) => void;
+  onViewGroup: (title: string, subtitle: string, content: ReactNode, rawData: unknown) => void;
 }
 
-export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewProps) {
+export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: TimelineViewProps) {
   const [filter, setFilter] = useState<FilterType>("all");
   const groups = session.activity_groups || [];
   const milestones = session.milestones || [];
@@ -189,11 +180,9 @@ export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewPro
     if (totalExchanges <= 20) return true;
     if (groups.length <= 5) return true;
     if (idx >= groups.length - 3) return true;
-    if ((groups[idx].error_count || 0) > 0) return true;
     return false;
   };
 
-  // Build all milestones into a lookup (including those inside groups)
   const allMilestones = useMemo(() => {
     const byIdx = new Map<number, typeof milestones>();
     for (const m of milestones) {
@@ -203,7 +192,6 @@ export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewPro
     return byIdx;
   }, [milestones]);
 
-  // Interleave groups and standalone milestones (plans are shown at top via PlanSection)
   const timelineItems = useMemo(() => {
     const items: Array<{ type: "group" | "milestone"; idx: number; sortKey: number }> = [];
     for (let i = 0; i < groups.length; i++) items.push({ type: "group", idx: i, sortKey: groups[i].exchange_start });
@@ -216,20 +204,17 @@ export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewPro
     return items;
   }, [groups, milestones]);
 
-  // Filter logic
+  // Git filter: show only milestones (not empty groups)
   const filteredItems = useMemo(() => {
     if (filter === "all" || filter === "prompts" || filter === "tools") return timelineItems;
     if (filter === "git") {
-      return timelineItems.filter(item => {
-        if (item.type === "milestone") return true;
-        if (item.type === "group") {
-          const g = groups[item.idx];
-          for (const [idx] of allMilestones) {
-            if (idx >= g.exchange_start && idx <= g.exchange_end) return true;
-          }
-        }
-        return false;
-      });
+      // Show standalone milestones + milestones from within groups (flatten them out)
+      const gitItems: Array<{ type: "milestone"; idx: number; sortKey: number }> = [];
+      for (let i = 0; i < milestones.length; i++) {
+        gitItems.push({ type: "milestone", idx: i, sortKey: milestones[i].exchange_index });
+      }
+      gitItems.sort((a, b) => a.sortKey - b.sortKey);
+      return gitItems;
     }
     if (filter === "errors") {
       return timelineItems.filter(item => {
@@ -238,10 +223,56 @@ export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewPro
       });
     }
     return timelineItems;
-  }, [filter, timelineItems, groups, allMilestones]);
+  }, [filter, timelineItems, groups, milestones]);
 
   const errorCount = groups.reduce((sum, g) => sum + (g.error_count || 0), 0);
   const gitCount = milestones.length;
+
+  // Handler for clicking "view" on an activity group
+  const handleSelectGroup = (group: ActivityGroupDetail, groupExchanges: Exchange[]) => {
+    const title = group.ai_label || trunc(cleanText(group.first_prompt || "").cleaned, 60);
+    const subtitle = `#${group.exchange_start}-${group.exchange_end} \u00B7 ${group.exchange_count} exchanges`;
+    const content = (
+      <div className="text-[13px] space-y-3">
+        {group.ai_summary && <div className="italic" style={{ color: "var(--text-tertiary)" }}>{group.ai_summary}</div>}
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: "var(--text-muted)" }}>Exchanges</div>
+          {groupExchanges.map(ex => {
+            const { cleaned: prompt } = cleanText(ex.user_prompt || "");
+            const tools = ex.tool_calls || [];
+            return (
+              <div key={ex.exchange_index} className="mb-2">
+                <div className="text-[12px] mb-0.5" style={{ color: "var(--text-secondary)" }}>{trunc(prompt, 150)}</div>
+                {tools.length > 0 && (
+                  <div className="flex flex-col gap-0.5 ml-2">
+                    {tools.map((tc, i) => {
+                      const isErr = !!tc.is_error;
+                      let label = tc.file_path ? tc.file_path.split("/").pop()! : tc.bash_command || tc.bash_desc || tc.subagent_desc || "";
+                      return (
+                        <div key={i} className="text-[11px] flex items-center gap-1.5" style={{ color: isErr ? "#ef444480" : "var(--text-muted)" }}>
+                          <span className="font-medium" style={{ color: isErr ? "#ef444480" : "var(--text-tertiary)" }}>{tc.tool_name}</span>
+                          <span className="font-mono truncate">{trunc(label, 60)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {group.files_written && group.files_written.length > 0 && (
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>Files Written</div>
+            {group.files_written.map((f, i) => (
+              <div key={i} className="text-[11px] font-mono" style={{ color: "var(--text-tertiary)" }}>{f.split("/").pop()}</div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+    onViewGroup(title, subtitle, content, group);
+  };
 
   if (groups.length === 0) {
     return (
@@ -284,12 +315,9 @@ export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewPro
         {filteredItems.map((item, i) => {
           if (item.type === "group") {
             const group = groups[item.idx];
-            // Find milestones after this group (between this and next group)
-            const nextGroup = groups[item.idx + 1];
-            const trailingMs = milestones.filter(m => {
-              if (m.exchange_index < group.exchange_start || m.exchange_index > group.exchange_end) return false;
-              return true;
-            });
+            const trailingMs = milestones.filter(m =>
+              m.exchange_index >= group.exchange_start && m.exchange_index <= group.exchange_end
+            );
             return (
               <div key={`g-${i}`}>
                 <ActivityGroupCard
@@ -297,8 +325,10 @@ export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewPro
                   exchanges={exchanges}
                   defaultOpen={defaultOpen(item.idx)}
                   filter={filter}
+                  onSelect={handleSelectGroup}
                 />
-                {trailingMs.map((ms, j) => (
+                {/* Show inline milestones only when not in git filter (git filter shows them separately) */}
+                {filter !== "git" && trailingMs.map((ms, j) => (
                   <MilestoneDivider key={`ms-${i}-${j}`} type={ms.milestone_type} description={ms.description} />
                 ))}
               </div>
