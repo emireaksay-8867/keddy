@@ -120,6 +120,7 @@ sessionsRoutes.get("/", (c) => {
     const lastTest = testMilestones.length > 0 ? testMilestones[testMilestones.length - 1] : null;
     const outcomes = {
       commits: milestones.filter((m) => m.milestone_type === "commit").length,
+      has_push: milestones.some((m) => m.milestone_type === "push"),
       has_pr: milestones.some((m) => m.milestone_type === "pr"),
       tests_passed: lastTest?.milestone_type === "test_pass",
       tests_failed: lastTest?.milestone_type === "test_fail",
@@ -226,6 +227,12 @@ sessionsRoutes.get("/", (c) => {
       token_summary: tokenSummary,
       model: dominantModel,
       file_count: fileCount,
+      total_tool_calls: (() => {
+        try {
+          const row = db.prepare("SELECT COUNT(*) as cnt FROM tool_calls WHERE session_id = ?").get(s.id) as { cnt: number };
+          return row.cnt;
+        } catch { return 0; }
+      })(),
     };
   });
 

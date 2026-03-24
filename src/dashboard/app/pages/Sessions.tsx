@@ -2,36 +2,16 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link } from "react-router";
 import { useAppContext } from "../App.js";
 import { getSessions } from "../lib/api.js";
-import { SEGMENT_COLORS, SEGMENT_SHORT_LABELS } from "../lib/constants.js";
 import type { SessionListItem } from "../lib/types.js";
-import { ActivityStrip } from "../components/ActivityStrip.js";
 import {
-  Compass,
-  Code,
-  ListChecks,
-  Bug,
-  Rocket,
-  Search,
-  FileSearch,
-  Database,
-  CornerDownRight,
-  MessageCircle,
-  ChevronRight,
+  ClipboardList,
+  GitCommitHorizontal,
+  ArrowUpToLine,
+  CircleCheck,
+  CircleX,
+  GitPullRequestArrow,
+  MessageSquare,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-
-const SEGMENT_ICONS: Record<string, LucideIcon> = {
-  planning: Compass,
-  implementing: Code,
-  testing: ListChecks,
-  debugging: Bug,
-  deploying: Rocket,
-  exploring: Search,
-  reviewing: FileSearch,
-  querying: Database,
-  pivot: CornerDownRight,
-  discussion: MessageCircle,
-};
 
 function formatDuration(start: string, end: string | null): string {
   if (!end) return "";
@@ -62,50 +42,90 @@ function formatRelative(dateStr: string): string {
   });
 }
 
-/** Segment flow — icon + label for each segment, connected by chevrons. Max 5 shown. */
-function SegmentFlow({
-  segments,
-}: {
-  segments: SessionListItem["segments"];
-}) {
-  if (!segments.length) return null;
+/** Factual session chips — shows what actually happened based on observable data */
+function SessionChips({ session }: { session: SessionListItem }) {
+  const chips: Array<{ icon: typeof ClipboardList; label: string; color: string }> = [];
+  const outcomes = session.outcomes;
 
-  const maxShow = 5;
-  const visible = segments.slice(0, maxShow);
-  const overflow = segments.length - maxShow;
+  // Plan chip
+  if (session.latest_plan) {
+    const v = session.latest_plan.total_versions;
+    const status = session.latest_plan.status;
+    const isGood = status === "approved" || status === "implemented";
+    chips.push({
+      icon: ClipboardList,
+      label: `plan v${v} ${isGood ? "✓" : "✗"}`,
+      color: isGood ? "#10b981" : "#ef4444",
+    });
+  }
+
+  // Commits
+  if (outcomes && outcomes.commits > 0) {
+    chips.push({
+      icon: GitCommitHorizontal,
+      label: outcomes.commits === 1 ? "1 commit" : `${outcomes.commits} commits`,
+      color: "#818cf8",
+    });
+  }
+
+  // Pushed
+  if (outcomes?.has_push) {
+    chips.push({
+      icon: ArrowUpToLine,
+      label: "pushed",
+      color: "#60a5fa",
+    });
+  }
+
+  // Tests (last result wins)
+  if (outcomes?.tests_passed) {
+    chips.push({
+      icon: CircleCheck,
+      label: "tests passed",
+      color: "#10b981",
+    });
+  } else if (outcomes?.tests_failed) {
+    chips.push({
+      icon: CircleX,
+      label: "tests failed",
+      color: "#ef4444",
+    });
+  }
+
+  // PR
+  if (outcomes?.has_pr) {
+    chips.push({
+      icon: GitPullRequestArrow,
+      label: "pull request",
+      color: "#34d399",
+    });
+  }
+
+  // Discussion fallback (zero tool calls, no plan, no milestones)
+  if (chips.length === 0 && (session.total_tool_calls ?? 0) === 0) {
+    chips.push({
+      icon: MessageSquare,
+      label: "discussion",
+      color: "#9ca3af",
+    });
+  }
+
+  if (chips.length === 0) return null;
 
   return (
-    <span className="inline-flex items-center gap-1.5">
-      {visible.map((seg, i) => {
-        const Icon = SEGMENT_ICONS[seg.type] || MessageCircle;
-        const label = SEGMENT_SHORT_LABELS[seg.type] || seg.type;
-        const iconColor = SEGMENT_COLORS[seg.type] || "var(--text-muted)";
-        const count = seg.end - seg.start + 1;
+    <span className="inline-flex items-center gap-2.5">
+      {chips.map((chip, i) => {
+        const Icon = chip.icon;
         return (
-          <span key={i} className="inline-flex items-center gap-1.5">
-            {i > 0 && (
-              <ChevronRight
-                size={12}
-                strokeWidth={2.5}
-                style={{ color: "var(--text-secondary)" }}
-                className="shrink-0"
-              />
-            )}
-            <span
-              className="inline-flex items-center gap-1 text-[12px]"
-              title={`${SEGMENT_SHORT_LABELS[seg.type] || seg.type} · ${count} exchange${count !== 1 ? "s" : ""}`}
-            >
-              <Icon size={14} className="shrink-0" style={{ color: iconColor }} />
-              <span style={{ color: "var(--text-tertiary)" }}>{label}</span>
-            </span>
+          <span
+            key={i}
+            className="inline-flex items-center gap-1 text-[12px]"
+          >
+            <Icon size={13} className="shrink-0" style={{ color: chip.color }} />
+            <span style={{ color: chip.color }}>{chip.label}</span>
           </span>
         );
       })}
-      {overflow > 0 && (
-        <span className="text-[10px] ml-0.5" style={{ color: "var(--text-muted)" }}>
-          +{overflow}
-        </span>
-      )}
     </span>
   );
 }
@@ -125,35 +145,11 @@ function SessionRow({
   const duration = formatDuration(session.started_at, session.ended_at);
   const project = session.project_path.split("/").slice(-2).join("/");
 
-  // Build metadata items for line 2
-  const meta: Array<{ text: string; mono?: boolean; color?: string }> = [];
-
-  if (showProject) {
-    meta.push({ text: project });
-  }
-  if (session.git_branch) {
-    meta.push({ text: session.git_branch, mono: true });
-  }
-  if (duration) {
-    meta.push({ text: duration });
-  }
-  meta.push({ text: `${session.exchange_count} ex` });
-
-  // Facts-first meta
-  if (session.model) {
-    const shortModel = session.model.replace("claude-", "").replace(/-\d+$/, "");
-    meta.push({ text: shortModel });
-  }
-  if (session.token_summary && session.token_summary.total > 0) {
-    const t = session.token_summary.total;
-    const label = t >= 1_000_000 ? `${(t / 1_000_000).toFixed(1)}M tokens` : `${Math.round(t / 1000)}k tokens`;
-    meta.push({ text: label });
-  }
-  if (session.file_count && session.file_count > 0) {
-    meta.push({ text: `${session.file_count} files` });
-  }
-
-  const hasActivityGroups = session.activity_groups && session.activity_groups.length > 0;
+  // Build metadata items
+  const meta: Array<{ text: string; mono?: boolean }> = [];
+  if (showProject) meta.push({ text: project });
+  if (session.git_branch) meta.push({ text: session.git_branch, mono: true });
+  if (duration) meta.push({ text: duration });
 
   return (
     <Link
@@ -162,7 +158,7 @@ function SessionRow({
       style={isLast ? undefined : { borderColor: "var(--border)" }}
     >
       <div className="flex gap-2">
-        {/* Left: Title + Activity strip or Segment flow */}
+        {/* Left: Title + Factual chips */}
         <div className="flex-1 min-w-0">
           <p
             className="text-[13.5px] font-medium truncate"
@@ -171,19 +167,11 @@ function SessionRow({
             {title}
           </p>
           <div className="mt-1" style={{ minHeight: 20 }}>
-            {hasActivityGroups ? (
-              <ActivityStrip
-                groups={session.activity_groups!}
-                milestones={session.milestones || []}
-                totalExchanges={session.exchange_count}
-              />
-            ) : session.segments.length > 0 ? (
-              <SegmentFlow segments={session.segments} />
-            ) : null}
+            <SessionChips session={session} />
           </div>
         </div>
 
-        {/* Right: Meta pills + Time — aligned to bottom */}
+        {/* Right: Meta + Time */}
         <div className="flex items-center gap-1.5 shrink-0">
           {meta.map((item, i) => (
             <span
@@ -191,7 +179,7 @@ function SessionRow({
               className={`text-[11px] px-2 py-0.5 rounded${item.mono ? " font-mono" : ""}`}
               style={{
                 border: "1px solid var(--border)",
-                color: item.color || "var(--text-tertiary)",
+                color: "var(--text-tertiary)",
               }}
             >
               {item.text}

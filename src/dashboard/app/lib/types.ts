@@ -12,6 +12,7 @@ export interface SessionListItem {
   milestone_count: number;
   outcomes?: {
     commits: number;
+    has_push: boolean;
     has_pr: boolean;
     tests_passed: boolean;
     tests_failed: boolean;
@@ -31,6 +32,7 @@ export interface SessionListItem {
   token_summary?: { total_input: number; total_output: number; total_cache_read: number; total: number } | null;
   model?: string | null;
   file_count?: number;
+  total_tool_calls?: number;
 }
 
 export interface ActivityGroupSummary {
