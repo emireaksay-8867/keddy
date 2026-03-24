@@ -464,13 +464,17 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
       });
     }
 
-    // Update title with enriched context (plans + milestones now available)
-    const enrichedTitle = deriveTitle(
-      transcript.exchanges.map((e) => ({ user_prompt: e.user_prompt })),
-      { plans, milestones },
-    );
-    if (enrichedTitle) {
-      db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(enrichedTitle, session.id);
+    // Update title: custom_title > enriched derive (with plans/milestones) > first prompt
+    if (transcript.custom_title) {
+      db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(transcript.custom_title, session.id);
+    } else {
+      const enrichedTitle = deriveTitle(
+        transcript.exchanges.map((e) => ({ user_prompt: e.user_prompt })),
+        { plans, milestones },
+      );
+      if (enrichedTitle) {
+        db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(enrichedTitle, session.id);
+      }
     }
 
     // Compaction events from transcript (previous events were cleared above)

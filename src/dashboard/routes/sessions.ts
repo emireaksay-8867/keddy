@@ -65,6 +65,34 @@ sessionsRoutes.get("/", (c) => {
 
   const db = getDb();
 
+  // Sync custom titles from JSONL for recently modified sessions
+  // This catches /rename and auto-rename without waiting for Stop hook
+  try {
+    const { existsSync, statSync, readFileSync } = require("node:fs");
+    const now = Date.now();
+    const RECENT_THRESHOLD = 10 * 60 * 1000; // 10 minutes
+    for (const s of sessions) {
+      if (!s.jsonl_path || !existsSync(s.jsonl_path)) continue;
+      const mtime = statSync(s.jsonl_path).mtimeMs;
+      if (now - mtime > RECENT_THRESHOLD) continue;
+      // Scan file for custom-title entries (they're small, ~50 bytes each)
+      const content = readFileSync(s.jsonl_path, "utf8");
+      let customTitle: string | null = null;
+      for (const line of content.split("\n")) {
+        try {
+          const entry = JSON.parse(line);
+          if (entry.type === "custom-title" && entry.customTitle) {
+            customTitle = entry.customTitle;
+          }
+        } catch { /* skip malformed lines */ }
+      }
+      if (customTitle && customTitle !== s.title) {
+        db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(customTitle, s.id);
+        s.title = customTitle;
+      }
+    }
+  } catch { /* non-critical */ }
+
   // Enrich with segment data + plans + AI status + fork info
   const enriched = sessions.map((s) => {
     const segments = getSessionSegments(s.id);

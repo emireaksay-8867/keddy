@@ -113,9 +113,11 @@ function SegmentFlow({
 function SessionRow({
   session,
   showProject,
+  isLast,
 }: {
   session: SessionListItem;
   showProject: boolean;
+  isLast: boolean;
 }) {
   const title = session.title || session.session_id.substring(0, 20);
   const lastActivity = session.ended_at || session.started_at;
@@ -139,20 +141,27 @@ function SessionRow({
   return (
     <Link
       to={`/sessions/${session.session_id}`}
-      className="block px-5 py-2.5 transition-colors hover:bg-[var(--bg-hover)] border-b"
-      style={{ borderColor: "var(--border)" }}
+      className={`block px-5 py-2 transition-colors hover:bg-[var(--bg-hover)]${isLast ? "" : " border-b"}`}
+      style={isLast ? undefined : { borderColor: "var(--border)" }}
     >
-      {/* Line 1: Title + Meta pills + Time */}
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-2 min-w-0 shrink">
+      <div className="flex gap-2">
+        {/* Left: Title + Segment flow */}
+        <div className="flex-1 min-w-0">
           <p
             className="text-[13.5px] font-medium truncate"
             style={{ color: "var(--text-primary)" }}
           >
             {title}
           </p>
+          <div className="mt-1" style={{ minHeight: 20 }}>
+            {session.segments.length > 0 && (
+              <SegmentFlow segments={session.segments} />
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+
+        {/* Right: Meta pills + Time — aligned to bottom */}
+        <div className="flex items-center gap-1.5 shrink-0">
           {meta.map((item, i) => (
             <span
               key={i}
@@ -172,13 +181,6 @@ function SessionRow({
             {formatRelative(lastActivity)}
           </span>
         </div>
-      </div>
-
-      {/* Line 2: Segment flow — always rendered for consistent height */}
-      <div className="mt-1" style={{ minHeight: 20 }}>
-        {session.segments.length > 0 && (
-          <SegmentFlow segments={session.segments} />
-        )}
       </div>
     </Link>
   );
@@ -303,7 +305,7 @@ export function Sessions() {
     <div className="h-full flex flex-col">
       {/* Header */}
       <div
-        className="px-5 py-3 flex items-center gap-4"
+        className="px-5 pt-5 pb-3 flex items-center gap-4"
         style={{ background: "var(--bg-root)" }}
       >
         <h1
@@ -370,36 +372,33 @@ export function Sessions() {
           <>
             {grouped.map(
               ([date, dateSessions], groupIdx) => (
-                <div key={date}>
+                <div key={date} className="px-4" style={{ marginTop: groupIdx > 0 ? 12 : 0 }}>
+                  {/* Date label */}
                   <div
-                    className="px-5 py-3 sticky top-0 z-10 flex items-center gap-3"
-                    style={{
-                      background: "var(--bg-root)",
-                      marginTop: groupIdx > 0 ? 4 : 0,
-                    }}
+                    className="px-2 py-1.5 sticky top-0 z-10"
+                    style={{ background: "var(--bg-root)" }}
                   >
-                    <div
-                      className="flex-1 h-px"
-                      style={{ background: "var(--border-bright)" }}
-                    />
                     <span
-                      className="text-[12px] shrink-0"
-                      style={{ color: "var(--text-secondary)", fontWeight: 500 }}
+                      className="text-[11px] uppercase"
+                      style={{ color: "var(--text-tertiary)", fontWeight: 500, letterSpacing: "0.06em" }}
                     >
                       {date}
                     </span>
-                    <div
-                      className="flex-1 h-px"
-                      style={{ background: "var(--border-bright)" }}
-                    />
                   </div>
-                  {dateSessions.map((session) => (
-                    <SessionRow
-                      key={session.id}
-                      session={session}
-                      showProject={showProject}
-                    />
-                  ))}
+                  {/* Card container */}
+                  <div
+                    className="rounded-lg overflow-hidden"
+                    style={{ border: "1px solid var(--border)" }}
+                  >
+                    {dateSessions.map((session, idx) => (
+                      <SessionRow
+                        key={session.id}
+                        session={session}
+                        showProject={showProject}
+                        isLast={idx === dateSessions.length - 1}
+                      />
+                    ))}
+                  </div>
                 </div>
               ),
             )}

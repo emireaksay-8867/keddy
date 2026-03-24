@@ -41,7 +41,7 @@ function truncateAtWord(text: string, maxLen: number): string {
   return cut + "...";
 }
 
-/** Find first real user prompt, skipping noise and extracting text from inside tags */
+/** Derive a session title with context-aware priority */
 export function deriveTitle(
   exchanges: Array<{ user_prompt: string }>,
   context?: {
@@ -60,7 +60,6 @@ export function deriveTitle(
         .map((l) => l.trim())
         .find((l) => l.length > 3 && !l.startsWith("#") && !l.startsWith("---") && !l.startsWith("##"));
       if (firstLine) {
-        // Strip markdown formatting
         const clean = firstLine.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "").replace(/\*\*/g, "");
         if (clean.length > 3) return truncateAtWord(clean, 80);
       }
@@ -75,7 +74,7 @@ export function deriveTitle(
     }
   }
 
-  // Priority 3: First real user prompt (original logic)
+  // Priority 3: First real user prompt
   for (const ex of exchanges) {
     const cleaned = stripNoiseTags(ex.user_prompt);
     if (!cleaned) continue;
