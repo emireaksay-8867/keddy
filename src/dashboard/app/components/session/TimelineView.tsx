@@ -62,13 +62,20 @@ function ActivityGroupCard({
 
   return (
     <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)", borderLeft: `3px solid ${borderColor}` }}>
-      {/* Header */}
+      {/* Header — click opens detail panel */}
       <div
         className="px-3 py-2 cursor-pointer hover:bg-[var(--bg-hover)] flex items-center justify-between gap-3"
-        onClick={() => showBody ? setOpen(!open) : onSelect(group, groupExchanges)}
+        onClick={() => onSelect(group, groupExchanges)}
       >
         <div className="min-w-0 flex-1 flex items-center gap-2">
-          {showBody && <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{open ? "\u25BC" : "\u25B6"}</span>}
+          {/* Expand/collapse chevron */}
+          {showBody && (
+            <button
+              className="text-[10px] shrink-0 w-4 h-4 flex items-center justify-center rounded hover:bg-[var(--bg-elevated)]"
+              style={{ color: "var(--text-muted)" }}
+              onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+            >{open ? "\u25BC" : "\u25B6"}</button>
+          )}
           {group.ai_label ? (
             <span className="text-[13px] font-medium truncate" style={{ color: "var(--text-primary)" }}>{group.ai_label}</span>
           ) : (
@@ -76,7 +83,7 @@ function ActivityGroupCard({
               {trunc(cleanText(group.first_prompt || "").cleaned, 60)}
             </span>
           )}
-          {!group.ai_label && (
+          {!group.ai_label && group.boundary !== "session_start" && (
             <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px]" style={{ background: "var(--bg-elevated)", color: "var(--text-muted)" }}>
               {group.boundary.replace(/_/g, " ")}
             </span>
@@ -86,13 +93,7 @@ function ActivityGroupCard({
           <span>#{group.exchange_start}{group.exchange_end !== group.exchange_start ? `-${group.exchange_end}` : ""}</span>
           {group.duration_ms ? <span>{fmtMs(group.duration_ms)}</span> : null}
           {tokens > 0 && <span>{fmtTokens(tokens)} tok</span>}
-          {errCount > 0 && <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{errCount} err</span>}
-          {/* View detail button */}
-          <button
-            className="text-[11px] px-2 py-0.5 rounded hover:underline"
-            style={{ color: "var(--accent)" }}
-            onClick={(e) => { e.stopPropagation(); onSelect(group, groupExchanges); }}
-          >view &rarr;</button>
+          {errCount > 0 && <span className="text-[10px]">{errCount} err</span>}
         </div>
       </div>
 
@@ -152,13 +153,13 @@ function ActivityGroupCard({
   );
 }
 
-// ── Milestone Divider ──────────────────────────────────────────
-function MilestoneDivider({ type, description }: { type: string; description: string }) {
+// ── Milestone Item — compact timeline event ────────────────────
+function MilestoneItem({ type, description }: { type: string; description: string }) {
   const cfg = MS_CONFIG[type] || { symbol: "\u00B7", color: "var(--text-tertiary)" };
   return (
-    <div className="flex items-center gap-2 py-1 pl-3">
-      <span className="text-[11px] font-medium" style={{ color: cfg.color }}>{cfg.symbol} {description}</span>
-      <div className="h-px flex-1" style={{ background: cfg.color + "20" }} />
+    <div className="flex items-center gap-2.5 py-1.5 px-3 rounded-md" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
+      <span className="text-[13px]" style={{ color: cfg.color }}>{cfg.symbol}</span>
+      <span className="text-[12px] min-w-0 truncate" style={{ color: cfg.color }}>{description}</span>
     </div>
   );
 }
@@ -350,14 +351,14 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
                 />
                 {/* Show inline milestones only when not in git filter (git filter shows them separately) */}
                 {filter !== "git" && trailingMs.map((ms, j) => (
-                  <MilestoneDivider key={`ms-${i}-${j}`} type={ms.milestone_type} description={ms.description} />
+                  <MilestoneItem key={`ms-${i}-${j}`} type={ms.milestone_type} description={ms.description} />
                 ))}
               </div>
             );
           }
           if (item.type === "milestone") {
             const ms = milestones[item.idx];
-            return <MilestoneDivider key={`m-${i}`} type={ms.milestone_type} description={ms.description} />;
+            return <MilestoneItem key={`m-${i}`} type={ms.milestone_type} description={ms.description} />;
           }
           return null;
         })}

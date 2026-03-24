@@ -233,13 +233,14 @@ export type BoundaryType =
   | "plan_mode"
   | "compaction"
   | "interrupt"
-  | "milestone"
-  | "skill"
   | "branch_change"
-  | "model_switch"
   | "file_focus_shift"
   | "long_pause"
-  | "session_end";
+  | "session_end"
+  // Legacy — kept for DB compatibility with existing data
+  | "milestone"
+  | "skill"
+  | "model_switch";
 
 export type MarkerType =
   | "plan_enter"

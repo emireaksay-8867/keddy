@@ -212,55 +212,32 @@ export function extractActivityGroups(
     const curr = exchanges[i];
     let boundaryType: BoundaryType | null = null;
 
-    // Definitive boundaries (priority order — first match wins)
+    // Boundaries based on observable pivots in what you're doing.
+    // Milestones (commits, pushes, tests) are NOT boundaries — they're
+    // events that happen within a work block. A commit doesn't mean
+    // you switched to different work.
 
-    // Plan mode
+    // Plan mode — strategic pivot
     if (curr.tool_calls.some(tc => tc.name === "EnterPlanMode" || tc.name === "ExitPlanMode")) {
       boundaryType = "plan_mode";
     }
 
-    // Compaction
+    // Compaction — context was reset
     if (!boundaryType && curr.is_compact_summary) {
       boundaryType = "compaction";
     }
 
-    // Interrupt on previous exchange (split after it)
+    // Interrupt — user interrupted Claude
     if (!boundaryType && prev.is_interrupt) {
       boundaryType = "interrupt";
     }
 
-    // Milestone at previous exchange
-    if (!boundaryType) {
-      const prevMs = milestoneMap.get(prev.index);
-      if (prevMs && prevMs.length > 0) {
-        // Pick highest priority milestone for boundary type
-        const sorted = [...prevMs].sort((a, b) =>
-          (MILESTONE_PRIORITY[b.milestone_type] || 0) - (MILESTONE_PRIORITY[a.milestone_type] || 0),
-        );
-        if (sorted.length > 0) {
-          boundaryType = "milestone";
-        }
-      }
-    }
-
-    // Skill invocation
-    if (!boundaryType && curr.tool_calls.some(tc => tc.name === "Skill")) {
-      boundaryType = "skill";
-    }
-
-    // Branch change
+    // Branch change — switched to different branch
     if (!boundaryType && prev.git_branch && curr.git_branch && prev.git_branch !== curr.git_branch) {
       boundaryType = "branch_change";
     }
 
-    // Model switch
-    if (!boundaryType && prev.model && curr.model && prev.model !== curr.model) {
-      boundaryType = "model_switch";
-    }
-
-    // Soft boundaries
-
-    // Long pause (>10 min gap)
+    // Long pause (>10 min gap) — came back from a break
     if (!boundaryType) {
       const prevTime = new Date(prev.timestamp).getTime();
       const currTime = new Date(curr.timestamp).getTime();
@@ -269,7 +246,7 @@ export function extractActivityGroups(
       }
     }
 
-    // File focus shift (completely new set of written files)
+    // File focus shift — completely new set of written files
     if (!boundaryType) {
       const prevFiles = new Set(extractFilesForExchange(prev).written);
       const currFiles = new Set(extractFilesForExchange(curr).written);
