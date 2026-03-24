@@ -87,8 +87,7 @@ function PathView({ fileOps, onViewFile }: FilesSectionProps) {
 }
 
 export function FilesSection({ fileOps, onViewFile }: FilesSectionProps) {
-  // Default to tree for >10 files
-  const [viewMode, setViewMode] = useState<"path" | "tree">(fileOps.length > 10 ? "tree" : "path");
+  const [viewMode, setViewMode] = useState<"path" | "tree">("path");
 
   if (fileOps.length === 0) return null;
 

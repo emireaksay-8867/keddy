@@ -4,12 +4,14 @@ import { getSession, getSessionExchanges, analyzeSession, getConfig, updateConfi
 import { cleanText } from "../lib/cleanText.js";
 import { DetailSplit } from "../components/session/DetailSplit.js";
 import { OutcomesBar } from "../components/session/OutcomesBar.js";
+import { PlanSection } from "../components/session/PlanSection.js";
+import { GitSection } from "../components/session/GitSection.js";
 import { FilesSection } from "../components/session/FilesSection.js";
 import { FileDiffs } from "../components/session/FileDiffs.js";
 import { PlanView } from "../components/session/PlanView.js";
 import { TimelineView } from "../components/session/TimelineView.js";
 import { ClaudeIcon } from "../components/ClaudeIcon.js";
-import type { SessionDetail as SessionDetailType, Exchange, ToolCall, Plan, FileDiffEntry, CompactionEvent } from "../lib/types.js";
+import type { SessionDetail as SessionDetailType, Exchange, ToolCall, Plan, GitDetail, FileDiffEntry, CompactionEvent } from "../lib/types.js";
 
 // ── Helpers ────────────────────────────────────────────────────
 function fmtTime(d: string) { return new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
@@ -330,6 +332,26 @@ export function SessionDetail() {
     );
   };
 
+  const handleViewGitDetail = (d: GitDetail) => {
+    openDetail(
+      `${d.type === "commit" ? "\u25CF" : d.type === "push" ? "\u2191" : d.type} \u00B7 ${trunc(d.description, 60)}`,
+      `Exchange #${d.exchange_index}${d.timestamp ? ` \u00B7 ${new Date(d.timestamp).toLocaleString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}`,
+      <div className="text-[13px] space-y-3">
+        <div style={{ color: "var(--text-primary)" }}>{d.description}</div>
+        {d.hash && <div className="font-mono text-[11px]" style={{ color: "var(--text-muted)" }}>Hash: {d.hash}</div>}
+        {d.stats && <div style={{ color: "var(--text-tertiary)" }}>{d.stats.files_changed} files changed, +{d.stats.insertions} -{d.stats.deletions}</div>}
+        {d.files && d.files.length > 0 && (
+          <div>
+            <div className="text-[11px] mb-1" style={{ color: "var(--text-muted)" }}>Files:</div>
+            {d.files.map((f, i) => <div key={i} className="font-mono text-[11px]" style={{ color: "var(--text-tertiary)" }}>{f}</div>)}
+          </div>
+        )}
+        {d.push_range && <div className="font-mono text-[11px]" style={{ color: "var(--text-muted)" }}>{d.push_range} {d.push_branch}</div>}
+      </div>,
+      d,
+    );
+  };
+
   const handleViewFile = async (filePath: string) => {
     if (!session) return;
     try {
@@ -407,11 +429,28 @@ export function SessionDetail() {
         {/* Left: main content */}
         <div className="overflow-y-auto h-full" ref={contentRef}>
           {tab === "timeline" ? (
-            <TimelineView
-              session={session}
-              exchanges={exchanges}
-              onViewPlan={handleViewPlan}
-            />
+            <div>
+              {/* Plans and Git at top — prominent, like before */}
+              <div className="px-6 pt-5 pb-2">
+                <PlanSection
+                  plans={session.plans}
+                  tasks={session.tasks}
+                  sessionExchangeCount={session.exchange_count}
+                  onViewPlan={handleViewPlan}
+                />
+                <GitSection
+                  gitDetails={session.git_details || []}
+                  testStatus={session.test_status || null}
+                  onViewDetail={handleViewGitDetail}
+                />
+              </div>
+              {/* Activity timeline below */}
+              <TimelineView
+                session={session}
+                exchanges={exchanges}
+                onViewPlan={handleViewPlan}
+              />
+            </div>
           ) : tab === "transcript" ? (
             <TranscriptView
               exchanges={exchanges}

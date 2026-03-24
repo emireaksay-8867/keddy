@@ -29,7 +29,7 @@ const MS_CONFIG: Record<string, { symbol: string; color: string }> = {
   test_fail: { symbol: "\u2717", color: "#ef4444" },
 };
 
-type FilterType = "all" | "prompts" | "tools" | "git" | "plans" | "errors";
+type FilterType = "all" | "prompts" | "tools" | "git" | "errors";
 
 // ── Activity Group Card — clean, compact ───────────────────────
 function ActivityGroupCard({
@@ -141,14 +141,13 @@ function ActivityGroupCard({
   );
 }
 
-// ── Milestone Divider ──────────────────────────────────────────
+// ── Milestone Divider — left-aligned ───────────────────────────
 function MilestoneDivider({ type, description }: { type: string; description: string }) {
   const cfg = MS_CONFIG[type] || { symbol: "\u00B7", color: "var(--text-tertiary)" };
   return (
-    <div className="flex items-center gap-3 py-1">
-      <div className="h-px flex-1" style={{ background: cfg.color + "40" }} />
+    <div className="flex items-center gap-2 py-1 pl-3">
       <span className="text-[11px] font-medium" style={{ color: cfg.color }}>{cfg.symbol} {description}</span>
-      <div className="h-px flex-1" style={{ background: cfg.color + "40" }} />
+      <div className="h-px flex-1" style={{ background: cfg.color + "20" }} />
     </div>
   );
 }
@@ -184,7 +183,6 @@ export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewPro
   const [filter, setFilter] = useState<FilterType>("all");
   const groups = session.activity_groups || [];
   const milestones = session.milestones || [];
-  const plans = session.plans || [];
   const totalExchanges = session.exchange_count;
 
   const defaultOpen = (idx: number) => {
@@ -205,25 +203,23 @@ export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewPro
     return byIdx;
   }, [milestones]);
 
-  // Interleave groups, standalone milestones, and plans
+  // Interleave groups and standalone milestones (plans are shown at top via PlanSection)
   const timelineItems = useMemo(() => {
-    const items: Array<{ type: "group" | "milestone" | "plan"; idx: number; sortKey: number }> = [];
+    const items: Array<{ type: "group" | "milestone"; idx: number; sortKey: number }> = [];
     for (let i = 0; i < groups.length; i++) items.push({ type: "group", idx: i, sortKey: groups[i].exchange_start });
     for (let i = 0; i < milestones.length; i++) {
       const ms = milestones[i];
       const insideGroup = groups.some(g => ms.exchange_index >= g.exchange_start && ms.exchange_index <= g.exchange_end);
       if (!insideGroup) items.push({ type: "milestone", idx: i, sortKey: ms.exchange_index + 0.5 });
     }
-    for (let i = 0; i < plans.length; i++) items.push({ type: "plan", idx: i, sortKey: plans[i].exchange_index_start + 0.3 });
     items.sort((a, b) => a.sortKey - b.sortKey);
     return items;
-  }, [groups, milestones, plans]);
+  }, [groups, milestones]);
 
-  // Filter: for "git" show milestones + groups that have milestones; for "plans" show only plans; etc.
+  // Filter logic
   const filteredItems = useMemo(() => {
     if (filter === "all" || filter === "prompts" || filter === "tools") return timelineItems;
     if (filter === "git") {
-      // Show all milestones + groups that contain milestones
       return timelineItems.filter(item => {
         if (item.type === "milestone") return true;
         if (item.type === "group") {
@@ -235,7 +231,6 @@ export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewPro
         return false;
       });
     }
-    if (filter === "plans") return timelineItems.filter(item => item.type === "plan");
     if (filter === "errors") {
       return timelineItems.filter(item => {
         if (item.type === "group") return (groups[item.idx].error_count || 0) > 0;
@@ -247,7 +242,6 @@ export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewPro
 
   const errorCount = groups.reduce((sum, g) => sum + (g.error_count || 0), 0);
   const gitCount = milestones.length;
-  const planCount = plans.length;
 
   if (groups.length === 0) {
     return (
@@ -266,7 +260,6 @@ export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewPro
           { key: "prompts" as FilterType, label: "Prompts" },
           { key: "tools" as FilterType, label: "Tools" },
           { key: "git" as FilterType, label: `Git${gitCount ? ` (${gitCount})` : ""}` },
-          { key: "plans" as FilterType, label: `Plans${planCount ? ` (${planCount})` : ""}` },
           { key: "errors" as FilterType, label: `Errors${errorCount ? ` (${errorCount})` : ""}` },
         ]).map(f => (
           <button
@@ -314,9 +307,6 @@ export function TimelineView({ session, exchanges, onViewPlan }: TimelineViewPro
           if (item.type === "milestone") {
             const ms = milestones[item.idx];
             return <MilestoneDivider key={`m-${i}`} type={ms.milestone_type} description={ms.description} />;
-          }
-          if (item.type === "plan") {
-            return <PlanCard key={`p-${i}`} plan={plans[item.idx]} onViewPlan={onViewPlan} />;
           }
           return null;
         })}
