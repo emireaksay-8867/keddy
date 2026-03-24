@@ -81,6 +81,7 @@ export function PlanSection({ plans, tasks, sessionExchangeCount, onViewPlan }: 
   if (plans.length === 0) return null;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState<Record<number, boolean>>({});
+  const [feedbackExpanded, setFeedbackExpanded] = useState<Record<number, boolean>>({});
 
   // Current = last approved/implemented/drafted, fallback to last plan
   const current = [...plans].reverse().find(p =>
@@ -113,14 +114,17 @@ export function PlanSection({ plans, tasks, sessionExchangeCount, onViewPlan }: 
             <div className="flex-1 min-w-0">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full" style={{ color: "var(--text-muted)", background: "var(--bg-elevated)", border: `1px solid ${dotColor}50` }}>Plan</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full inline-flex items-center gap-1.5" style={{ color: dotColor, background: `${dotColor}10`, border: `1px solid ${dotColor}30` }}>
+                    <span style={{ color: "var(--text-muted)" }}>Plan</span>
+                    <span style={{ width: 1, height: 10, background: `${dotColor}30` }} />
+                    {currentLabel}
+                  </span>
                   <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{fmtTime(current.ended_at || current.started_at || current.created_at)}</span>
                 </div>
                 <p className="text-[13px] font-medium font-mono" style={{ color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
                   {currentTitle}
                 </p>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-[12px]" style={{ color: dotColor }}>{currentLabel}</span>
+                <div className="flex items-center gap-2 mt-1.5">
                   {hasHistory && (
                     <button
                       className="text-[12px] hover:underline transition-colors"
@@ -197,34 +201,41 @@ export function PlanSection({ plans, tasks, sessionExchangeCount, onViewPlan }: 
                       <button className="shrink-0 text-[10px] px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)] transition-colors" style={{ color: "var(--text-tertiary)", border: "1px solid var(--border)" }} onClick={() => onViewPlan(p)}>view</button>
                     )}
                   </div>
-                  {/* Status for each previous version — one word explaining what happened */}
-                  <div className="text-[10px] mt-0.5 ml-[2px]">
+                  {/* Status + feedback toggle on same line */}
+                  <div className="mt-1 ml-[8px] flex items-center gap-2">
                     {(p.status === "rejected") && (
-                      <span style={{ color: "#ef4444" }}>Rejected</span>
+                      <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-[2px] rounded-full" style={{ color: "#ef4444", background: "#ef444415", border: "1px solid #ef444430" }}>Rejected</span>
                     )}
                     {(p.status === "revised") && (
-                      <span style={{ color: "#f59e0b" }}>Revised</span>
+                      <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-[2px] rounded-full" style={{ color: "#f59e0b", background: "#f59e0b15", border: "1px solid #f59e0b30" }}>Revised</span>
                     )}
                     {(p.status === "superseded" || (p.status === "approved" && !isLast)) && (
-                      <span style={{ color: "#60a5fa" }}>Replaced</span>
+                      <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-[2px] rounded-full" style={{ color: "#60a5fa", background: "#60a5fa15", border: "1px solid #60a5fa30" }}>Replaced</span>
                     )}
-                  </div>
-                  {showFeedback && p.user_feedback && (
-                    <>
+                    {showFeedback && p.user_feedback && (
                       <button
-                        className="text-[10px] mt-1 ml-[2px] hover:underline transition-colors"
+                        className="text-[10px] hover:underline transition-colors"
                         style={{ color: "var(--text-muted)" }}
                         onClick={() => setFeedbackOpen(prev => ({ ...prev, [p.version]: !prev[p.version] }))}
                       >
                         <span style={{ fontSize: 8, display: "inline-block", transform: feedbackOpen[p.version] ? "rotate(90deg)" : "none", transition: "transform 0.15s", marginRight: 3 }}>{"\u25B6"}</span>
                         Feedback
                       </button>
-                      {feedbackOpen[p.version] && (
-                        <div className="mt-1 ml-[2px] pl-3 py-1.5 text-[11px]" style={{ borderLeft: "2px solid var(--border-bright)", color: "var(--text-tertiary)" }}>
-                          {trunc(p.user_feedback, 300)}
-                        </div>
+                    )}
+                  </div>
+                  {showFeedback && p.user_feedback && feedbackOpen[p.version] && (
+                    <div className="mt-2 ml-[8px]">
+                      <div className="px-3 py-2 rounded-lg text-[12px] leading-relaxed" style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)", maxHeight: feedbackExpanded[p.version] ? "none" : 80, overflow: "hidden" }}>
+                        {p.user_feedback}
+                      </div>
+                      {p.user_feedback.length > 200 && !feedbackExpanded[p.version] && (
+                        <button
+                          className="text-[10px] mt-1 hover:underline"
+                          style={{ color: "var(--text-muted)" }}
+                          onClick={() => setFeedbackExpanded(prev => ({ ...prev, [p.version]: true }))}
+                        >Show full</button>
                       )}
-                    </>
+                    </div>
                   )}
                 </div>
               );

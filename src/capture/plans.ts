@@ -52,9 +52,9 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
                 const lastPrompt = lines.filter(l => l.startsWith("❯") || l.startsWith(">")).pop();
                 userFeedback = lastPrompt ? lastPrompt.replace(/^[❯>]\s*/, "").trim() : "";
               }
-              // Cap at 500 chars — user feedback shouldn't be longer than a paragraph
-              if (userFeedback.length > 500) {
-                userFeedback = userFeedback.substring(0, 500);
+              // Cap at 1000 chars — preserve full user feedback without terminal noise
+              if (userFeedback.length > 1000) {
+                userFeedback = userFeedback.substring(0, 1000);
               }
               // If empty after cleanup, null it out
               if (!userFeedback) userFeedback = null;
