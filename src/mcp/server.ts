@@ -33,10 +33,30 @@ const server = new McpServer({
   version: process.env.KEDDY_VERSION || "0.0.0",
 });
 
+/** Enrich a session row with facts-first metadata (model, tokens, errors, files) */
+function enrichSession(s: { session_id: string; id?: string }) {
+  try {
+    const db = getDb();
+    const sidRow = s.id ? { id: s.id } : db.prepare("SELECT id FROM sessions WHERE session_id = ?").get(s.session_id) as { id: string } | undefined;
+    if (!sidRow) return {};
+    const sid = sidRow.id;
+    const modelRow = db.prepare("SELECT model, COUNT(*) as cnt FROM exchanges WHERE session_id = ? AND model IS NOT NULL GROUP BY model ORDER BY cnt DESC LIMIT 1").get(sid) as any;
+    const tokenRow = db.prepare("SELECT SUM(input_tokens) + SUM(output_tokens) as total FROM exchanges WHERE session_id = ? AND input_tokens IS NOT NULL").get(sid) as any;
+    const errorRow = db.prepare("SELECT COUNT(*) as cnt FROM tool_calls WHERE session_id = ? AND is_error = 1").get(sid) as any;
+    const fileRow = db.prepare("SELECT COUNT(DISTINCT file_path) as cnt FROM tool_calls WHERE session_id = ? AND file_path IS NOT NULL").get(sid) as any;
+    return {
+      model: modelRow?.model || null,
+      total_tokens: tokenRow?.total || 0,
+      error_count: errorRow?.cnt || 0,
+      file_count: fileRow?.cnt || 0,
+    };
+  } catch { return {}; }
+}
+
 // Tool 1: Search sessions
 server.tool(
   "keddy_search_sessions",
-  "Search past Claude Code sessions by keyword. Searches user prompts and plan text via full-text search.",
+  "Search past Claude Code sessions by keyword. Returns session metadata including model, token counts, error count, and file count. Searches user prompts and plan text via full-text search.",
   {
     query: z.string().describe("Search query (supports FTS5 syntax)"),
     project: z.string().optional().describe("Filter by project path substring"),
@@ -56,6 +76,7 @@ server.tool(
       branch: s.git_branch,
       started: s.started_at,
       exchanges: s.exchange_count,
+      ...enrichSession(s),
     }));
 
     return jsonResult({ count: results.length, sessions: formatted });
@@ -230,7 +251,7 @@ server.tool(
 // Tool 4: Recent activity
 server.tool(
   "keddy_recent_activity",
-  "Get a summary of recent Claude Code sessions and activity.",
+  "Get a summary of recent Claude Code sessions with model, token usage, and error counts per session.",
   {
     days: z.number().optional().describe("Number of days to look back (default 7)"),
   },
@@ -250,6 +271,7 @@ server.tool(
       started: s.started_at,
       ended: s.ended_at,
       exchanges: s.exchange_count,
+      ...enrichSession(s),
     }));
 
     return jsonResult({
@@ -401,6 +423,200 @@ server.tool(
         })(),
       },
     });
+  },
+);
+
+// Tool 8: Search tool calls
+server.tool(
+  "keddy_search_tool_calls",
+  "Search across all tool calls — bash commands, file operations, web searches. Find specific commands run, files touched, or operations performed across sessions.",
+  {
+    tool_name: z.string().optional().describe("Filter by tool name (Bash, Read, Edit, Write, Grep, Agent, etc.)"),
+    command_pattern: z.string().optional().describe("Search within bash commands (e.g. 'npm test', 'git push')"),
+    file_pattern: z.string().optional().describe("Search file paths (e.g. 'auth.ts', 'src/api')"),
+    project: z.string().optional().describe("Filter by project path substring"),
+    days: z.number().optional().describe("Limit to last N days"),
+    limit: z.number().optional().describe("Max results (default 30)"),
+  },
+  async ({ tool_name, command_pattern, file_pattern, project, days, limit }) => {
+    try {
+      const db = getDb();
+      const conditions: string[] = [];
+      const params: unknown[] = [];
+
+      if (tool_name) { conditions.push("tc.tool_name = ?"); params.push(tool_name); }
+      if (command_pattern) { conditions.push("tc.bash_command LIKE ?"); params.push(`%${command_pattern}%`); }
+      if (file_pattern) { conditions.push("tc.file_path LIKE ?"); params.push(`%${file_pattern}%`); }
+      if (project) { conditions.push("s.project_path LIKE ?"); params.push(`%${project}%`); }
+      if (days) {
+        conditions.push("s.started_at > datetime('now', ?)");
+        params.push(`-${days} days`);
+      }
+
+      if (conditions.length === 0) {
+        return textResult("Please provide at least one search parameter (tool_name, command_pattern, or file_pattern).");
+      }
+
+      const where = conditions.join(" AND ");
+      const rows = db.prepare(`
+        SELECT tc.tool_name, tc.bash_command, tc.bash_desc, tc.file_path, tc.web_query, tc.is_error,
+               SUBSTR(tc.tool_result, 1, 200) as result_preview,
+               e.exchange_index, e.timestamp, s.session_id, s.title, s.project_path
+        FROM tool_calls tc
+        JOIN exchanges e ON tc.exchange_id = e.id
+        JOIN sessions s ON tc.session_id = s.id
+        WHERE ${where}
+        ORDER BY e.timestamp DESC
+        LIMIT ?
+      `).all(...params, limit ?? 30) as any[];
+
+      if (rows.length === 0) return textResult("No matching tool calls found.");
+
+      return jsonResult({
+        count: rows.length,
+        results: rows.map((r: any) => ({
+          session_id: r.session_id,
+          title: r.title,
+          project: r.project_path,
+          exchange_index: r.exchange_index,
+          timestamp: r.timestamp,
+          tool_name: r.tool_name,
+          bash_command: r.bash_command || undefined,
+          bash_desc: r.bash_desc || undefined,
+          file_path: r.file_path || undefined,
+          web_query: r.web_query || undefined,
+          is_error: !!r.is_error,
+          result_preview: r.result_preview || undefined,
+        })),
+      });
+    } catch (err) {
+      return textResult(`Error searching tool calls: ${err}`);
+    }
+  },
+);
+
+// Tool 9: Find errors
+server.tool(
+  "keddy_find_errors",
+  "Find error patterns across sessions. Returns failed tool calls with the user prompt that triggered them — useful for debugging recurring issues or understanding how errors were resolved.",
+  {
+    pattern: z.string().optional().describe("Search within error messages"),
+    tool_name: z.string().optional().describe("Filter by tool type (e.g. 'Bash' for command failures)"),
+    project: z.string().optional().describe("Filter by project path substring"),
+    days: z.number().optional().describe("Limit to last N days"),
+    limit: z.number().optional().describe("Max results (default 20)"),
+  },
+  async ({ pattern, tool_name, project, days, limit }) => {
+    try {
+      const db = getDb();
+      const conditions: string[] = ["tc.is_error = 1"];
+      const params: unknown[] = [];
+
+      if (pattern) { conditions.push("tc.tool_result LIKE ?"); params.push(`%${pattern}%`); }
+      if (tool_name) { conditions.push("tc.tool_name = ?"); params.push(tool_name); }
+      if (project) { conditions.push("s.project_path LIKE ?"); params.push(`%${project}%`); }
+      if (days) {
+        conditions.push("s.started_at > datetime('now', ?)");
+        params.push(`-${days} days`);
+      }
+
+      const where = conditions.join(" AND ");
+      const rows = db.prepare(`
+        SELECT tc.tool_name, tc.bash_command, tc.file_path,
+               SUBSTR(tc.tool_result, 1, 300) as error_preview,
+               SUBSTR(e.user_prompt, 1, 200) as prompt_context,
+               e.exchange_index, e.timestamp, s.session_id, s.title, s.project_path
+        FROM tool_calls tc
+        JOIN exchanges e ON tc.exchange_id = e.id
+        JOIN sessions s ON tc.session_id = s.id
+        WHERE ${where}
+        ORDER BY e.timestamp DESC
+        LIMIT ?
+      `).all(...params, limit ?? 20) as any[];
+
+      if (rows.length === 0) return textResult("No errors found matching your criteria.");
+
+      return jsonResult({
+        count: rows.length,
+        errors: rows.map((r: any) => ({
+          session_id: r.session_id,
+          title: r.title,
+          project: r.project_path,
+          exchange_index: r.exchange_index,
+          timestamp: r.timestamp,
+          tool_name: r.tool_name,
+          bash_command: r.bash_command || undefined,
+          file_path: r.file_path || undefined,
+          error_preview: r.error_preview,
+          prompt_context: r.prompt_context,
+        })),
+      });
+    } catch (err) {
+      return textResult(`Error searching errors: ${err}`);
+    }
+  },
+);
+
+// Tool 10: Bash history
+server.tool(
+  "keddy_get_bash_history",
+  "Get chronological bash command history for a project. Shows every shell command Claude ran with results — useful for understanding what was tried and what worked.",
+  {
+    project: z.string().describe("Project path (or substring)"),
+    days: z.number().optional().describe("Limit to last N days (default 7)"),
+    limit: z.number().optional().describe("Max results (default 50)"),
+    errors_only: z.boolean().optional().describe("Only show failed commands"),
+  },
+  async ({ project, days, limit, errors_only }) => {
+    try {
+      const db = getDb();
+      const conditions: string[] = [
+        "tc.tool_name = 'Bash'",
+        "tc.bash_command IS NOT NULL",
+        "s.project_path LIKE ?",
+      ];
+      const params: unknown[] = [`%${project}%`];
+
+      if (errors_only) { conditions.push("tc.is_error = 1"); }
+      if (days) {
+        conditions.push("s.started_at > datetime('now', ?)");
+        params.push(`-${days} days`);
+      } else {
+        conditions.push("s.started_at > datetime('now', '-7 days')");
+      }
+
+      const where = conditions.join(" AND ");
+      const rows = db.prepare(`
+        SELECT tc.bash_command, tc.bash_desc, tc.is_error,
+               SUBSTR(tc.tool_result, 1, 200) as result_preview,
+               e.exchange_index, e.timestamp, s.session_id, s.title
+        FROM tool_calls tc
+        JOIN exchanges e ON tc.exchange_id = e.id
+        JOIN sessions s ON tc.session_id = s.id
+        WHERE ${where}
+        ORDER BY e.timestamp DESC
+        LIMIT ?
+      `).all(...params, limit ?? 50) as any[];
+
+      if (rows.length === 0) return textResult(`No bash commands found for project: ${project}`);
+
+      return jsonResult({
+        project,
+        count: rows.length,
+        commands: rows.map((r: any) => ({
+          session_id: r.session_id,
+          title: r.title,
+          exchange_index: r.exchange_index,
+          timestamp: r.timestamp,
+          command: r.bash_command,
+          description: r.bash_desc || undefined,
+          is_error: !!r.is_error,
+          result_preview: r.result_preview || undefined,
+        })),
+      });
+    } catch (err) {
+      return textResult(`Error fetching bash history: ${err}`);
+    }
   },
 );
 
