@@ -128,6 +128,20 @@ export interface Exchange {
   is_interrupt: number;
   is_compact_summary: number;
   tool_calls?: ToolCall[];
+  // Facts-first fields
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  stop_reason: string | null;
+  has_thinking: number | null;
+  permission_mode: string | null;
+  is_sidechain: number | null;
+  entrypoint: string | null;
+  cwd: string | null;
+  git_branch: string | null;
+  turn_duration_ms: number | null;
 }
 
 export interface ToolCall {
@@ -136,6 +150,15 @@ export interface ToolCall {
   tool_input: string;
   tool_result: string | null;
   is_error: number;
+  // Enriched fields
+  file_path: string | null;
+  bash_command: string | null;
+  bash_desc: string | null;
+  web_query: string | null;
+  web_url: string | null;
+  skill_name: string | null;
+  subagent_type: string | null;
+  subagent_desc: string | null;
 }
 
 export interface Segment {
