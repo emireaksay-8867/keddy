@@ -44,7 +44,7 @@ function findJsonlFiles(dir: string): string[] {
   return files;
 }
 
-export async function runImport(): Promise<void> {
+export async function runImport(forceReimport = false): Promise<void> {
   const claudeDir = join(homedir(), ".claude");
   const projectsDir = join(claudeDir, "projects");
 
@@ -91,8 +91,14 @@ export async function runImport(): Promise<void> {
       // Check if already imported
       const existing = getSession(transcript.session_id);
       if (existing) {
-        skipped++;
-        continue;
+        if (forceReimport) {
+          // Delete and re-import with fresh data
+          const db = getDb();
+          db.prepare("DELETE FROM sessions WHERE id = ?").run(existing.id);
+        } else {
+          skipped++;
+          continue;
+        }
       }
 
       // Import session — ensure all values are strings or null (never undefined)

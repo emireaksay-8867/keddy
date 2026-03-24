@@ -26,7 +26,13 @@ async function main(): Promise<void> {
     }
     case "import": {
       const { runImport } = await import("./import.js");
-      await runImport();
+      const force = process.argv.includes("--force") || process.argv.includes("-f");
+      await runImport(force);
+      break;
+    }
+    case "reimport": {
+      const { runImport } = await import("./import.js");
+      await runImport(true);
       break;
     }
     case "version":
