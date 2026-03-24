@@ -303,8 +303,7 @@ export interface AnalysisConfig {
     sessionTitles: AnalysisFeature;
     segmentSummaries: AnalysisFeature;
     decisionExtraction: AnalysisFeature;
-    planDiffAnalysis: AnalysisFeature;
-    sessionNotes: AnalysisFeature;
+    [key: string]: AnalysisFeature; // Tolerate legacy keys from existing config files
   };
 }
 

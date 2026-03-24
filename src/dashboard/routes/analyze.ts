@@ -152,15 +152,24 @@ analyzeRoutes.post("/analyze/bulk", async (c) => {
   for (const session of sessions) {
     try {
       const exchanges = getSessionExchanges(session.id);
-      const parsedExchanges: ParsedExchange[] = exchanges.map((e) => ({
-        index: e.exchange_index,
-        user_prompt: e.user_prompt,
-        assistant_response: e.assistant_response,
-        tool_calls: [],
-        timestamp: e.timestamp,
-        is_interrupt: !!e.is_interrupt,
-        is_compact_summary: !!e.is_compact_summary,
-      }));
+      const parsedExchanges: ParsedExchange[] = exchanges.map((e) => {
+        // Include real tool_calls for better AI analysis context
+        const tools = db.prepare("SELECT tool_name as name, tool_input as input, tool_use_id as id, is_error FROM tool_calls WHERE exchange_id = ?").all(e.id) as any[];
+        return {
+          index: e.exchange_index,
+          user_prompt: e.user_prompt,
+          assistant_response: e.assistant_response,
+          tool_calls: tools.map((tc: any) => ({
+            name: tc.name,
+            input: (() => { try { return JSON.parse(tc.input); } catch { return tc.input; } })(),
+            id: tc.id || "",
+            is_error: !!tc.is_error,
+          })),
+          timestamp: e.timestamp,
+          is_interrupt: !!e.is_interrupt,
+          is_compact_summary: !!e.is_compact_summary,
+        };
+      });
 
       if (parsedExchanges.length === 0) continue;
 

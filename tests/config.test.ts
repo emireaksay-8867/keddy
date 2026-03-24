@@ -25,8 +25,6 @@ describe("config module", () => {
     expect(features.sessionTitles).toBeDefined();
     expect(features.segmentSummaries).toBeDefined();
     expect(features.decisionExtraction).toBeDefined();
-    expect(features.planDiffAnalysis).toBeDefined();
-    expect(features.sessionNotes).toBeDefined();
   });
 
   it("should have enabled/model on every feature", () => {

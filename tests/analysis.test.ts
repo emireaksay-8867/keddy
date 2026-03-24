@@ -12,8 +12,6 @@ describe("createProvider", () => {
         sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
         segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
         decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
-        planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
-        sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
       },
     };
     expect(createProvider(config)).toBeNull();
@@ -28,8 +26,6 @@ describe("createProvider", () => {
         sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
         segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
         decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
-        planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
-        sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
       },
     };
     const provider = createProvider(config);
@@ -47,8 +43,6 @@ describe("createProvider", () => {
         sessionTitles: { enabled: true, model: "llama3" },
         segmentSummaries: { enabled: true, model: "llama3" },
         decisionExtraction: { enabled: false, model: "llama3" },
-        planDiffAnalysis: { enabled: false, model: "llama3" },
-        sessionNotes: { enabled: false, model: "llama3" },
       },
     };
     const provider = createProvider(config);
@@ -65,8 +59,6 @@ describe("createProvider", () => {
         sessionTitles: { enabled: true, model: "test" },
         segmentSummaries: { enabled: true, model: "test" },
         decisionExtraction: { enabled: false, model: "test" },
-        planDiffAnalysis: { enabled: false, model: "test" },
-        sessionNotes: { enabled: false, model: "test" },
       },
     };
     expect(createProvider(config)).toBeNull();
