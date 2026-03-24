@@ -1,18 +1,15 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { useParams, useNavigate } from "react-router";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { getSession, getSessionExchanges, analyzeSession, getConfig, updateConfig, getFileDiffs } from "../lib/api.js";
 import { cleanText } from "../lib/cleanText.js";
 import { DetailSplit } from "../components/session/DetailSplit.js";
 import { OutcomesBar } from "../components/session/OutcomesBar.js";
-import { PlanSection } from "../components/session/PlanSection.js";
-import { GitSection } from "../components/session/GitSection.js";
 import { FilesSection } from "../components/session/FilesSection.js";
 import { FileDiffs } from "../components/session/FileDiffs.js";
 import { PlanView } from "../components/session/PlanView.js";
+import { TimelineView } from "../components/session/TimelineView.js";
 import { ClaudeIcon } from "../components/ClaudeIcon.js";
-import type { SessionDetail as SessionDetailType, Exchange, ToolCall, Plan, GitDetail, FileDiffEntry, CompactionEvent } from "../lib/types.js";
+import type { SessionDetail as SessionDetailType, Exchange, ToolCall, Plan, FileDiffEntry, CompactionEvent } from "../lib/types.js";
 
 // ── Helpers ────────────────────────────────────────────────────
 function fmtTime(d: string) { return new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
@@ -279,7 +276,7 @@ export function SessionDetail() {
   const [session, setSession] = useState<SessionDetailType | null>(null);
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"session" | "transcript">("session");
+  const [tab, setTab] = useState<"timeline" | "transcript" | "files">("timeline");
   const [detail, setDetail] = useState<DetailState>(EMPTY_DETAIL);
 
   // AI analysis state (preserved from original)
@@ -330,26 +327,6 @@ export function SessionDetail() {
       `${fmtDate} \u00B7 Exchange #${plan.exchange_index_start}${plan.exchange_index_end !== plan.exchange_index_start ? `-${plan.exchange_index_end}` : ""}`,
       <PlanView planText={plan.plan_text} version={plan.version} status={plan.status} />,
       plan,
-    );
-  };
-
-  const handleViewGitDetail = (d: GitDetail) => {
-    openDetail(
-      `${d.type === "commit" ? "\u25CF" : d.type === "push" ? "\u2191" : d.type} \u00B7 ${trunc(d.description, 60)}`,
-      `Exchange #${d.exchange_index}${d.timestamp ? ` \u00B7 ${new Date(d.timestamp).toLocaleString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}`,
-      <div className="text-[13px] space-y-3">
-        <div style={{ color: "var(--text-primary)" }}>{d.description}</div>
-        {d.hash && <div className="font-mono text-[11px]" style={{ color: "var(--text-muted)" }}>Hash: {d.hash}</div>}
-        {d.stats && <div style={{ color: "var(--text-tertiary)" }}>{d.stats.files_changed} files changed, +{d.stats.insertions} -{d.stats.deletions}</div>}
-        {d.files && d.files.length > 0 && (
-          <div>
-            <div className="text-[11px] mb-1" style={{ color: "var(--text-muted)" }}>Files:</div>
-            {d.files.map((f, i) => <div key={i} className="font-mono text-[11px]" style={{ color: "var(--text-tertiary)" }}>{f}</div>)}
-          </div>
-        )}
-        {d.push_range && <div className="font-mono text-[11px]" style={{ color: "var(--text-muted)" }}>{d.push_range} {d.push_branch}</div>}
-      </div>,
-      d,
     );
   };
 
@@ -413,10 +390,14 @@ export function SessionDetail() {
 
       {/* Tabs */}
       <div className="flex items-center border-b px-6" style={{ background: "var(--bg-surface)", borderColor: "var(--border)" }}>
-        {(["session", "transcript"] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)} className="px-4 py-2.5 text-[13px] relative font-medium" style={{ color: tab === t ? "var(--text-primary)" : "var(--text-muted)" }}>
-            {t === "session" ? "Session" : "Transcript"}
-            {tab === t && <div className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full" style={{ background: "var(--accent)" }} />}
+        {([
+          { key: "timeline" as const, label: "Timeline" },
+          { key: "transcript" as const, label: `Transcript (${exchanges.length})` },
+          { key: "files" as const, label: `Files (${session.file_operations?.length || 0})` },
+        ]).map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)} className="px-4 py-2.5 text-[13px] relative font-medium" style={{ color: tab === t.key ? "var(--text-primary)" : "var(--text-muted)" }}>
+            {t.label}
+            {tab === t.key && <div className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full" style={{ background: "var(--accent)" }} />}
           </button>
         ))}
       </div>
@@ -425,30 +406,25 @@ export function SessionDetail() {
       <div className={`flex-1 overflow-hidden ${detail.open ? "grid grid-cols-2" : ""}`} style={{ minHeight: 0 }}>
         {/* Left: main content */}
         <div className="overflow-y-auto h-full" ref={contentRef}>
-          {tab === "session" ? (
-            <div className="px-6 py-5">
-              <PlanSection
-                plans={session.plans}
-                tasks={session.tasks}
-                sessionExchangeCount={session.exchange_count}
-                onViewPlan={handleViewPlan}
-              />
-              <GitSection
-                gitDetails={session.git_details || []}
-                testStatus={session.test_status || null}
-                onViewDetail={handleViewGitDetail}
-              />
-              <FilesSection
-                fileOps={session.file_operations || []}
-                onViewFile={handleViewFile}
-              />
-            </div>
-          ) : (
+          {tab === "timeline" ? (
+            <TimelineView
+              session={session}
+              exchanges={exchanges}
+              onViewPlan={handleViewPlan}
+            />
+          ) : tab === "transcript" ? (
             <TranscriptView
               exchanges={exchanges}
               milestones={session.milestones}
               compactionEvents={session.compaction_events}
             />
+          ) : (
+            <div className="px-6 py-5">
+              <FilesSection
+                fileOps={session.file_operations || []}
+                onViewFile={handleViewFile}
+              />
+            </div>
           )}
         </div>
 
