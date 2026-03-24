@@ -19,6 +19,7 @@ export interface Session {
   jsonl_path: string | null;
   forked_from: string | null;
   metadata: string | null; // JSON string
+  entrypoint: string | null;
 }
 
 export interface Exchange {
@@ -33,6 +34,20 @@ export interface Exchange {
   is_interrupt: boolean;
   is_compact_summary: boolean;
   metadata: string | null; // JSON string
+  // Facts-first fields
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  stop_reason: string | null;
+  has_thinking: number | null;
+  permission_mode: string | null;
+  is_sidechain: number | null;
+  entrypoint: string | null;
+  cwd: string | null;
+  git_branch: string | null;
+  turn_duration_ms: number | null;
 }
 
 export interface ToolCall {
@@ -45,6 +60,15 @@ export interface ToolCall {
   tool_use_id: string;
   is_error: boolean;
   duration_ms: number | null;
+  // Facts-first enrichment
+  skill_name: string | null;
+  subagent_type: string | null;
+  subagent_desc: string | null;
+  file_path: string | null;
+  bash_command: string | null;
+  bash_desc: string | null;
+  web_query: string | null;
+  web_url: string | null;
 }
 
 export type PlanStatus = "drafted" | "approved" | "implemented" | "rejected" | "superseded" | "revised";
@@ -82,11 +106,29 @@ export interface Segment {
   files_touched: string; // JSON array string
   tool_counts: string; // JSON object string
   summary: string | null;
+  // Facts-first activity group fields
+  boundary_type: string | null;
+  files_read: string | null; // JSON array string
+  files_written: string | null; // JSON array string
+  error_count: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_tokens: number;
+  total_cache_write_tokens: number;
+  duration_ms: number;
+  models: string | null; // JSON array string
+  markers: string | null; // JSON array string
+  exchange_count: number;
+  started_at: string | null;
+  ended_at: string | null;
+  ai_label: string | null;
+  ai_summary: string | null;
 }
 
 export type MilestoneType =
   | "commit"
   | "push"
+  | "pull"
   | "pr"
   | "branch"
   | "test_pass"
@@ -147,6 +189,20 @@ export interface ParsedExchange {
   is_interrupt: boolean;
   is_compact_summary: boolean;
   metadata?: Record<string, unknown>;
+  // Facts-first fields
+  model?: string | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_read_tokens?: number | null;
+  cache_write_tokens?: number | null;
+  stop_reason?: string | null;
+  has_thinking?: boolean;
+  permission_mode?: string | null;
+  is_sidechain?: boolean;
+  entrypoint?: string | null;
+  cwd?: string | null;
+  git_branch?: string | null;
+  turn_duration_ms?: number | null;
 }
 
 export interface ParsedTranscript {
@@ -167,6 +223,69 @@ export interface ParsedTranscript {
   }>;
   /** Exchange index where forked session diverges from parent (new content starts) */
   fork_exchange_index: number | null;
+  entrypoint?: string | null;
+}
+
+// --- Facts-First Types ---
+
+export type BoundaryType =
+  | "session_start"
+  | "plan_mode"
+  | "compaction"
+  | "interrupt"
+  | "branch_change"
+  | "file_focus_shift"
+  | "long_pause"
+  | "session_end"
+  // Legacy — kept for DB compatibility with existing data
+  | "milestone"
+  | "skill"
+  | "model_switch";
+
+export type MarkerType =
+  | "plan_enter"
+  | "plan_exit"
+  | "compaction"
+  | "interrupt"
+  | "commit"
+  | "push"
+  | "pr"
+  | "branch"
+  | "test_pass"
+  | "test_fail"
+  | "skill"
+  | "subagent"
+  | "web_research"
+  | "branch_change"
+  | "model_switch";
+
+export interface GroupMarker {
+  exchange_index: number;
+  type: MarkerType;
+  label: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ActivityGroup {
+  exchange_index_start: number;
+  exchange_index_end: number;
+  started_at: string;
+  ended_at: string;
+  exchange_count: number;
+  tool_counts: Record<string, number>;
+  error_count: number;
+  files_read: string[];
+  files_written: string[];
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_tokens: number;
+  total_cache_write_tokens: number;
+  duration_ms: number;
+  models: string[];
+  markers: GroupMarker[];
+  boundary: BoundaryType;
+  ai_summary: string | null;
+  ai_label: string | null;
 }
 
 // --- Config Types ---
@@ -185,8 +304,7 @@ export interface AnalysisConfig {
     sessionTitles: AnalysisFeature;
     segmentSummaries: AnalysisFeature;
     decisionExtraction: AnalysisFeature;
-    planDiffAnalysis: AnalysisFeature;
-    sessionNotes: AnalysisFeature;
+    [key: string]: AnalysisFeature; // Tolerate legacy keys from existing config files
   };
 }
 

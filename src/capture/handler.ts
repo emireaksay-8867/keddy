@@ -4,6 +4,7 @@ import {
   updateSessionEnd,
   insertExchange,
   insertToolCall,
+  extractToolCallFields,
   insertCompactionEvent,
   insertPlan,
   insertSegment,
@@ -16,8 +17,8 @@ import {
 } from "../db/queries.js";
 import { parseTranscript, parseLatestExchanges } from "./parser.js";
 import { extractPlans } from "./plans.js";
-import { extractSegments } from "./segments.js";
-import { extractMilestones } from "./milestones.js";
+import { extractActivityGroups, deriveDisplayType } from "./activity-groups.js";
+import { extractMilestones, extractGitMilestones } from "./milestones.js";
 import { deriveTitle } from "./titles.js";
 
 interface HookStdin {
@@ -127,9 +128,23 @@ async function handleStop(input: HookStdin): Promise<void> {
         timestamp: exchange.timestamp,
         is_interrupt: exchange.is_interrupt,
         is_compact_summary: exchange.is_compact_summary,
+        model: exchange.model,
+        input_tokens: exchange.input_tokens,
+        output_tokens: exchange.output_tokens,
+        cache_read_tokens: exchange.cache_read_tokens,
+        cache_write_tokens: exchange.cache_write_tokens,
+        stop_reason: exchange.stop_reason,
+        has_thinking: exchange.has_thinking,
+        permission_mode: exchange.permission_mode,
+        is_sidechain: exchange.is_sidechain,
+        entrypoint: exchange.entrypoint,
+        cwd: exchange.cwd,
+        git_branch: exchange.git_branch,
+        turn_duration_ms: exchange.turn_duration_ms,
       });
 
       for (const tc of exchange.tool_calls) {
+        const enriched = extractToolCallFields(tc.name, tc.input);
         insertToolCall({
           exchange_id: exchangeId,
           session_id: sessionRow.id,
@@ -138,6 +153,7 @@ async function handleStop(input: HookStdin): Promise<void> {
           tool_result: tc.result ?? null,
           tool_use_id: tc.id,
           is_error: tc.is_error ?? false,
+          ...enriched,
         });
       }
     }
@@ -395,9 +411,23 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
         timestamp: exchange.timestamp,
         is_interrupt: exchange.is_interrupt,
         is_compact_summary: exchange.is_compact_summary,
+        model: exchange.model,
+        input_tokens: exchange.input_tokens,
+        output_tokens: exchange.output_tokens,
+        cache_read_tokens: exchange.cache_read_tokens,
+        cache_write_tokens: exchange.cache_write_tokens,
+        stop_reason: exchange.stop_reason,
+        has_thinking: exchange.has_thinking,
+        permission_mode: exchange.permission_mode,
+        is_sidechain: exchange.is_sidechain,
+        entrypoint: exchange.entrypoint,
+        cwd: exchange.cwd,
+        git_branch: exchange.git_branch,
+        turn_duration_ms: exchange.turn_duration_ms,
       });
 
       for (const tc of exchange.tool_calls) {
+        const enriched = extractToolCallFields(tc.name, tc.input);
         insertToolCall({
           exchange_id: exchangeId,
           session_id: session.id,
@@ -406,6 +436,7 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
           tool_result: tc.result ?? null,
           tool_use_id: tc.id,
           is_error: tc.is_error ?? false,
+          ...enriched,
         });
       }
     }
@@ -441,20 +472,21 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
       });
     }
 
-    const segments = extractSegments(transcript.exchanges);
-    for (const segment of segments) {
-      insertSegment({
-        session_id: session.id,
-        segment_type: segment.segment_type,
-        exchange_index_start: segment.exchange_index_start,
-        exchange_index_end: segment.exchange_index_end,
-        files_touched: JSON.stringify(segment.files_touched),
-        tool_counts: JSON.stringify(segment.tool_counts),
-      });
-    }
-
     const milestones = extractMilestones(transcript.exchanges);
-    for (const milestone of milestones) {
+
+    // Also capture commits from git history (made outside Claude — terminal, GitKraken, etc.)
+    const existingCommitMessages = new Set(
+      milestones.filter(m => m.milestone_type === "commit").map(m => m.description),
+    );
+    const gitMilestones = extractGitMilestones(
+      session.project_path,
+      session.started_at,
+      transcript.ended_at ?? session.ended_at ?? null,
+      existingCommitMessages,
+    );
+    const allMilestones = [...milestones, ...gitMilestones];
+
+    for (const milestone of allMilestones) {
       insertMilestone({
         session_id: session.id,
         milestone_type: milestone.milestone_type,
@@ -464,13 +496,41 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
       });
     }
 
+    // Activity groups (boundary-based, replaces heuristic segments)
+    const activityGroups = extractActivityGroups(transcript.exchanges, allMilestones);
+    for (const group of activityGroups) {
+      const allFiles = [...new Set([...group.files_read, ...group.files_written])];
+      insertSegment({
+        session_id: session.id,
+        segment_type: deriveDisplayType(group),
+        exchange_index_start: group.exchange_index_start,
+        exchange_index_end: group.exchange_index_end,
+        files_touched: JSON.stringify(allFiles),
+        tool_counts: JSON.stringify(group.tool_counts),
+        boundary_type: group.boundary,
+        files_read: JSON.stringify(group.files_read),
+        files_written: JSON.stringify(group.files_written),
+        error_count: group.error_count,
+        total_input_tokens: group.total_input_tokens,
+        total_output_tokens: group.total_output_tokens,
+        total_cache_read_tokens: group.total_cache_read_tokens,
+        total_cache_write_tokens: group.total_cache_write_tokens,
+        duration_ms: group.duration_ms,
+        models: JSON.stringify(group.models),
+        markers: JSON.stringify(group.markers),
+        exchange_count: group.exchange_count,
+        started_at: group.started_at,
+        ended_at: group.ended_at,
+      });
+    }
+
     // Update title: custom_title > enriched derive (with plans/milestones) > first prompt
     if (transcript.custom_title) {
       db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(transcript.custom_title, session.id);
     } else {
       const enrichedTitle = deriveTitle(
         transcript.exchanges.map((e) => ({ user_prompt: e.user_prompt })),
-        { plans, milestones, forkExchangeIndex: transcript.fork_exchange_index },
+        { plans, milestones: allMilestones, forkExchangeIndex: transcript.fork_exchange_index },
       );
       if (enrichedTitle) {
         db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(enrichedTitle, session.id);
@@ -503,12 +563,17 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
       });
     }
 
+    // Update session entrypoint
+    if (transcript.entrypoint) {
+      db.prepare("UPDATE sessions SET entrypoint = COALESCE(entrypoint, ?) WHERE id = ?")
+        .run(transcript.entrypoint, session.id);
+    }
+
     // Detect session links (shared files with recent sessions)
     const filesTouched = new Set<string>();
-    for (const seg of segments) {
-      for (const f of seg.files_touched) {
-        filesTouched.add(f);
-      }
+    for (const group of activityGroups) {
+      for (const f of group.files_read) filesTouched.add(f);
+      for (const f of group.files_written) filesTouched.add(f);
     }
 
     if (filesTouched.size > 0) {

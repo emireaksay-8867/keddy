@@ -27,25 +27,45 @@ export interface LLMProvider {
 
 class AnthropicProvider implements LLMProvider {
   private apiKey: string;
+  private client: any = null;
+  private initPromise: Promise<void> | null = null;
 
   constructor(apiKey: string) {
     this.apiKey = apiKey;
   }
 
-  async complete(prompt: string, model: string): Promise<string> {
-    try {
-      const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const client = new Anthropic({ apiKey: this.apiKey });
-      const response = await client.messages.create({
-        model: resolveModel(model),
-        max_tokens: 1024,
-        messages: [{ role: "user", content: prompt }],
+  private async ensureClient(): Promise<any> {
+    if (this.client) return this.client;
+    if (!this.initPromise) {
+      this.initPromise = import("@anthropic-ai/sdk").then(mod => {
+        this.client = new mod.default({ apiKey: this.apiKey });
       });
-      const block = response.content[0];
-      return block.type === "text" ? block.text : "";
-    } catch (err) {
-      throw new Error(`Anthropic API error: ${err}`);
     }
+    await this.initPromise;
+    return this.client;
+  }
+
+  async complete(prompt: string, model: string, retries = 3): Promise<string> {
+    const client = await this.ensureClient();
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const response = await client.messages.create({
+          model: resolveModel(model),
+          max_tokens: 1024,
+          messages: [{ role: "user", content: prompt }],
+        });
+        const block = response.content[0];
+        return block.type === "text" ? block.text : "";
+      } catch (err: any) {
+        if (err?.status === 429 && attempt < retries - 1) {
+          const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        throw new Error(`Anthropic API error: ${err}`);
+      }
+    }
+    throw new Error("Exhausted retries");
   }
 }
 

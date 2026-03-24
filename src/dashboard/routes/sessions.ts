@@ -1,7 +1,8 @@
 import { Hono } from "hono";
-import { extractSegments } from "../../capture/segments.js";
+import { extractActivityGroups, deriveDisplayType } from "../../capture/activity-groups.js";
 import { extractMilestones } from "../../capture/milestones.js";
 import { extractPlans } from "../../capture/plans.js";
+import { parseLatestExchanges } from "../../capture/parser.js";
 import {
   searchSessions,
   getRecentSessions,
@@ -12,8 +13,132 @@ import {
   getSessionMilestones,
   getSessionCompactionEvents,
   getSessionPlans,
+  insertExchange,
+  insertToolCall,
+  insertMilestone,
+  insertPlan,
+  extractToolCallFields,
 } from "../../db/queries.js";
 import { getDb } from "../../db/index.js";
+
+function extractPlanTitle(planText: string): string | null {
+  for (const line of planText.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("#")) {
+      let title = trimmed.replace(/^#+\s*/, "");
+      title = title.replace(/^Plan:\s*/i, "");
+      return title || null;
+    }
+  }
+  return null;
+}
+
+/** Compute outcomes from milestones — shared between list and detail endpoints */
+function computeOutcomes(milestones: Array<{ milestone_type: string; exchange_index: number }>) {
+  const gitOps: Array<{ type: "push" | "pull"; idx: number }> = [];
+  for (const m of milestones) {
+    if (m.milestone_type === "push") gitOps.push({ type: "push", idx: m.exchange_index });
+    if (m.milestone_type === "pull") gitOps.push({ type: "pull", idx: m.exchange_index });
+  }
+  const dedupedOps: Array<"push" | "pull"> = [];
+  for (const op of gitOps) {
+    if (dedupedOps[dedupedOps.length - 1] !== op.type) dedupedOps.push(op.type);
+  }
+  return {
+    has_commits: milestones.some((m) => m.milestone_type === "commit"),
+    git_ops: dedupedOps,
+    has_pr: milestones.some((m) => m.milestone_type === "pr"),
+  };
+}
+
+/** Parse git details from tool_calls for commit/push milestones */
+function extractGitDetails(
+  db: ReturnType<typeof getDb>,
+  sessionId: string,
+  milestones: Array<{ milestone_type: string; exchange_index: number; description: string; metadata: string | null }>,
+): Array<{
+  type: string; exchange_index: number; timestamp: string; description: string;
+  files?: string[]; stats?: { files_changed: number; insertions: number; deletions: number };
+  hash?: string; push_range?: string; push_branch?: string;
+}> {
+  const gitTypes = new Set(["commit", "push", "pull", "pr", "branch"]);
+  const gitMilestones = milestones.filter((m) => gitTypes.has(m.milestone_type) && m.exchange_index >= 0);
+  if (gitMilestones.length === 0) return [];
+
+  const details: Array<any> = [];
+  const exchangeIndices = [...new Set(gitMilestones.map((m) => m.exchange_index))];
+
+  // Batch query: get all git-related bash commands for these exchanges
+  const placeholders = exchangeIndices.map(() => "?").join(",");
+  const gitCalls = db.prepare(`
+    SELECT tc.bash_command, tc.tool_result, e.exchange_index, e.timestamp
+    FROM tool_calls tc
+    JOIN exchanges e ON tc.exchange_id = e.id
+    WHERE e.session_id = ? AND e.exchange_index IN (${placeholders})
+    AND tc.tool_name = 'Bash'
+    AND (tc.bash_command LIKE '%git commit%' OR tc.bash_command LIKE '%git add%'
+      OR tc.bash_command LIKE '%git push%' OR tc.bash_command LIKE '%git pull%'
+      OR tc.bash_command LIKE '%gh pr create%')
+    ORDER BY tc.rowid
+  `).all(sessionId, ...exchangeIndices) as any[];
+
+  // Build lookup: exchange_index → git calls
+  const callsByExchange = new Map<number, any[]>();
+  for (const call of gitCalls) {
+    if (!callsByExchange.has(call.exchange_index)) callsByExchange.set(call.exchange_index, []);
+    callsByExchange.get(call.exchange_index)!.push(call);
+  }
+
+  for (const m of gitMilestones) {
+    const calls = callsByExchange.get(m.exchange_index) || [];
+    const timestamp = calls[0]?.timestamp || "";
+    const detail: any = {
+      type: m.milestone_type,
+      exchange_index: m.exchange_index,
+      timestamp,
+      description: m.description,
+    };
+
+    if (m.milestone_type === "commit") {
+      // Parse files from git add command
+      const addCall = calls.find((c: any) => c.bash_command?.startsWith("git add "));
+      if (addCall) {
+        const filesStr = addCall.bash_command.replace(/^git add\s+/, "").split(/\s*&&\s*/)[0];
+        detail.files = filesStr.split(/\s+/).filter((f: string) => f && !f.startsWith("-"));
+      }
+      // Parse stats and hash from commit result
+      for (const call of calls) {
+        if (!call.tool_result) continue;
+        const statsMatch = call.tool_result.match(/(\d+) files? changed(?:,\s*(\d+) insertions?\(\+\))?(?:,\s*(\d+) deletions?\(-\))?/);
+        if (statsMatch) {
+          detail.stats = {
+            files_changed: parseInt(statsMatch[1]) || 0,
+            insertions: parseInt(statsMatch[2]) || 0,
+            deletions: parseInt(statsMatch[3]) || 0,
+          };
+        }
+        const hashMatch = call.tool_result.match(/\[[\w\/-]+\s+([a-f0-9]{7,})\]/);
+        if (hashMatch) detail.hash = hashMatch[1];
+      }
+    }
+
+    if (m.milestone_type === "push") {
+      for (const call of calls) {
+        if (!call.tool_result) continue;
+        // Parse: "oldsha..newsha  branch -> branch"
+        const rangeMatch = call.tool_result.match(/([a-f0-9]{7,})\.\.([a-f0-9]{7,})\s+(\S+)\s+->\s+(\S+)/);
+        if (rangeMatch) {
+          detail.push_range = `${rangeMatch[1]}..${rangeMatch[2]}`;
+          detail.push_branch = rangeMatch[3];
+        }
+      }
+    }
+
+    details.push(detail);
+  }
+
+  return details;
+}
 
 export const sessionsRoutes = new Hono();
 
@@ -93,6 +218,135 @@ sessionsRoutes.get("/", (c) => {
     }
   } catch { /* non-critical */ }
 
+  // Live-sync: for recently modified sessions, pull new exchanges from JSONL
+  // so plans, milestones, and timestamps stay current even if the Stop hook lags
+  try {
+    const { existsSync, statSync } = require("node:fs");
+    const now = Date.now();
+    const LIVE_THRESHOLD = 15 * 60 * 1000; // 15 minutes
+    for (const s of sessions) {
+      if (!s.jsonl_path || !existsSync(s.jsonl_path)) continue;
+      const mtime = statSync(s.jsonl_path).mtimeMs;
+      if (now - mtime > LIVE_THRESHOLD) continue;
+
+      // Check if DB is stale: JSONL modified after last known exchange
+      const endedMs = s.ended_at ? new Date(s.ended_at).getTime() : 0;
+      if (mtime - endedMs < 5000) continue; // close enough, skip
+
+      // Parse new exchanges from JSONL
+      const existingExchanges = getSessionExchanges(s.id);
+      const sinceIndex = existingExchanges.length;
+      let latestExchanges;
+      try {
+        latestExchanges = parseLatestExchanges(s.jsonl_path, sinceIndex);
+      } catch { continue; }
+      if (latestExchanges.length === 0) continue;
+
+      // Insert new exchanges
+      for (const exchange of latestExchanges) {
+        const exchangeId = insertExchange({
+          session_id: s.id,
+          exchange_index: exchange.index,
+          user_prompt: exchange.user_prompt,
+          assistant_response: exchange.assistant_response,
+          tool_call_count: exchange.tool_calls.length,
+          timestamp: exchange.timestamp,
+          is_interrupt: exchange.is_interrupt,
+          is_compact_summary: exchange.is_compact_summary,
+          model: exchange.model,
+          input_tokens: exchange.input_tokens,
+          output_tokens: exchange.output_tokens,
+          cache_read_tokens: exchange.cache_read_tokens,
+          cache_write_tokens: exchange.cache_write_tokens,
+          stop_reason: exchange.stop_reason,
+          has_thinking: exchange.has_thinking,
+          permission_mode: exchange.permission_mode,
+          is_sidechain: exchange.is_sidechain,
+          entrypoint: exchange.entrypoint,
+          cwd: exchange.cwd,
+          git_branch: exchange.git_branch,
+          turn_duration_ms: exchange.turn_duration_ms,
+        });
+        for (const tc of exchange.tool_calls) {
+          const enriched = extractToolCallFields(tc.name, tc.input);
+          insertToolCall({
+            exchange_id: exchangeId,
+            session_id: s.id,
+            tool_name: tc.name,
+            tool_input: JSON.stringify(tc.input),
+            tool_result: tc.result ?? null,
+            tool_use_id: tc.id,
+            is_error: tc.is_error ?? false,
+            ...enriched,
+          });
+        }
+      }
+
+      // Extract milestones from new exchanges
+      const newMilestones = extractMilestones(latestExchanges);
+      for (const m of newMilestones) {
+        insertMilestone({
+          session_id: s.id,
+          milestone_type: m.milestone_type,
+          exchange_index: m.exchange_index,
+          description: m.description,
+          metadata: m.metadata ? JSON.stringify(m.metadata) : null,
+        });
+      }
+
+      // Re-extract plans from ALL exchanges (status depends on full context)
+      const hasPlanTools = latestExchanges.some((ex) =>
+        ex.tool_calls.some((tc) => tc.name === "EnterPlanMode" || tc.name === "ExitPlanMode"),
+      );
+      if (hasPlanTools) {
+        const allExchanges = getSessionExchanges(s.id);
+        const parsedForPlans = allExchanges.map((e: any) => {
+          const tcs = db
+            .prepare("SELECT tool_name as name, tool_input as input, tool_result as result, tool_use_id as id, is_error FROM tool_calls WHERE exchange_id = ?")
+            .all(e.id)
+            .map((tc: any) => ({
+              ...tc,
+              input: tc.input ? (() => { try { return JSON.parse(tc.input); } catch { return {}; } })() : {},
+              is_error: !!tc.is_error,
+            }));
+          return {
+            index: e.exchange_index,
+            user_prompt: e.user_prompt,
+            assistant_response: e.assistant_response,
+            tool_calls: tcs,
+            timestamp: e.timestamp,
+            is_interrupt: !!e.is_interrupt,
+            is_compact_summary: !!e.is_compact_summary,
+          };
+        });
+        const plans = extractPlans(parsedForPlans);
+        db.prepare("DELETE FROM plans WHERE session_id = ?").run(s.id);
+        for (const plan of plans) {
+          insertPlan({
+            session_id: s.id,
+            version: plan.version,
+            plan_text: plan.plan_text,
+            status: plan.status,
+            user_feedback: plan.user_feedback,
+            exchange_index_start: plan.exchange_index_start,
+            exchange_index_end: plan.exchange_index_end,
+          });
+        }
+      }
+
+      // Update session timestamp and exchange count
+      const lastEx = latestExchanges[latestExchanges.length - 1];
+      db.prepare(`
+        UPDATE sessions SET
+          ended_at = COALESCE(?, ended_at),
+          exchange_count = (SELECT COUNT(*) FROM exchanges WHERE session_id = ?)
+        WHERE id = ?
+      `).run(lastEx.timestamp || new Date().toISOString(), s.id, s.id);
+      s.ended_at = lastEx.timestamp || s.ended_at;
+      s.exchange_count = existingExchanges.length + latestExchanges.length;
+    }
+  } catch { /* non-critical — live sync is best-effort */ }
+
   // Enrich with segment data + plans + AI status + fork info
   const enriched = sessions.map((s) => {
     const segments = getSessionSegments(s.id);
@@ -113,22 +367,84 @@ sessionsRoutes.get("/", (c) => {
     }
 
     // Compute outcomes from milestones
-    // For tests, use the LAST test result — if you fix a failing test, the session outcome is "passed"
-    const testMilestones = milestones.filter(
-      (m) => m.milestone_type === "test_pass" || m.milestone_type === "test_fail",
-    );
-    const lastTest = testMilestones.length > 0 ? testMilestones[testMilestones.length - 1] : null;
-    const outcomes = {
-      commits: milestones.filter((m) => m.milestone_type === "commit").length,
-      has_pr: milestones.some((m) => m.milestone_type === "pr"),
-      tests_passed: lastTest?.milestone_type === "test_pass",
-      tests_failed: lastTest?.milestone_type === "test_fail",
-    };
+    const outcomes = computeOutcomes(milestones);
 
-    // Find latest non-superseded plan status
-    const latestPlan = plans.length > 0
-      ? plans.filter((p) => p.status !== "superseded").pop() || plans[plans.length - 1]
-      : null;
+    // Find best plan: prefer implemented > approved > last non-superseded
+    const nonSuperseded = plans.filter((p) => p.status !== "superseded");
+    const acceptedPlan = nonSuperseded.find((p) => p.status === "implemented")
+      ?? nonSuperseded.find((p) => p.status === "approved");
+    const latestPlan = acceptedPlan ?? nonSuperseded[nonSuperseded.length - 1] ?? null;
+
+    // Facts-first: activity group summaries for the activity strip
+    const activityGroups = segments
+      .filter((seg) => seg.boundary_type != null)
+      .map((seg) => {
+        const toolCounts = (() => { try { return JSON.parse(seg.tool_counts); } catch { return {}; } })() as Record<string, number>;
+        // Classify dominant tool category
+        const readTools = new Set(["Read", "Grep", "Glob"]);
+        const editTools = new Set(["Edit", "Write", "NotebookEdit"]);
+        let readC = 0, editC = 0, bashC = 0, planC = 0, total = 0;
+        for (const [tool, count] of Object.entries(toolCounts)) {
+          total += count;
+          if (readTools.has(tool)) readC += count;
+          else if (editTools.has(tool)) editC += count;
+          else if (tool === "Bash") bashC += count;
+          else if (tool === "EnterPlanMode" || tool === "ExitPlanMode") planC += count;
+        }
+        let dominant = "none";
+        if (total > 0) {
+          if (planC > 0) dominant = "plan";
+          else {
+            const max = Math.max(readC, editC, bashC);
+            if (max > 0) {
+              if (max === editC && editC >= total * 0.4) dominant = "edit";
+              else if (max === readC && readC >= total * 0.5) dominant = "read";
+              else if (max === bashC && bashC >= total * 0.5) dominant = "bash";
+              else dominant = "mixed";
+            }
+          }
+        }
+        return {
+          exchange_start: seg.exchange_index_start,
+          exchange_end: seg.exchange_index_end,
+          exchange_count: seg.exchange_count || (seg.exchange_index_end - seg.exchange_index_start + 1),
+          dominant_tool_category: dominant,
+          has_errors: (seg.error_count || 0) > 0,
+          boundary: seg.boundary_type,
+        };
+      });
+
+    // Token summary (only if we have facts-first data)
+    let tokenSummary = null;
+    let dominantModel: string | null = null;
+    let fileCount = 0;
+    if (activityGroups.length > 0) {
+      try {
+        const tokenRow = db.prepare(`
+          SELECT SUM(input_tokens) as ti, SUM(output_tokens) as to2, SUM(cache_read_tokens) as tcr
+          FROM exchanges WHERE session_id = ? AND input_tokens IS NOT NULL
+        `).get(s.id) as { ti: number | null; to2: number | null; tcr: number | null };
+        if (tokenRow && tokenRow.ti != null) {
+          tokenSummary = {
+            total_input: tokenRow.ti || 0,
+            total_output: tokenRow.to2 || 0,
+            total_cache_read: tokenRow.tcr || 0,
+            total: (tokenRow.ti || 0) + (tokenRow.to2 || 0),
+          };
+        }
+        const modelRow = db.prepare(`
+          SELECT model, COUNT(*) as cnt FROM exchanges
+          WHERE session_id = ? AND model IS NOT NULL
+          GROUP BY model ORDER BY cnt DESC LIMIT 1
+        `).get(s.id) as { model: string; cnt: number } | undefined;
+        dominantModel = modelRow?.model ?? null;
+        const fileRow = db.prepare(`
+          SELECT COUNT(DISTINCT file_path) as cnt FROM tool_calls
+          WHERE session_id = ? AND file_path IS NOT NULL
+        `).get(s.id) as { cnt: number };
+        fileCount = fileRow?.cnt ?? 0;
+      } catch { /* non-critical */ }
+    }
 
     return {
       ...s,
@@ -140,11 +456,32 @@ sessionsRoutes.get("/", (c) => {
       })),
       milestone_count: milestones.length,
       outcomes,
-      latest_plan: latestPlan ? { version: latestPlan.version, status: latestPlan.status, total_versions: plans.length } : null,
+      latest_plan: latestPlan ? {
+        version: latestPlan.version,
+        status: latestPlan.status,
+        total_versions: plans.length,
+        plan_title: extractPlanTitle(latestPlan.plan_text),
+      } : null,
       has_ai: hasAiSummaries,
       compaction_count: s.compaction_count,
       forked_from: s.forked_from,
       parent_title: parentTitle,
+      // Facts-first additions
+      activity_groups: activityGroups,
+      milestones: milestones.map((m) => ({
+        type: m.milestone_type,
+        exchange_index: m.exchange_index,
+        description: m.description,
+      })),
+      token_summary: tokenSummary,
+      model: dominantModel,
+      file_count: fileCount,
+      total_tool_calls: (() => {
+        try {
+          const row = db.prepare("SELECT COUNT(*) as cnt FROM tool_calls WHERE session_id = ?").get(s.id) as { cnt: number };
+          return row.cnt;
+        } catch { return 0; }
+      })(),
     };
   });
 
@@ -189,20 +526,36 @@ sessionsRoutes.get("/:id", (c) => {
         is_compact_summary: !!e.is_compact_summary,
       }));
 
-      const newSegments = extractSegments(parsedExchanges);
       const newMilestones = extractMilestones(parsedExchanges);
       const newPlans = extractPlans(parsedExchanges);
+      const newGroups = extractActivityGroups(parsedExchanges, newMilestones);
       const db = getDb();
       const { insertSegment, insertMilestone, insertPlan } = require("../../db/queries.js");
 
-      for (const seg of newSegments) {
+      for (const group of newGroups) {
+        const { deriveDisplayType: ddt } = require("../../capture/activity-groups.js");
+        const allFiles = [...new Set([...group.files_read, ...group.files_written])];
         insertSegment({
           session_id: session.id,
-          segment_type: seg.segment_type,
-          exchange_index_start: seg.exchange_index_start,
-          exchange_index_end: seg.exchange_index_end,
-          files_touched: JSON.stringify(seg.files_touched),
-          tool_counts: JSON.stringify(seg.tool_counts),
+          segment_type: ddt(group),
+          exchange_index_start: group.exchange_index_start,
+          exchange_index_end: group.exchange_index_end,
+          files_touched: JSON.stringify(allFiles),
+          tool_counts: JSON.stringify(group.tool_counts),
+          boundary_type: group.boundary,
+          files_read: JSON.stringify(group.files_read),
+          files_written: JSON.stringify(group.files_written),
+          error_count: group.error_count,
+          total_input_tokens: group.total_input_tokens,
+          total_output_tokens: group.total_output_tokens,
+          total_cache_read_tokens: group.total_cache_read_tokens,
+          total_cache_write_tokens: group.total_cache_write_tokens,
+          duration_ms: group.duration_ms,
+          models: JSON.stringify(group.models),
+          markers: JSON.stringify(group.markers),
+          exchange_count: group.exchange_count,
+          started_at: group.started_at,
+          ended_at: group.ended_at,
         });
       }
       for (const m of newMilestones) {
@@ -249,14 +602,354 @@ sessionsRoutes.get("/:id", (c) => {
     FROM decisions WHERE session_id = ? ORDER BY exchange_index
   `).all(session.id);
 
+  // Outcomes (shared computation)
+  const outcomes = computeOutcomes(milestones);
+
+  // Git details with file/stats/hash parsing
+  const gitDetails = extractGitDetails(db, session.id, milestones);
+
+  // Test status — final state only (last test milestone)
+  let testStatus: { passing: boolean; description: string; exchange_index: number } | null = null;
+  try {
+    const lastTest = db.prepare(`
+      SELECT milestone_type, description, exchange_index
+      FROM milestones WHERE session_id = ? AND milestone_type IN ('test_pass', 'test_fail')
+      ORDER BY exchange_index DESC LIMIT 1
+    `).get(session.id) as any;
+    if (lastTest) {
+      testStatus = {
+        passing: lastTest.milestone_type === "test_pass",
+        description: lastTest.description,
+        exchange_index: lastTest.exchange_index,
+      };
+    }
+  } catch { /* non-critical */ }
+
+  // Facts-first: build activity group details from segments with boundary_type
+  const activityGroups = segments
+    .filter((seg) => seg.boundary_type != null)
+    .map((seg) => {
+      const exStart = seg.exchange_index_start;
+      const exEnd = seg.exchange_index_end;
+
+      // key_actions: top bash_desc + subagent_desc for this group (computed at read time)
+      let keyActions: string[] = [];
+      try {
+        const bashDescs = db.prepare(`
+          SELECT DISTINCT tc.bash_desc FROM tool_calls tc
+          JOIN exchanges e ON tc.exchange_id = e.id
+          WHERE e.session_id = ? AND e.exchange_index BETWEEN ? AND ?
+          AND tc.bash_desc IS NOT NULL AND tc.bash_desc != ''
+          LIMIT 5
+        `).all(session.id, exStart, exEnd) as any[];
+        const agentDescs = db.prepare(`
+          SELECT tc.subagent_type, tc.subagent_desc FROM tool_calls tc
+          JOIN exchanges e ON tc.exchange_id = e.id
+          WHERE e.session_id = ? AND e.exchange_index BETWEEN ? AND ?
+          AND tc.subagent_desc IS NOT NULL
+        `).all(session.id, exStart, exEnd) as any[];
+
+        keyActions = [
+          ...bashDescs.map((r: any) => r.bash_desc),
+          ...agentDescs.map((r: any) => `${r.subagent_type || "Agent"}: ${r.subagent_desc}`),
+        ];
+      } catch { /* non-critical */ }
+
+      // first_prompt: user prompt from first exchange in group
+      let firstPrompt: string | null = null;
+      try {
+        const row = db.prepare(`
+          SELECT substr(user_prompt, 1, 120) as prompt FROM exchanges
+          WHERE session_id = ? AND exchange_index = ?
+        `).get(session.id, exStart) as any;
+        firstPrompt = row?.prompt ?? null;
+      } catch { /* non-critical */ }
+
+      return {
+        exchange_start: exStart,
+        exchange_end: exEnd,
+        exchange_count: seg.exchange_count || (exEnd - exStart + 1),
+        started_at: seg.started_at,
+        ended_at: seg.ended_at,
+        tool_counts: (() => { try { return JSON.parse(seg.tool_counts); } catch { return {}; } })(),
+        error_count: seg.error_count || 0,
+        files_read: (() => { try { return JSON.parse(seg.files_read || "[]"); } catch { return []; } })(),
+        files_written: (() => { try { return JSON.parse(seg.files_written || "[]"); } catch { return []; } })(),
+        total_input_tokens: seg.total_input_tokens || 0,
+        total_output_tokens: seg.total_output_tokens || 0,
+        total_cache_read_tokens: seg.total_cache_read_tokens || 0,
+        total_cache_write_tokens: seg.total_cache_write_tokens || 0,
+        duration_ms: seg.duration_ms || 0,
+        models: (() => { try { return JSON.parse(seg.models || "[]"); } catch { return []; } })(),
+        markers: (() => { try { return JSON.parse(seg.markers || "[]"); } catch { return []; } })(),
+        boundary: seg.boundary_type,
+        ai_summary: seg.ai_summary,
+        ai_label: seg.ai_label,
+        key_actions: keyActions,
+        first_prompt: firstPrompt,
+      };
+    });
+
+  // Token summary
+  let tokenSummary = null;
+  try {
+    const tokenRow = db.prepare(`
+      SELECT SUM(input_tokens) as ti, SUM(output_tokens) as to2,
+        SUM(cache_read_tokens) as tcr, SUM(cache_write_tokens) as tcw
+      FROM exchanges WHERE session_id = ? AND input_tokens IS NOT NULL
+    `).get(session.id) as any;
+    if (tokenRow && tokenRow.ti != null) {
+      const total = (tokenRow.ti || 0) + (tokenRow.to2 || 0);
+      const cacheRead = tokenRow.tcr || 0;
+      tokenSummary = {
+        total_input: tokenRow.ti || 0,
+        total_output: tokenRow.to2 || 0,
+        total_cache_read: cacheRead,
+        total_cache_write: tokenRow.tcw || 0,
+        total,
+        cache_hit_rate: total > 0 ? Math.round((cacheRead / (tokenRow.ti || 1)) * 100) : 0,
+      };
+    }
+  } catch { /* non-critical */ }
+
+  // Model breakdown
+  let modelBreakdown: Array<{ model: string; exchange_count: number; total_tokens: number }> = [];
+  try {
+    modelBreakdown = db.prepare(`
+      SELECT model, COUNT(*) as exchange_count,
+        SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as total_tokens
+      FROM exchanges WHERE session_id = ? AND model IS NOT NULL
+      GROUP BY model ORDER BY exchange_count DESC
+    `).all(session.id) as any[];
+  } catch { /* non-critical */ }
+
+  // File operations
+  let fileOperations: Array<{ file_path: string; short_name: string; reads: number; edits: number; writes: number }> = [];
+  try {
+    const rows = db.prepare(`
+      SELECT file_path,
+        SUM(CASE WHEN tool_name IN ('Read', 'Grep', 'Glob') THEN 1 ELSE 0 END) as reads,
+        SUM(CASE WHEN tool_name = 'Edit' THEN 1 ELSE 0 END) as edits,
+        SUM(CASE WHEN tool_name = 'Write' THEN 1 ELSE 0 END) as writes
+      FROM tool_calls WHERE session_id = ? AND file_path IS NOT NULL
+      GROUP BY file_path ORDER BY (edits + writes) DESC, reads DESC
+    `).all(session.id) as any[];
+    fileOperations = rows.map((r: any) => ({
+      ...r,
+      short_name: r.file_path.split("/").pop() || r.file_path,
+    }));
+  } catch { /* non-critical */ }
+
   return c.json({
     ...session,
     segments,
     milestones,
-    plans,
+    plans: plans.map((p: any) => {
+      // Enrich with real timestamps from exchanges (created_at is reimport time, not useful)
+      try {
+        const startRow = db.prepare("SELECT timestamp FROM exchanges WHERE session_id = ? AND exchange_index = ?").get(session.id, p.exchange_index_start) as any;
+        const endRow = db.prepare("SELECT timestamp FROM exchanges WHERE session_id = ? AND exchange_index = ?").get(session.id, p.exchange_index_end) as any;
+        return {
+          ...p,
+          started_at: startRow?.timestamp || p.created_at,
+          ended_at: endRow?.timestamp || startRow?.timestamp || p.created_at,
+        };
+      } catch { return { ...p, started_at: p.created_at, ended_at: p.created_at }; }
+    }),
     compaction_events: compactions,
     tasks,
     decisions,
+    // Facts-first additions
+    outcomes,
+    git_details: gitDetails,
+    test_status: testStatus,
+    activity_groups: activityGroups,
+    token_summary: tokenSummary,
+    model_breakdown: modelBreakdown,
+    file_operations: fileOperations,
+  });
+});
+
+// GET /api/sessions/:id/file/:encodedPath — all tool_calls on a specific file with diffs
+sessionsRoutes.get("/:id/file/:filePath", (c) => {
+  const id = c.req.param("id");
+  const filePath = decodeURIComponent(c.req.param("filePath"));
+  const session = getSession(id) ?? getSessionById(id);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT tc.id, tc.tool_name, tc.tool_input, tc.is_error, e.exchange_index, e.timestamp
+    FROM tool_calls tc
+    JOIN exchanges e ON tc.exchange_id = e.id
+    WHERE tc.session_id = ? AND tc.file_path = ?
+    ORDER BY e.exchange_index, tc.rowid
+  `).all(session.id, filePath) as any[];
+
+  const result = rows.map((r: any) => {
+    const entry: any = {
+      id: r.id,
+      exchange_index: r.exchange_index,
+      timestamp: r.timestamp,
+      tool_name: r.tool_name,
+      is_error: !!r.is_error,
+    };
+    // Parse tool_input for Edit diffs
+    try {
+      const input = JSON.parse(r.tool_input);
+      if (r.tool_name === "Edit") {
+        entry.old_string = input.old_string ?? null;
+        entry.new_string = input.new_string ?? null;
+      }
+      if (r.tool_name === "Write") {
+        entry.content_length = typeof input.content === "string" ? input.content.length : null;
+      }
+    } catch { /* invalid JSON */ }
+    return entry;
+  });
+
+  return c.json(result);
+});
+
+// GET /api/sessions/:id/tool-call/:toolCallId — full raw tool call data
+sessionsRoutes.get("/:id/tool-call/:toolCallId", (c) => {
+  const id = c.req.param("id");
+  const toolCallId = c.req.param("toolCallId");
+  const session = getSession(id) ?? getSessionById(id);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT tc.id, tc.tool_name, tc.tool_input, tc.tool_result, tc.is_error,
+      tc.bash_desc, tc.bash_command, tc.skill_name, tc.subagent_type, tc.subagent_desc,
+      tc.file_path, tc.web_query, tc.web_url,
+      e.exchange_index, e.timestamp
+    FROM tool_calls tc
+    JOIN exchanges e ON tc.exchange_id = e.id
+    WHERE tc.id = ? AND tc.session_id = ?
+  `).get(toolCallId, session.id) as any;
+
+  if (!row) return c.json({ error: "Tool call not found" }, 404);
+
+  let toolInput: unknown = row.tool_input;
+  try { toolInput = JSON.parse(row.tool_input); } catch { /* keep as string */ }
+
+  return c.json({
+    id: row.id,
+    tool_name: row.tool_name,
+    tool_input: toolInput,
+    tool_result: row.tool_result,
+    is_error: !!row.is_error,
+    bash_desc: row.bash_desc,
+    bash_command: row.bash_command,
+    skill_name: row.skill_name,
+    subagent_type: row.subagent_type,
+    subagent_desc: row.subagent_desc,
+    file_path: row.file_path,
+    web_query: row.web_query,
+    web_url: row.web_url,
+    exchange_index: row.exchange_index,
+    timestamp: row.timestamp,
+  });
+});
+
+// GET /api/sessions/:id/stats — token, tool, file, model, timing stats
+sessionsRoutes.get("/:id/stats", (c) => {
+  const id = c.req.param("id");
+  const session = getSession(id) ?? getSessionById(id);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+
+  const db = getDb();
+
+  // Per-exchange token data
+  const perExchange = db.prepare(`
+    SELECT exchange_index as index, timestamp, model,
+      input_tokens as input, output_tokens as output,
+      cache_read_tokens as cache_read, cache_write_tokens as cache_write
+    FROM exchanges WHERE session_id = ? ORDER BY exchange_index
+  `).all(session.id) as any[];
+
+  const totalInput = perExchange.reduce((s: number, e: any) => s + (e.input || 0), 0);
+  const totalOutput = perExchange.reduce((s: number, e: any) => s + (e.output || 0), 0);
+  const totalCacheRead = perExchange.reduce((s: number, e: any) => s + (e.cache_read || 0), 0);
+  const totalCacheWrite = perExchange.reduce((s: number, e: any) => s + (e.cache_write || 0), 0);
+
+  // Tool usage
+  const toolRows = db.prepare(`
+    SELECT tool_name, COUNT(*) as count,
+      SUM(CASE WHEN is_error = 1 THEN 1 ELSE 0 END) as errors
+    FROM tool_calls WHERE session_id = ?
+    GROUP BY tool_name ORDER BY count DESC
+  `).all(session.id) as any[];
+  const toolCounts: Record<string, number> = {};
+  const toolErrors: Record<string, number> = {};
+  let toolTotal = 0, errorTotal = 0;
+  for (const r of toolRows) {
+    toolCounts[r.tool_name] = r.count;
+    if (r.errors > 0) toolErrors[r.tool_name] = r.errors;
+    toolTotal += r.count;
+    errorTotal += r.errors;
+  }
+
+  // File operations
+  const fileRows = db.prepare(`
+    SELECT file_path,
+      SUM(CASE WHEN tool_name IN ('Read', 'Grep', 'Glob') THEN 1 ELSE 0 END) as reads,
+      SUM(CASE WHEN tool_name = 'Edit' THEN 1 ELSE 0 END) as edits,
+      SUM(CASE WHEN tool_name = 'Write' THEN 1 ELSE 0 END) as writes
+    FROM tool_calls WHERE session_id = ? AND file_path IS NOT NULL
+    GROUP BY file_path ORDER BY (edits + writes) DESC, reads DESC
+  `).all(session.id) as any[];
+
+  // Model breakdown
+  const modelRows = db.prepare(`
+    SELECT model, COUNT(*) as exchange_count,
+      SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as total_tokens
+    FROM exchanges WHERE session_id = ? AND model IS NOT NULL
+    GROUP BY model ORDER BY exchange_count DESC
+  `).all(session.id) as any[];
+  const totalExchangesWithModel = modelRows.reduce((s: number, r: any) => s + r.exchange_count, 0);
+
+  // Timing
+  const timestamps = perExchange.filter((e: any) => e.timestamp).map((e: any) => ({
+    index: e.index, timestamp: e.timestamp,
+  }));
+  let totalDurationMs = 0, avgTurnMs = 0;
+  let longestTurn: { index: number; duration_ms: number } | null = null;
+  if (timestamps.length >= 2) {
+    totalDurationMs = new Date(timestamps[timestamps.length - 1].timestamp).getTime() -
+      new Date(timestamps[0].timestamp).getTime();
+    avgTurnMs = Math.round(totalDurationMs / timestamps.length);
+    for (let i = 1; i < timestamps.length; i++) {
+      const gap = new Date(timestamps[i].timestamp).getTime() - new Date(timestamps[i - 1].timestamp).getTime();
+      if (!longestTurn || gap > longestTurn.duration_ms) {
+        longestTurn = { index: timestamps[i].index, duration_ms: gap };
+      }
+    }
+  }
+
+  return c.json({
+    tokens: {
+      total_input: totalInput,
+      total_output: totalOutput,
+      total_cache_read: totalCacheRead,
+      total_cache_write: totalCacheWrite,
+      total: totalInput + totalOutput,
+      cache_hit_rate: totalInput > 0 ? Math.round((totalCacheRead / totalInput) * 100) : 0,
+      per_exchange: perExchange,
+    },
+    tools: { counts: toolCounts, errors: toolErrors, total: toolTotal, error_total: errorTotal },
+    files: fileRows.map((r: any) => ({
+      file_path: r.file_path,
+      short_name: r.file_path.split("/").pop() || r.file_path,
+      reads: r.reads, edits: r.edits, writes: r.writes,
+    })),
+    models: modelRows.map((r: any) => ({
+      model: r.model, exchange_count: r.exchange_count,
+      total_tokens: r.total_tokens,
+      percentage: totalExchangesWithModel > 0 ? Math.round((r.exchange_count / totalExchangesWithModel) * 100) : 0,
+    })),
+    timing: { total_duration_ms: totalDurationMs, avg_turn_ms: avgTurnMs, longest_turn: longestTurn, exchange_timestamps: timestamps },
   });
 });
 

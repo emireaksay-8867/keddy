@@ -18,8 +18,6 @@ describe("config deep merge behavior", () => {
           sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
           segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
           decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
-          planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
-          sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
         },
       },
     };
@@ -58,8 +56,6 @@ describe("config deep merge behavior", () => {
           sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
           segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
           decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
-          planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
-          sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
         },
       },
     };
@@ -104,8 +100,6 @@ describe("config deep merge behavior", () => {
           sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
           segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
           decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
-          planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
-          sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
         },
       },
     };

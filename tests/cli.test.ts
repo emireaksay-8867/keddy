@@ -13,7 +13,7 @@ describe("CLI config", () => {
 
     // All features should have enabled and model
     const features = Object.values(config.analysis.features);
-    expect(features.length).toBe(5);
+    expect(features.length).toBe(3);
     for (const feature of features) {
       expect(typeof feature.enabled).toBe("boolean");
       expect(typeof feature.model).toBe("string");

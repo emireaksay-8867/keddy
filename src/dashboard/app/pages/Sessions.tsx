@@ -2,35 +2,14 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link } from "react-router";
 import { useAppContext } from "../App.js";
 import { getSessions } from "../lib/api.js";
-import { SEGMENT_COLORS, SEGMENT_SHORT_LABELS } from "../lib/constants.js";
 import type { SessionListItem } from "../lib/types.js";
 import {
-  Compass,
-  Code,
-  ListChecks,
-  Bug,
-  Rocket,
-  Search,
-  FileSearch,
-  Database,
-  CornerDownRight,
-  MessageCircle,
-  ChevronRight,
+  FileText,
+  ChevronUp,
+  ChevronDown,
+  GitPullRequest,
+  Split,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-
-const SEGMENT_ICONS: Record<string, LucideIcon> = {
-  planning: Compass,
-  implementing: Code,
-  testing: ListChecks,
-  debugging: Bug,
-  deploying: Rocket,
-  exploring: Search,
-  reviewing: FileSearch,
-  querying: Database,
-  pivot: CornerDownRight,
-  discussion: MessageCircle,
-};
 
 function formatDuration(start: string, end: string | null): string {
   if (!end) return "";
@@ -61,50 +40,97 @@ function formatRelative(dateStr: string): string {
   });
 }
 
-/** Segment flow — icon + label for each segment, connected by chevrons. Max 5 shown. */
-function SegmentFlow({
-  segments,
-}: {
-  segments: SessionListItem["segments"];
-}) {
-  if (!segments.length) return null;
+/** Factual session chips — shows what actually happened based on observable data */
+function SessionChips({ session }: { session: SessionListItem }) {
+  const pills: Array<{ icon: typeof ChevronUp; label: string; iconColor: string }> = [];
+  const outcomes = session.outcomes;
 
-  const maxShow = 5;
-  const visible = segments.slice(0, maxShow);
-  const overflow = segments.length - maxShow;
+  // Plan title — rendered as [icon Title], color by status
+  let planText: { label: string; color: string } | null = null;
+  if (session.latest_plan) {
+    const plan = session.latest_plan;
+    const title = plan.plan_title;
+    const shortTitle = title && title.length > 40 ? title.substring(0, 40) + "…" : title;
+    const v = plan.total_versions;
+
+    // Status → color + suffix
+    const statusMap: Record<string, { color: string; suffix: string }> = {
+      implemented: { color: "#10b981", suffix: v > 1 ? ` (v${v})` : "" },
+      approved:    { color: "#10b981", suffix: v > 1 ? ` (v${v})` : "" },
+      drafted:     { color: "#f59e0b", suffix: ` (v${v}, drafting)` },
+      revised:     { color: "#f59e0b", suffix: ` (v${v}, revising)` },
+      rejected:    { color: "#ef4444", suffix: ` (v${v}, rejected)` },
+    };
+    const s = statusMap[plan.status] || { color: "#71717a", suffix: ` (v${v})` };
+
+    planText = {
+      label: shortTitle ? `${shortTitle}${s.suffix}` : `plan${s.suffix}`,
+      color: s.color,
+    };
+  }
+
+  // Committed (only if no push/pull) — uses custom dot, not an icon
+  const hasCommitOnly = outcomes?.has_commits && (!outcomes.git_ops || outcomes.git_ops.length === 0);
+
+  // Push/pull in chronological order
+  if (outcomes?.git_ops) {
+    for (const op of outcomes.git_ops) {
+      if (op === "push") {
+        pills.push({ icon: ChevronUp, label: "pushed", iconColor: "#60a5fa" });
+      } else {
+        pills.push({ icon: ChevronDown, label: "pulled", iconColor: "#a78bfa" });
+      }
+    }
+  }
+
+  // PR
+  if (outcomes?.has_pr) {
+    pills.push({ icon: GitPullRequest, label: "PR", iconColor: "#34d399" });
+  }
+
+  // Forked
+  if (session.parent_title) {
+    const short = session.parent_title!.length > 25 ? session.parent_title!.substring(0, 25) + "…" : session.parent_title;
+    pills.push({ icon: Split, label: `forked: ${short}`, iconColor: "#a78bfa" });
+  }
+
+  if (!planText && !hasCommitOnly && pills.length === 0) return null;
 
   return (
-    <span className="inline-flex items-center gap-1.5">
-      {visible.map((seg, i) => {
-        const Icon = SEGMENT_ICONS[seg.type] || MessageCircle;
-        const label = SEGMENT_SHORT_LABELS[seg.type] || seg.type;
-        const iconColor = SEGMENT_COLORS[seg.type] || "var(--text-muted)";
-        const count = seg.end - seg.start + 1;
+    <span className="inline-flex items-center gap-x-2 gap-y-1 min-w-0 flex-wrap">
+      {/* Plan title — [icon + title] */}
+      {planText && (
+        <span className="inline-flex items-center text-[12px] min-w-0 shrink font-medium" style={{ color: "var(--text-tertiary)" }}>
+          <span className="mr-1" style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: 1 }}>[</span>
+          <FileText size={11} className="shrink-0 mr-1" style={{ color: planText.color }} />
+          <span className="truncate">{planText.label}</span>
+          <span className="ml-1" style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: 1, position: "relative", top: "-0.5px" }}>]</span>
+        </span>
+      )}
+      {/* Committed pill with custom dot */}
+      {hasCommitOnly && (
+        <span
+          className="inline-flex items-center justify-center gap-1.5 text-[12px] px-2.5 py-1 rounded-full shrink-0 leading-none"
+          style={{ border: "1px solid var(--border)", color: "var(--text-tertiary)" }}
+        >
+          <span className="shrink-0 rounded-full" style={{ width: 4, height: 4, background: "#818cf8" }} />
+          <span style={{ lineHeight: 1 }}>committed</span>
+        </span>
+      )}
+      {/* Action pills — rounded containers */}
+      {pills.map((pill, i) => {
+        const Icon = pill.icon;
         return (
-          <span key={i} className="inline-flex items-center gap-1.5">
-            {i > 0 && (
-              <ChevronRight
-                size={12}
-                strokeWidth={2.5}
-                style={{ color: "var(--text-secondary)" }}
-                className="shrink-0"
-              />
-            )}
-            <span
-              className="inline-flex items-center gap-1 text-[12px]"
-              title={`${SEGMENT_SHORT_LABELS[seg.type] || seg.type} · ${count} exchange${count !== 1 ? "s" : ""}`}
-            >
-              <Icon size={14} className="shrink-0" style={{ color: iconColor }} />
-              <span style={{ color: "var(--text-tertiary)" }}>{label}</span>
-            </span>
+          <span
+            key={i}
+            className="inline-flex items-center justify-center gap-1 text-[12px] px-2.5 py-1 rounded-full shrink-0 leading-none"
+            style={{ border: "1px solid var(--border)", color: "var(--text-tertiary)" }}
+          >
+            <Icon size={12} className="shrink-0" style={{ color: pill.iconColor }} />
+            <span style={{ lineHeight: 1 }}>{pill.label}</span>
           </span>
         );
       })}
-      {overflow > 0 && (
-        <span className="text-[10px] ml-0.5" style={{ color: "var(--text-muted)" }}>
-          +{overflow}
-        </span>
-      )}
     </span>
   );
 }
@@ -124,19 +150,11 @@ function SessionRow({
   const duration = formatDuration(session.started_at, session.ended_at);
   const project = session.project_path.split("/").slice(-2).join("/");
 
-  // Build metadata items for line 2
-  const meta: Array<{ text: string; mono?: boolean; color?: string }> = [];
-
-  if (showProject) {
-    meta.push({ text: project });
-  }
-  if (session.git_branch) {
-    meta.push({ text: session.git_branch, mono: true });
-  }
-  if (duration) {
-    meta.push({ text: duration });
-  }
-  meta.push({ text: `${session.exchange_count} exchanges` });
+  // Build metadata items
+  const meta: Array<{ text: string; mono?: boolean }> = [];
+  if (showProject) meta.push({ text: project });
+  if (session.git_branch) meta.push({ text: session.git_branch, mono: true });
+  if (duration) meta.push({ text: duration });
 
   return (
     <Link
@@ -145,7 +163,7 @@ function SessionRow({
       style={isLast ? undefined : { borderColor: "var(--border)" }}
     >
       <div className="flex gap-2">
-        {/* Left: Title + Segment flow */}
+        {/* Left: Title + Factual chips */}
         <div className="flex-1 min-w-0">
           <p
             className="text-[13.5px] font-medium truncate"
@@ -154,21 +172,19 @@ function SessionRow({
             {title}
           </p>
           <div className="mt-1" style={{ minHeight: 20 }}>
-            {session.segments.length > 0 && (
-              <SegmentFlow segments={session.segments} />
-            )}
+            <SessionChips session={session} />
           </div>
         </div>
 
-        {/* Right: Meta pills + Time — aligned to bottom */}
+        {/* Right: Meta + Time */}
         <div className="flex items-center gap-1.5 shrink-0">
           {meta.map((item, i) => (
             <span
               key={i}
               className={`text-[11px] px-2 py-0.5 rounded${item.mono ? " font-mono" : ""}`}
               style={{
-                border: "1px solid var(--border)",
-                color: item.color || "var(--text-tertiary)",
+                border: "1px solid var(--border-bright)",
+                color: "var(--text-secondary)",
               }}
             >
               {item.text}
@@ -187,7 +203,7 @@ function SessionRow({
 }
 
 export function Sessions() {
-  const { selectedProject, searchQuery, setSearchQuery } = useAppContext();
+  const { selectedProject, projects, searchQuery, setSearchQuery } = useAppContext();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [visibleCount, setVisibleCount] = useState(50);
@@ -260,7 +276,7 @@ export function Sessions() {
   const visible = filtered.slice(0, visibleCount);
   const showProject = !selectedProject;
   const projectName = selectedProject
-    ? selectedProject.split("/").slice(-2).join("/")
+    ? (projects.find(p => p.project_path === selectedProject)?.repo || selectedProject.split("/").pop() || selectedProject)
     : "All Sessions";
 
   // Compute header stats from loaded sessions

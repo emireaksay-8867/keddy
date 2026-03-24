@@ -15,8 +15,6 @@ function getDefaultConfig(): KeddyConfig {
         sessionTitles: { enabled: true, model: "haiku" },
         segmentSummaries: { enabled: true, model: "haiku" },
         decisionExtraction: { enabled: true, model: "haiku" },
-        planDiffAnalysis: { enabled: true, model: "sonnet" },
-        sessionNotes: { enabled: true, model: "sonnet" },
       },
     },
   };

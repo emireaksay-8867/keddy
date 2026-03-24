@@ -13,8 +13,38 @@ import { analyzeRoutes } from "./routes/analyze.js";
 
 const app = new Hono();
 
-// CORS for dev
-app.use("/api/*", cors());
+// Security: Host header validation — block DNS rebinding attacks
+const ALLOWED_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+app.use("*", async (c, next) => {
+  const host = c.req.header("host");
+  if (host) {
+    const hostname = host.replace(/:\d+$/, "");
+    if (!ALLOWED_HOSTS.has(hostname)) {
+      return c.text("Forbidden", 403);
+    }
+  }
+  await next();
+});
+
+// Security: CORS — restrict to localhost origins only
+app.use("/api/*", cors({
+  origin: (origin) => {
+    if (!origin) return origin; // same-origin requests
+    try {
+      const url = new URL(origin);
+      if (ALLOWED_HOSTS.has(url.hostname)) return origin;
+    } catch { /* invalid origin */ }
+    return null;
+  },
+}));
+
+// Security headers
+app.use("*", async (c, next) => {
+  await next();
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("X-Frame-Options", "DENY");
+  c.header("Referrer-Policy", "no-referrer");
+});
 
 // API routes
 app.route("/api/sessions", sessionsRoutes);

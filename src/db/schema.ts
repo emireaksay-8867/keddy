@@ -16,7 +16,8 @@ export function initSchema(db: Database.Database): void {
       compaction_count INTEGER NOT NULL DEFAULT 0,
       jsonl_path TEXT,
       forked_from TEXT,
-      metadata TEXT
+      metadata TEXT,
+      entrypoint TEXT
     );
 
     CREATE TABLE IF NOT EXISTS exchanges (
@@ -31,6 +32,19 @@ export function initSchema(db: Database.Database): void {
       is_interrupt INTEGER NOT NULL DEFAULT 0,
       is_compact_summary INTEGER NOT NULL DEFAULT 0,
       metadata TEXT,
+      model TEXT,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      cache_read_tokens INTEGER,
+      cache_write_tokens INTEGER,
+      stop_reason TEXT,
+      has_thinking INTEGER,
+      permission_mode TEXT,
+      is_sidechain INTEGER,
+      entrypoint TEXT,
+      cwd TEXT,
+      git_branch TEXT,
+      turn_duration_ms INTEGER,
       UNIQUE(session_id, exchange_index)
     );
 
@@ -44,6 +58,14 @@ export function initSchema(db: Database.Database): void {
       tool_use_id TEXT NOT NULL,
       is_error INTEGER NOT NULL DEFAULT 0,
       duration_ms INTEGER,
+      skill_name TEXT,
+      subagent_type TEXT,
+      subagent_desc TEXT,
+      file_path TEXT,
+      bash_command TEXT,
+      bash_desc TEXT,
+      web_query TEXT,
+      web_url TEXT,
       UNIQUE(session_id, tool_use_id)
     );
 
@@ -69,6 +91,22 @@ export function initSchema(db: Database.Database): void {
       files_touched TEXT NOT NULL DEFAULT '[]',
       tool_counts TEXT NOT NULL DEFAULT '{}',
       summary TEXT,
+      boundary_type TEXT,
+      files_read TEXT DEFAULT '[]',
+      files_written TEXT DEFAULT '[]',
+      error_count INTEGER DEFAULT 0,
+      total_input_tokens INTEGER DEFAULT 0,
+      total_output_tokens INTEGER DEFAULT 0,
+      total_cache_read_tokens INTEGER DEFAULT 0,
+      total_cache_write_tokens INTEGER DEFAULT 0,
+      duration_ms INTEGER DEFAULT 0,
+      models TEXT DEFAULT '[]',
+      markers TEXT DEFAULT '[]',
+      exchange_count INTEGER DEFAULT 0,
+      started_at TEXT,
+      ended_at TEXT,
+      ai_label TEXT,
+      ai_summary TEXT,
       UNIQUE(session_id, exchange_index_start, exchange_index_end)
     );
 
@@ -137,6 +175,14 @@ export function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_path);
     CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
     CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id);
+
+    -- Facts-first indexes
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_skill ON tool_calls(skill_name) WHERE skill_name IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_file_path ON tool_calls(file_path) WHERE file_path IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_subagent ON tool_calls(subagent_type) WHERE subagent_type IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_web_query ON tool_calls(web_query) WHERE web_query IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_exchanges_model ON exchanges(model);
+    CREATE INDEX IF NOT EXISTS idx_segments_boundary ON segments(session_id, boundary_type);
   `);
 
   // FTS5 virtual table for full-text search (both prompts and responses)

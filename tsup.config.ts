@@ -1,4 +1,5 @@
 import { defineConfig } from "tsup";
+import pkg from "./package.json";
 
 export default defineConfig({
   entry: {
@@ -15,6 +16,9 @@ export default defineConfig({
   clean: true,
   outDir: "dist",
   external: ["better-sqlite3"],
+  define: {
+    "process.env.KEDDY_VERSION": JSON.stringify(pkg.version),
+  },
   banner: {
     js: "#!/usr/bin/env node",
   },

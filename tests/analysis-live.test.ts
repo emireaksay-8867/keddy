@@ -20,8 +20,6 @@ describe.skipIf(!hasApiKey)("AI Analysis — live API tests", () => {
         sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
         segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
         decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
-        planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
-        sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
       },
     };
 
@@ -74,8 +72,6 @@ describe.skipIf(!hasApiKey)("AI Analysis — live API tests", () => {
         sessionTitles: { enabled: true, model: "claude-haiku-4-5-latest" },
         segmentSummaries: { enabled: true, model: "claude-haiku-4-5-latest" },
         decisionExtraction: { enabled: false, model: "claude-haiku-4-5-latest" },
-        planDiffAnalysis: { enabled: false, model: "claude-sonnet-4-5-latest" },
-        sessionNotes: { enabled: false, model: "claude-sonnet-4-5-latest" },
       },
     };
 

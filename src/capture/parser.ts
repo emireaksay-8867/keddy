@@ -8,6 +8,14 @@ interface JsonlEntry {
   message?: {
     role?: string;
     content?: string | ContentBlock[];
+    model?: string;
+    stop_reason?: string | null;
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+    };
   };
   isCompactSummary?: boolean;
   sessionId?: string;
@@ -18,10 +26,14 @@ interface JsonlEntry {
   slug?: string;
   timestamp?: string;
   forkedFrom?: string | { sessionId?: string; messageUuid?: string };
+  permissionMode?: string;
   isSidechain?: boolean;
+  entrypoint?: string;
+  durationMs?: number;
   compactMetadata?: {
     exchangesBefore?: number;
     exchangesAfter?: number;
+    preTokens?: number;
   };
   [key: string]: unknown;
 }
@@ -185,6 +197,50 @@ export function parseTranscript(filePath: string): ParsedTranscript {
   let passedForkPoint = false;
   let forkExchangeIndex: number | null = null;
 
+  // Facts-first: per-exchange metadata accumulators
+  let currentModel: string | null = null;
+  let currentInputTokens: number | null = null;
+  let currentOutputTokens: number | null = null;
+  let currentCacheReadTokens: number | null = null;
+  let currentCacheWriteTokens: number | null = null;
+  let currentStopReason: string | null = null;
+  let currentHasThinking = false;
+  let currentPermissionMode: string | null = null;
+  let currentIsSidechain: boolean | null = null;
+  let currentEntrypoint: string | null = null;
+  let currentExchangeCwd: string | null = null;
+  let currentExchangeBranch: string | null = null;
+  let sessionEntrypoint: string | null = null;
+
+  /** Build the facts-first fields object for exchange pushes */
+  function factsFields() {
+    return {
+      model: currentModel,
+      input_tokens: currentInputTokens,
+      output_tokens: currentOutputTokens,
+      cache_read_tokens: currentCacheReadTokens,
+      cache_write_tokens: currentCacheWriteTokens,
+      stop_reason: currentStopReason,
+      has_thinking: currentHasThinking || undefined,
+      permission_mode: currentPermissionMode,
+      is_sidechain: currentIsSidechain ?? undefined,
+      entrypoint: currentEntrypoint,
+      cwd: currentExchangeCwd,
+      git_branch: currentExchangeBranch,
+    };
+  }
+
+  /** Reset assistant-side accumulators for new exchange */
+  function resetAssistantAccumulators() {
+    currentModel = null;
+    currentInputTokens = null;
+    currentOutputTokens = null;
+    currentCacheReadTokens = null;
+    currentCacheWriteTokens = null;
+    currentStopReason = null;
+    currentHasThinking = false;
+  }
+
   for (const entry of entries) {
     // Skip noise types
     if (entry.type && SKIP_TYPES.has(entry.type)) continue;
@@ -255,6 +311,14 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       continue;
     }
 
+    // Turn duration — link to most recently completed exchange
+    if (entry.type === "system" && entry.subtype === "turn_duration" && entry.durationMs) {
+      if (exchanges.length > 0) {
+        exchanges[exchanges.length - 1].turn_duration_ms = entry.durationMs;
+      }
+      continue;
+    }
+
     const role = entry.message?.role ?? entry.type;
     const msgContent = entry.message?.content;
 
@@ -276,10 +340,12 @@ export function parseTranscript(filePath: string): ParsedTranscript {
           timestamp: currentTimestamp,
           is_interrupt: false,
           is_compact_summary: currentIsCompactSummary,
+          ...factsFields(),
         });
         exchangeIndex++;
         pendingToolCalls = [];
         currentAssistantText = "";
+        resetAssistantAccumulators();
       }
 
       currentUserPrompt = extractText(msgContent);
@@ -341,10 +407,12 @@ export function parseTranscript(filePath: string): ParsedTranscript {
             timestamp: currentTimestamp,
             is_interrupt: true,
             is_compact_summary: currentIsCompactSummary,
+            ...factsFields(),
           });
           exchangeIndex++;
           pendingToolCalls = [];
           currentAssistantText = "";
+          resetAssistantAccumulators();
           inExchange = false;
         }
         continue;
@@ -374,6 +442,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
           timestamp: currentTimestamp,
           is_interrupt: false,
           is_compact_summary: currentIsCompactSummary,
+          ...factsFields(),
         });
         exchangeIndex++;
         pendingToolCalls = [];
@@ -392,6 +461,18 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       currentTimestamp = entry.timestamp || new Date().toISOString();
       currentIsCompactSummary = false;
       inExchange = true;
+
+      // Facts-first: capture per-exchange metadata from user entry
+      if (entry.permissionMode) currentPermissionMode = entry.permissionMode;
+      if (entry.entrypoint) {
+        currentEntrypoint = entry.entrypoint;
+        if (!sessionEntrypoint) sessionEntrypoint = entry.entrypoint;
+      }
+      if (entry.cwd) currentExchangeCwd = entry.cwd;
+      if (entry.gitBranch) currentExchangeBranch = entry.gitBranch;
+      if (entry.isSidechain !== undefined) currentIsSidechain = entry.isSidechain;
+      resetAssistantAccumulators();
+
       continue;
     }
 
@@ -401,6 +482,24 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       const toolUses = extractToolUses(msgContent);
       const interrupt = isInterrupt(msgContent);
       const hasThinking = Array.isArray(msgContent) && msgContent.some((b) => b.type === "thinking");
+
+      // Facts-first: extract metadata from assistant entry (last-wins for multi-block turns)
+      if (entry.message?.model) currentModel = entry.message.model;
+      if (entry.message?.usage) {
+        if (entry.message.usage.input_tokens !== undefined) currentInputTokens = entry.message.usage.input_tokens;
+        if (entry.message.usage.output_tokens !== undefined) currentOutputTokens = entry.message.usage.output_tokens;
+        if (entry.message.usage.cache_read_input_tokens !== undefined) currentCacheReadTokens = entry.message.usage.cache_read_input_tokens;
+        if (entry.message.usage.cache_creation_input_tokens !== undefined) currentCacheWriteTokens = entry.message.usage.cache_creation_input_tokens;
+      }
+      if (entry.message?.stop_reason !== undefined) currentStopReason = entry.message.stop_reason;
+      if (hasThinking) currentHasThinking = true;
+      if (entry.entrypoint) {
+        currentEntrypoint = entry.entrypoint;
+        if (!sessionEntrypoint) sessionEntrypoint = entry.entrypoint;
+      }
+      if (entry.cwd) currentExchangeCwd = entry.cwd;
+      if (entry.gitBranch) currentExchangeBranch = entry.gitBranch;
+      if (entry.isSidechain !== undefined) currentIsSidechain = entry.isSidechain;
 
       // Accumulate assistant text across multi-turn tool exchanges
       if (assistantText) {
@@ -425,10 +524,12 @@ export function parseTranscript(filePath: string): ParsedTranscript {
           timestamp: currentTimestamp,
           is_interrupt: interrupt,
           is_compact_summary: currentIsCompactSummary,
+          ...factsFields(),
         });
         exchangeIndex++;
         pendingToolCalls = [];
         currentAssistantText = "";
+        resetAssistantAccumulators();
         inExchange = false;
       } else if (inExchange && interrupt) {
         // Interrupted — finalize
@@ -440,10 +541,12 @@ export function parseTranscript(filePath: string): ParsedTranscript {
           timestamp: currentTimestamp,
           is_interrupt: true,
           is_compact_summary: currentIsCompactSummary,
+          ...factsFields(),
         });
         exchangeIndex++;
         pendingToolCalls = [];
         currentAssistantText = "";
+        resetAssistantAccumulators();
         inExchange = false;
       }
       // If there are tool uses, we wait for tool results + next assistant message
@@ -461,6 +564,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       timestamp: currentTimestamp,
       is_interrupt: false,
       is_compact_summary: currentIsCompactSummary,
+      ...factsFields(),
     });
   }
 
@@ -481,6 +585,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     exchanges,
     compactions,
     fork_exchange_index: forkExchangeIndex,
+    entrypoint: sessionEntrypoint,
   };
 }
 

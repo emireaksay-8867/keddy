@@ -1,3 +1,4 @@
+import { execSync } from "child_process";
 import type { ParsedExchange } from "../types.js";
 import type { MilestoneType } from "../types.js";
 
@@ -13,6 +14,7 @@ const COMMIT_SIMPLE_RE = /git commit\s+(?:.*\s)?-m\s+["']([^"']+)["']/;
 // Match: git commit -m "$(cat <<'EOF'\nmessage\nEOF\n)" — extract first meaningful line after EOF marker
 const COMMIT_HEREDOC_RE = /git commit\s+.*-m\s+['"]\$\(cat\s+<<[\s']*(\w+)/;
 const PUSH_RE = /git push\s*(.*)/;
+const PULL_RE = /git pull\s*(.*)/;
 const PR_RE = /gh pr create/;
 const PR_TITLE_RE = /--title\s+["']([^"']+)["']/;
 const BRANCH_RE = /git checkout -b\s+(\S+)/;
@@ -211,6 +213,22 @@ export function extractMilestones(exchanges: ParsedExchange[]): ExtractedMilesto
         continue;
       }
 
+      // Git pull
+      const pullMatch = cmd.match(PULL_RE);
+      if (pullMatch) {
+        const cleanArgs = cleanPushDescription(pullMatch[1] || "");
+        const parts = cleanArgs.split(/\s+/).filter(Boolean);
+        const remote = parts[0] || "origin";
+        const branch = parts[1] || "";
+        milestones.push({
+          milestone_type: "pull",
+          exchange_index: exchange.index,
+          description: branch ? `Pulled from ${remote}/${branch}` : `Pulled from ${remote}`,
+          metadata: { remote, branch: branch || null },
+        });
+        continue;
+      }
+
       // PR creation
       if (PR_RE.test(cmd)) {
         const titleMatch = cmd.match(PR_TITLE_RE);
@@ -264,6 +282,102 @@ export function extractMilestones(exchanges: ParsedExchange[]): ExtractedMilesto
         });
       }
     }
+  }
+
+  return milestones;
+}
+
+/**
+ * Extract milestones from git history during the session timeframe.
+ * Captures commits made by any tool (terminal, GitKraken, VS Code, GitHub Desktop)
+ * — not just Claude's Bash calls.
+ */
+export function extractGitMilestones(
+  projectPath: string,
+  startedAt: string,
+  endedAt: string | null,
+  existingCommitMessages: Set<string>,
+): ExtractedMilestone[] {
+  const milestones: ExtractedMilestone[] = [];
+
+  try {
+    const since = new Date(startedAt).toISOString();
+    const until = endedAt ? new Date(endedAt).toISOString() : new Date().toISOString();
+
+    // Get commits in timeframe: hash, subject, author date
+    const gitLog = execSync(
+      `git log --all --after="${since}" --before="${until}" --format="%H%x00%s%x00%aI" --no-merges`,
+      { cwd: projectPath, timeout: 5000, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
+    ).trim();
+
+    if (!gitLog) return milestones;
+
+    for (const line of gitLog.split("\n")) {
+      if (!line.trim()) continue;
+      const [hash, subject, _date] = line.split("\0");
+      if (!hash || !subject) continue;
+
+      // Skip if already captured from Claude's tool calls
+      if (existingCommitMessages.has(subject)) continue;
+
+      milestones.push({
+        milestone_type: "commit",
+        exchange_index: -1,
+        description: subject,
+        metadata: { message: subject, hash: hash.substring(0, 8), source: "git" },
+      });
+    }
+
+    // Detect pushes from reflog during session timeframe
+    const existingPushes = existingCommitMessages; // reuse param to check duplication flag
+    try {
+      const reflog = execSync(
+        `git reflog --date=iso --format="%gd%x00%gs%x00%gD" --all`,
+        { cwd: projectPath, timeout: 5000, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
+      ).trim();
+      if (reflog) {
+        for (const line of reflog.split("\n")) {
+          if (!line.includes("push") && !line.includes("update by push")) continue;
+          // reflog entries with push indicate a push happened
+          const hasPushMilestone = milestones.some(m => m.milestone_type === "push");
+          if (!hasPushMilestone) {
+            milestones.push({
+              milestone_type: "push",
+              exchange_index: -1,
+              description: "Pushed (detected from git)",
+              metadata: { source: "git" },
+            });
+            break; // one push milestone is enough
+          }
+        }
+      }
+    } catch { /* reflog not available */ }
+
+    // Detect PRs via gh CLI (if available)
+    try {
+      const prs = execSync(
+        `gh pr list --state all --author @me --json number,title,createdAt --limit 5`,
+        { cwd: projectPath, timeout: 10000, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
+      ).trim();
+      if (prs) {
+        const prList = JSON.parse(prs) as Array<{ number: number; title: string; createdAt: string }>;
+        const sinceDate = new Date(since);
+        const untilDate = new Date(until);
+        for (const pr of prList) {
+          const prDate = new Date(pr.createdAt);
+          if (prDate >= sinceDate && prDate <= untilDate) {
+            milestones.push({
+              milestone_type: "pr",
+              exchange_index: -1,
+              description: `PR #${pr.number}: ${pr.title}`,
+              metadata: { number: pr.number, title: pr.title, source: "github" },
+            });
+          }
+        }
+      }
+    } catch { /* gh not available or not authenticated */ }
+  } catch {
+    // Not a git repo, or git not available — silently skip
   }
 
   return milestones;
