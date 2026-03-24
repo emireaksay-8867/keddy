@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { FileTree } from "./FileTree.js";
+
 interface FileOp {
   file_path: string;
   short_name: string;
@@ -40,47 +43,87 @@ function groupByDirectory(files: FileOp[]): Array<{ dir: string; files: FileOp[]
   return Array.from(groups.entries()).map(([dir, files]) => ({ dir, files }));
 }
 
-export function FilesSection({ fileOps, onViewFile }: FilesSectionProps) {
-  if (fileOps.length === 0) return null;
-
+function PathView({ fileOps, onViewFile }: FilesSectionProps) {
   const grouped = groupByDirectory(fileOps);
+  return (
+    <div className="flex flex-col gap-0.5">
+      {grouped.map(({ dir, files }) => (
+        <div key={dir}>
+          {dir && (
+            <div className="text-[11px] mt-2 mb-0.5" style={{ color: "var(--text-muted)" }}>{dir}</div>
+          )}
+          {files.map(f => {
+            const name = f.file_path.split("/").pop() || f.file_path;
+            const hasEdits = f.edits > 0 || f.writes > 0;
+            return (
+              <div key={f.file_path} className="flex items-center gap-3 text-[12px] py-0.5 px-2 rounded hover:bg-[var(--bg-hover)]">
+                <span className="min-w-0 truncate" style={{ color: "var(--text-secondary)" }}>{name}</span>
+                <span className="flex items-center gap-2 shrink-0 ml-auto" style={{ color: "var(--text-muted)" }}>
+                  {hasEdits && (
+                    <span>{f.writes > 0 && f.edits === 0 ? "\u2728" : "\u270F\uFE0F"} {f.edits + f.writes}</span>
+                  )}
+                  {f.reads > 0 && <span>{"\uD83D\uDC41"} {f.reads}</span>}
+                  {hasEdits && (
+                    <button
+                      className="text-[11px] px-1.5 py-0.5 hover:underline"
+                      style={{ color: "var(--text-muted)" }}
+                      onClick={() => onViewFile(f.file_path)}
+                    >diffs</button>
+                  )}
+                  <a
+                    href={`vscode://file${f.file_path}`}
+                    className="text-[11px] px-1 hover:underline"
+                    style={{ color: "var(--text-muted)" }}
+                    title="Open in VS Code"
+                  >{"\u2197"}</a>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function FilesSection({ fileOps, onViewFile }: FilesSectionProps) {
+  // Default to tree for >10 files
+  const [viewMode, setViewMode] = useState<"path" | "tree">(fileOps.length > 10 ? "tree" : "path");
+
+  if (fileOps.length === 0) return null;
 
   return (
     <div className="mb-6">
-      <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>Files</div>
-
-      <div className="flex flex-col gap-0.5">
-        {grouped.map(({ dir, files }) => (
-          <div key={dir}>
-            {dir && (
-              <div className="text-[11px] mt-2 mb-0.5" style={{ color: "var(--text-muted)" }}>{dir}</div>
-            )}
-            {files.map(f => {
-              const name = f.file_path.split("/").pop() || f.file_path;
-              return (
-                <div key={f.file_path} className="flex items-center gap-3 text-[12px] py-0.5 px-2 rounded hover:bg-[var(--bg-hover)]">
-                  <span className="min-w-0 truncate" style={{ color: "var(--text-secondary)" }}>{name}</span>
-                  <span className="flex items-center gap-2 shrink-0 ml-auto" style={{ color: "var(--text-muted)" }}>
-                    {(f.edits > 0 || f.writes > 0) && (
-                      <span>{f.writes > 0 && f.edits === 0 ? "\u2728" : "\u270F\uFE0F"} {f.edits + f.writes}</span>
-                    )}
-                    {f.reads > 0 && (
-                      <span>{"\uD83D\uDC41"} {f.reads}</span>
-                    )}
-                    {(f.edits > 0 || f.writes > 0) && (
-                      <button
-                        className="text-[11px] px-1.5 py-0.5 hover:underline"
-                        style={{ color: "var(--text-muted)" }}
-                        onClick={() => onViewFile(f.file_path)}
-                      >diffs</button>
-                    )}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        ))}
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+          Files ({fileOps.length})
+        </div>
+        <div className="flex items-center rounded overflow-hidden text-[11px]" style={{ border: "1px solid var(--border)" }}>
+          <button
+            className="px-2 py-0.5"
+            style={{
+              background: viewMode === "path" ? "var(--bg-elevated)" : "transparent",
+              color: viewMode === "path" ? "var(--text-primary)" : "var(--text-muted)",
+            }}
+            onClick={() => setViewMode("path")}
+          >{"\u2630"} Path</button>
+          <button
+            className="px-2 py-0.5"
+            style={{
+              background: viewMode === "tree" ? "var(--bg-elevated)" : "transparent",
+              color: viewMode === "tree" ? "var(--text-primary)" : "var(--text-muted)",
+              borderLeft: "1px solid var(--border)",
+            }}
+            onClick={() => setViewMode("tree")}
+          >{"\uD83C\uDF33"} Tree</button>
+        </div>
       </div>
+
+      {viewMode === "tree" ? (
+        <FileTree fileOps={fileOps} onViewFile={onViewFile} />
+      ) : (
+        <PathView fileOps={fileOps} onViewFile={onViewFile} />
+      )}
     </div>
   );
 }
