@@ -110,10 +110,10 @@ function SessionChips({ session }: { session: SessionListItem }) {
       {/* Committed pill with custom dot */}
       {hasCommitOnly && (
         <span
-          className="inline-flex items-center justify-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full shrink-0 leading-none"
+          className="inline-flex items-center justify-center gap-1.5 text-[12px] px-2.5 py-1 rounded-full shrink-0 leading-none"
           style={{ border: "1px solid var(--border)", color: "var(--text-tertiary)" }}
         >
-          <span className="shrink-0 rounded-full" style={{ width: 3.5, height: 3.5, background: "#818cf8" }} />
+          <span className="shrink-0 rounded-full" style={{ width: 4, height: 4, background: "#818cf8" }} />
           <span style={{ lineHeight: 1 }}>committed</span>
         </span>
       )}
@@ -123,10 +123,10 @@ function SessionChips({ session }: { session: SessionListItem }) {
         return (
           <span
             key={i}
-            className="inline-flex items-center justify-center gap-1 text-[11px] px-2 py-0.5 rounded-full shrink-0 leading-none"
+            className="inline-flex items-center justify-center gap-1 text-[12px] px-2.5 py-1 rounded-full shrink-0 leading-none"
             style={{ border: "1px solid var(--border)", color: "var(--text-tertiary)" }}
           >
-            <Icon size={11} className="shrink-0" style={{ color: pill.iconColor }} />
+            <Icon size={12} className="shrink-0" style={{ color: pill.iconColor }} />
             <span style={{ lineHeight: 1 }}>{pill.label}</span>
           </span>
         );
@@ -183,8 +183,8 @@ function SessionRow({
               key={i}
               className={`text-[11px] px-2 py-0.5 rounded${item.mono ? " font-mono" : ""}`}
               style={{
-                border: "1px solid var(--border)",
-                color: "var(--text-tertiary)",
+                border: "1px solid var(--border-bright)",
+                color: "var(--text-secondary)",
               }}
             >
               {item.text}

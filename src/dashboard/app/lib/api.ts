@@ -109,3 +109,11 @@ export interface AnalysisModel {
 export async function getAnalysisModels() {
   return fetchJson<AnalysisModel[]>("/analyze/models");
 }
+
+export async function getFileDiffs(sessionId: string, filePath: string) {
+  return fetchJson(`/sessions/${sessionId}/file/${encodeURIComponent(filePath)}`);
+}
+
+export async function getToolCall(sessionId: string, toolCallId: string) {
+  return fetchJson(`/sessions/${sessionId}/tool-call/${toolCallId}`);
+}

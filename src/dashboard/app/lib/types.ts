@@ -73,10 +73,12 @@ export interface ActivityGroupDetail {
   total_cache_write_tokens: number;
   duration_ms: number;
   models: string[];
-  markers: Array<{ exchange_index: number; type: string; label: string }>;
+  markers: Array<{ exchange_index: number; type: string; label: string; metadata?: Record<string, unknown> }>;
   boundary: string;
   ai_summary: string | null;
   ai_label: string | null;
+  key_actions: string[];
+  first_prompt: string | null;
 }
 
 export interface SessionDetail {
@@ -97,6 +99,9 @@ export interface SessionDetail {
   tasks: Task[];
   decisions: Decision[];
   // Facts-first
+  outcomes?: { has_commits: boolean; git_ops: ("push" | "pull")[]; has_pr: boolean };
+  git_details?: GitDetail[];
+  test_status?: { passing: boolean; description: string; exchange_index: number } | null;
   activity_groups?: ActivityGroupDetail[];
   token_summary?: { total_input: number; total_output: number; total_cache_read: number; total_cache_write: number; total: number; cache_hit_rate: number } | null;
   model_breakdown?: Array<{ model: string; exchange_count: number; total_tokens: number }>;
@@ -160,6 +165,8 @@ export interface Plan {
   exchange_index_start: number;
   exchange_index_end: number;
   created_at: string;
+  started_at?: string;
+  ended_at?: string;
 }
 
 export interface CompactionEvent {
@@ -180,4 +187,39 @@ export interface Stats {
   total_milestones: number;
   projects: number;
   db_size_mb: number;
+}
+
+export interface GitDetail {
+  type: "commit" | "push" | "pull" | "pr" | "branch";
+  exchange_index: number;
+  timestamp: string;
+  description: string;
+  files?: string[];
+  stats?: { files_changed: number; insertions: number; deletions: number };
+  hash?: string;
+  push_range?: string;
+  push_branch?: string;
+}
+
+export interface FileDiffEntry {
+  id: string;
+  exchange_index: number;
+  timestamp: string;
+  tool_name: string;
+  is_error: boolean;
+  old_string?: string;
+  new_string?: string;
+  content_length?: number;
+}
+
+export interface RawToolCall {
+  id: string;
+  tool_name: string;
+  tool_input: unknown;
+  tool_result: string | null;
+  is_error: boolean;
+  bash_desc?: string;
+  bash_command?: string;
+  exchange_index: number;
+  timestamp: string;
 }

@@ -11,8 +11,6 @@ export interface ExtractedPlan {
   tasks_completed: number;
 }
 
-const IMPLEMENTATION_TOOLS = new Set(["Edit", "Write", "Bash", "NotebookEdit"]);
-
 export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
   const plans: ExtractedPlan[] = [];
   let version = 0;
@@ -43,10 +41,23 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
             const feedbackMatch = tc.result.match(/the user said:\n([\s\S]*)/);
             if (feedbackMatch) {
               userFeedback = feedbackMatch[1].trim();
-              // Clean up the feedback
+              // Strip system notes
               if (userFeedback.includes("Note: The user's next message")) {
                 userFeedback = userFeedback.split("Note: The user's next message")[0].trim();
               }
+              // Strip terminal transcript pastes (start with Claude Code banner or ❯ prompt)
+              if (userFeedback.startsWith("\u259B") || userFeedback.startsWith("▛")) {
+                // Full terminal paste — extract just the last ❯ prompt line
+                const lines = userFeedback.split(/\r?\n/);
+                const lastPrompt = lines.filter(l => l.startsWith("❯") || l.startsWith(">")).pop();
+                userFeedback = lastPrompt ? lastPrompt.replace(/^[❯>]\s*/, "").trim() : "";
+              }
+              // Cap at 500 chars — user feedback shouldn't be longer than a paragraph
+              if (userFeedback.length > 500) {
+                userFeedback = userFeedback.substring(0, 500);
+              }
+              // If empty after cleanup, null it out
+              if (!userFeedback) userFeedback = null;
             }
           }
         }
@@ -65,6 +76,23 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
         planStart = null;
       }
     }
+  }
+
+  // Fix: If plan mode was entered but never exited (still drafting, or session ended),
+  // create a "drafted" plan record so the UI shows an active draft exists
+  if (planStart !== null && exchanges.length > 0) {
+    version++;
+    plans.push({
+      version,
+      plan_text: "",
+      status: "drafted",
+      user_feedback: null,
+      exchange_index_start: planStart,
+      exchange_index_end: exchanges[exchanges.length - 1].index,
+      tasks_created: 0,
+      tasks_completed: 0,
+    });
+    planStart = null;
   }
 
   // Now determine the TRUE status of each plan:
@@ -96,8 +124,9 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
         (e) => e.index > planEndIdx && e.index < nextPlanStartIdx,
       );
 
+      const implTools = new Set(["Edit", "Write", "Bash", "NotebookEdit"]);
       const hasImplementation = followingExchanges.some((e) =>
-        e.tool_calls.some((tc) => IMPLEMENTATION_TOOLS.has(tc.name)),
+        e.tool_calls.some((tc) => implTools.has(tc.name)),
       );
 
       if (hasImplementation) {
@@ -133,25 +162,12 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
     plan.tasks_completed = tasksCompleted;
   }
 
-  // Detect "implemented": approved plans with substantial implementation evidence
+  // Detect "implemented": ONLY from task evidence (factual, no heuristics)
+  // We don't guess from edit counts — edits after a plan could be unrelated.
+  // Tasks are the only factual link: Claude creates them from the plan and marks them done.
   for (const plan of plans) {
-    if (plan.status === "approved") {
-      const planEndIdx = plan.exchange_index_end;
-      const followingExchanges = exchanges.filter((e) => e.index > planEndIdx);
-
-      // Count implementation tool calls
-      let editCount = 0;
-      for (const ex of followingExchanges) {
-        for (const tc of ex.tool_calls) {
-          if (IMPLEMENTATION_TOOLS.has(tc.name)) editCount++;
-        }
-      }
-
-      // Plan is "implemented" if:
-      // - Has tasks and most are completed, OR
-      // - Has significant implementation activity (3+ edits)
-      const taskCompletion = plan.tasks_created > 0 ? plan.tasks_completed / plan.tasks_created : 0;
-      if ((plan.tasks_created > 0 && taskCompletion >= 0.5) || editCount >= 3) {
+    if (plan.status === "approved" && plan.tasks_created > 0) {
+      if (plan.tasks_completed >= plan.tasks_created) {
         plan.status = "implemented";
       }
     }
@@ -162,6 +178,17 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
   if (activePlans.length > 1) {
     for (let i = 0; i < activePlans.length - 1; i++) {
       activePlans[i].status = "superseded";
+    }
+  }
+
+  // If the last plan is "drafted" (entered but not exited), supersede any previous
+  // approved/implemented plans — re-entering plan mode means the old plan is being replaced
+  const lastPlan = plans[plans.length - 1];
+  if (lastPlan && lastPlan.status === "drafted" && plans.length > 1) {
+    for (let i = 0; i < plans.length - 1; i++) {
+      if (plans[i].status === "approved" || plans[i].status === "implemented") {
+        plans[i].status = "superseded";
+      }
     }
   }
 

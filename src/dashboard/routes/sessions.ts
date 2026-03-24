@@ -33,6 +33,113 @@ function extractPlanTitle(planText: string): string | null {
   return null;
 }
 
+/** Compute outcomes from milestones — shared between list and detail endpoints */
+function computeOutcomes(milestones: Array<{ milestone_type: string; exchange_index: number }>) {
+  const gitOps: Array<{ type: "push" | "pull"; idx: number }> = [];
+  for (const m of milestones) {
+    if (m.milestone_type === "push") gitOps.push({ type: "push", idx: m.exchange_index });
+    if (m.milestone_type === "pull") gitOps.push({ type: "pull", idx: m.exchange_index });
+  }
+  const dedupedOps: Array<"push" | "pull"> = [];
+  for (const op of gitOps) {
+    if (dedupedOps[dedupedOps.length - 1] !== op.type) dedupedOps.push(op.type);
+  }
+  return {
+    has_commits: milestones.some((m) => m.milestone_type === "commit"),
+    git_ops: dedupedOps,
+    has_pr: milestones.some((m) => m.milestone_type === "pr"),
+  };
+}
+
+/** Parse git details from tool_calls for commit/push milestones */
+function extractGitDetails(
+  db: ReturnType<typeof getDb>,
+  sessionId: string,
+  milestones: Array<{ milestone_type: string; exchange_index: number; description: string; metadata: string | null }>,
+): Array<{
+  type: string; exchange_index: number; timestamp: string; description: string;
+  files?: string[]; stats?: { files_changed: number; insertions: number; deletions: number };
+  hash?: string; push_range?: string; push_branch?: string;
+}> {
+  const gitTypes = new Set(["commit", "push", "pull", "pr", "branch"]);
+  const gitMilestones = milestones.filter((m) => gitTypes.has(m.milestone_type) && m.exchange_index >= 0);
+  if (gitMilestones.length === 0) return [];
+
+  const details: Array<any> = [];
+  const exchangeIndices = [...new Set(gitMilestones.map((m) => m.exchange_index))];
+
+  // Batch query: get all git-related bash commands for these exchanges
+  const placeholders = exchangeIndices.map(() => "?").join(",");
+  const gitCalls = db.prepare(`
+    SELECT tc.bash_command, tc.tool_result, e.exchange_index, e.timestamp
+    FROM tool_calls tc
+    JOIN exchanges e ON tc.exchange_id = e.id
+    WHERE e.session_id = ? AND e.exchange_index IN (${placeholders})
+    AND tc.tool_name = 'Bash'
+    AND (tc.bash_command LIKE '%git commit%' OR tc.bash_command LIKE '%git add%'
+      OR tc.bash_command LIKE '%git push%' OR tc.bash_command LIKE '%git pull%'
+      OR tc.bash_command LIKE '%gh pr create%')
+    ORDER BY tc.rowid
+  `).all(sessionId, ...exchangeIndices) as any[];
+
+  // Build lookup: exchange_index → git calls
+  const callsByExchange = new Map<number, any[]>();
+  for (const call of gitCalls) {
+    if (!callsByExchange.has(call.exchange_index)) callsByExchange.set(call.exchange_index, []);
+    callsByExchange.get(call.exchange_index)!.push(call);
+  }
+
+  for (const m of gitMilestones) {
+    const calls = callsByExchange.get(m.exchange_index) || [];
+    const timestamp = calls[0]?.timestamp || "";
+    const detail: any = {
+      type: m.milestone_type,
+      exchange_index: m.exchange_index,
+      timestamp,
+      description: m.description,
+    };
+
+    if (m.milestone_type === "commit") {
+      // Parse files from git add command
+      const addCall = calls.find((c: any) => c.bash_command?.startsWith("git add "));
+      if (addCall) {
+        const filesStr = addCall.bash_command.replace(/^git add\s+/, "").split(/\s*&&\s*/)[0];
+        detail.files = filesStr.split(/\s+/).filter((f: string) => f && !f.startsWith("-"));
+      }
+      // Parse stats and hash from commit result
+      for (const call of calls) {
+        if (!call.tool_result) continue;
+        const statsMatch = call.tool_result.match(/(\d+) files? changed(?:,\s*(\d+) insertions?\(\+\))?(?:,\s*(\d+) deletions?\(-\))?/);
+        if (statsMatch) {
+          detail.stats = {
+            files_changed: parseInt(statsMatch[1]) || 0,
+            insertions: parseInt(statsMatch[2]) || 0,
+            deletions: parseInt(statsMatch[3]) || 0,
+          };
+        }
+        const hashMatch = call.tool_result.match(/\[[\w\/-]+\s+([a-f0-9]{7,})\]/);
+        if (hashMatch) detail.hash = hashMatch[1];
+      }
+    }
+
+    if (m.milestone_type === "push") {
+      for (const call of calls) {
+        if (!call.tool_result) continue;
+        // Parse: "oldsha..newsha  branch -> branch"
+        const rangeMatch = call.tool_result.match(/([a-f0-9]{7,})\.\.([a-f0-9]{7,})\s+(\S+)\s+->\s+(\S+)/);
+        if (rangeMatch) {
+          detail.push_range = `${rangeMatch[1]}..${rangeMatch[2]}`;
+          detail.push_branch = rangeMatch[3];
+        }
+      }
+    }
+
+    details.push(detail);
+  }
+
+  return details;
+}
+
 export const sessionsRoutes = new Hono();
 
 // GET /api/sessions — list, search, paginate
@@ -260,22 +367,7 @@ sessionsRoutes.get("/", (c) => {
     }
 
     // Compute outcomes from milestones
-    // Collect push/pull in chronological order for correct chip sequencing
-    const gitOps: Array<{ type: "push" | "pull"; idx: number }> = [];
-    for (const m of milestones) {
-      if (m.milestone_type === "push") gitOps.push({ type: "push", idx: m.exchange_index });
-      if (m.milestone_type === "pull") gitOps.push({ type: "pull", idx: m.exchange_index });
-    }
-    // Deduplicate consecutive same-type ops (push,push → push)
-    const dedupedOps: Array<"push" | "pull"> = [];
-    for (const op of gitOps) {
-      if (dedupedOps[dedupedOps.length - 1] !== op.type) dedupedOps.push(op.type);
-    }
-    const outcomes = {
-      has_commits: milestones.some((m) => m.milestone_type === "commit"),
-      git_ops: dedupedOps,
-      has_pr: milestones.some((m) => m.milestone_type === "pr"),
-    };
+    const outcomes = computeOutcomes(milestones);
 
     // Find best plan: prefer implemented > approved > last non-superseded
     const nonSuperseded = plans.filter((p) => p.status !== "superseded");
@@ -510,30 +602,93 @@ sessionsRoutes.get("/:id", (c) => {
     FROM decisions WHERE session_id = ? ORDER BY exchange_index
   `).all(session.id);
 
+  // Outcomes (shared computation)
+  const outcomes = computeOutcomes(milestones);
+
+  // Git details with file/stats/hash parsing
+  const gitDetails = extractGitDetails(db, session.id, milestones);
+
+  // Test status — final state only (last test milestone)
+  let testStatus: { passing: boolean; description: string; exchange_index: number } | null = null;
+  try {
+    const lastTest = db.prepare(`
+      SELECT milestone_type, description, exchange_index
+      FROM milestones WHERE session_id = ? AND milestone_type IN ('test_pass', 'test_fail')
+      ORDER BY exchange_index DESC LIMIT 1
+    `).get(session.id) as any;
+    if (lastTest) {
+      testStatus = {
+        passing: lastTest.milestone_type === "test_pass",
+        description: lastTest.description,
+        exchange_index: lastTest.exchange_index,
+      };
+    }
+  } catch { /* non-critical */ }
+
   // Facts-first: build activity group details from segments with boundary_type
   const activityGroups = segments
     .filter((seg) => seg.boundary_type != null)
-    .map((seg) => ({
-      exchange_start: seg.exchange_index_start,
-      exchange_end: seg.exchange_index_end,
-      exchange_count: seg.exchange_count || (seg.exchange_index_end - seg.exchange_index_start + 1),
-      started_at: seg.started_at,
-      ended_at: seg.ended_at,
-      tool_counts: (() => { try { return JSON.parse(seg.tool_counts); } catch { return {}; } })(),
-      error_count: seg.error_count || 0,
-      files_read: (() => { try { return JSON.parse(seg.files_read || "[]"); } catch { return []; } })(),
-      files_written: (() => { try { return JSON.parse(seg.files_written || "[]"); } catch { return []; } })(),
-      total_input_tokens: seg.total_input_tokens || 0,
-      total_output_tokens: seg.total_output_tokens || 0,
-      total_cache_read_tokens: seg.total_cache_read_tokens || 0,
-      total_cache_write_tokens: seg.total_cache_write_tokens || 0,
-      duration_ms: seg.duration_ms || 0,
-      models: (() => { try { return JSON.parse(seg.models || "[]"); } catch { return []; } })(),
-      markers: (() => { try { return JSON.parse(seg.markers || "[]"); } catch { return []; } })(),
-      boundary: seg.boundary_type,
-      ai_summary: seg.ai_summary,
-      ai_label: seg.ai_label,
-    }));
+    .map((seg) => {
+      const exStart = seg.exchange_index_start;
+      const exEnd = seg.exchange_index_end;
+
+      // key_actions: top bash_desc + subagent_desc for this group (computed at read time)
+      let keyActions: string[] = [];
+      try {
+        const bashDescs = db.prepare(`
+          SELECT DISTINCT tc.bash_desc FROM tool_calls tc
+          JOIN exchanges e ON tc.exchange_id = e.id
+          WHERE e.session_id = ? AND e.exchange_index BETWEEN ? AND ?
+          AND tc.bash_desc IS NOT NULL AND tc.bash_desc != ''
+          LIMIT 5
+        `).all(session.id, exStart, exEnd) as any[];
+        const agentDescs = db.prepare(`
+          SELECT tc.subagent_type, tc.subagent_desc FROM tool_calls tc
+          JOIN exchanges e ON tc.exchange_id = e.id
+          WHERE e.session_id = ? AND e.exchange_index BETWEEN ? AND ?
+          AND tc.subagent_desc IS NOT NULL
+        `).all(session.id, exStart, exEnd) as any[];
+
+        keyActions = [
+          ...bashDescs.map((r: any) => r.bash_desc),
+          ...agentDescs.map((r: any) => `${r.subagent_type || "Agent"}: ${r.subagent_desc}`),
+        ];
+      } catch { /* non-critical */ }
+
+      // first_prompt: user prompt from first exchange in group
+      let firstPrompt: string | null = null;
+      try {
+        const row = db.prepare(`
+          SELECT substr(user_prompt, 1, 120) as prompt FROM exchanges
+          WHERE session_id = ? AND exchange_index = ?
+        `).get(session.id, exStart) as any;
+        firstPrompt = row?.prompt ?? null;
+      } catch { /* non-critical */ }
+
+      return {
+        exchange_start: exStart,
+        exchange_end: exEnd,
+        exchange_count: seg.exchange_count || (exEnd - exStart + 1),
+        started_at: seg.started_at,
+        ended_at: seg.ended_at,
+        tool_counts: (() => { try { return JSON.parse(seg.tool_counts); } catch { return {}; } })(),
+        error_count: seg.error_count || 0,
+        files_read: (() => { try { return JSON.parse(seg.files_read || "[]"); } catch { return []; } })(),
+        files_written: (() => { try { return JSON.parse(seg.files_written || "[]"); } catch { return []; } })(),
+        total_input_tokens: seg.total_input_tokens || 0,
+        total_output_tokens: seg.total_output_tokens || 0,
+        total_cache_read_tokens: seg.total_cache_read_tokens || 0,
+        total_cache_write_tokens: seg.total_cache_write_tokens || 0,
+        duration_ms: seg.duration_ms || 0,
+        models: (() => { try { return JSON.parse(seg.models || "[]"); } catch { return []; } })(),
+        markers: (() => { try { return JSON.parse(seg.markers || "[]"); } catch { return []; } })(),
+        boundary: seg.boundary_type,
+        ai_summary: seg.ai_summary,
+        ai_label: seg.ai_label,
+        key_actions: keyActions,
+        first_prompt: firstPrompt,
+      };
+    });
 
   // Token summary
   let tokenSummary = null;
@@ -589,15 +744,112 @@ sessionsRoutes.get("/:id", (c) => {
     ...session,
     segments,
     milestones,
-    plans,
+    plans: plans.map((p: any) => {
+      // Enrich with real timestamps from exchanges (created_at is reimport time, not useful)
+      try {
+        const startRow = db.prepare("SELECT timestamp FROM exchanges WHERE session_id = ? AND exchange_index = ?").get(session.id, p.exchange_index_start) as any;
+        const endRow = db.prepare("SELECT timestamp FROM exchanges WHERE session_id = ? AND exchange_index = ?").get(session.id, p.exchange_index_end) as any;
+        return {
+          ...p,
+          started_at: startRow?.timestamp || p.created_at,
+          ended_at: endRow?.timestamp || startRow?.timestamp || p.created_at,
+        };
+      } catch { return { ...p, started_at: p.created_at, ended_at: p.created_at }; }
+    }),
     compaction_events: compactions,
     tasks,
     decisions,
     // Facts-first additions
+    outcomes,
+    git_details: gitDetails,
+    test_status: testStatus,
     activity_groups: activityGroups,
     token_summary: tokenSummary,
     model_breakdown: modelBreakdown,
     file_operations: fileOperations,
+  });
+});
+
+// GET /api/sessions/:id/file/:encodedPath — all tool_calls on a specific file with diffs
+sessionsRoutes.get("/:id/file/:filePath", (c) => {
+  const id = c.req.param("id");
+  const filePath = decodeURIComponent(c.req.param("filePath"));
+  const session = getSession(id) ?? getSessionById(id);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT tc.id, tc.tool_name, tc.tool_input, tc.is_error, e.exchange_index, e.timestamp
+    FROM tool_calls tc
+    JOIN exchanges e ON tc.exchange_id = e.id
+    WHERE tc.session_id = ? AND tc.file_path = ?
+    ORDER BY e.exchange_index, tc.rowid
+  `).all(session.id, filePath) as any[];
+
+  const result = rows.map((r: any) => {
+    const entry: any = {
+      id: r.id,
+      exchange_index: r.exchange_index,
+      timestamp: r.timestamp,
+      tool_name: r.tool_name,
+      is_error: !!r.is_error,
+    };
+    // Parse tool_input for Edit diffs
+    try {
+      const input = JSON.parse(r.tool_input);
+      if (r.tool_name === "Edit") {
+        entry.old_string = input.old_string ?? null;
+        entry.new_string = input.new_string ?? null;
+      }
+      if (r.tool_name === "Write") {
+        entry.content_length = typeof input.content === "string" ? input.content.length : null;
+      }
+    } catch { /* invalid JSON */ }
+    return entry;
+  });
+
+  return c.json(result);
+});
+
+// GET /api/sessions/:id/tool-call/:toolCallId — full raw tool call data
+sessionsRoutes.get("/:id/tool-call/:toolCallId", (c) => {
+  const id = c.req.param("id");
+  const toolCallId = c.req.param("toolCallId");
+  const session = getSession(id) ?? getSessionById(id);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT tc.id, tc.tool_name, tc.tool_input, tc.tool_result, tc.is_error,
+      tc.bash_desc, tc.bash_command, tc.skill_name, tc.subagent_type, tc.subagent_desc,
+      tc.file_path, tc.web_query, tc.web_url,
+      e.exchange_index, e.timestamp
+    FROM tool_calls tc
+    JOIN exchanges e ON tc.exchange_id = e.id
+    WHERE tc.id = ? AND tc.session_id = ?
+  `).get(toolCallId, session.id) as any;
+
+  if (!row) return c.json({ error: "Tool call not found" }, 404);
+
+  let toolInput: unknown = row.tool_input;
+  try { toolInput = JSON.parse(row.tool_input); } catch { /* keep as string */ }
+
+  return c.json({
+    id: row.id,
+    tool_name: row.tool_name,
+    tool_input: toolInput,
+    tool_result: row.tool_result,
+    is_error: !!row.is_error,
+    bash_desc: row.bash_desc,
+    bash_command: row.bash_command,
+    skill_name: row.skill_name,
+    subagent_type: row.subagent_type,
+    subagent_desc: row.subagent_desc,
+    file_path: row.file_path,
+    web_query: row.web_query,
+    web_url: row.web_url,
+    exchange_index: row.exchange_index,
+    timestamp: row.timestamp,
   });
 });
 
