@@ -120,7 +120,6 @@ function SessionRow({
   const title = session.title || session.session_id.substring(0, 20);
   const lastActivity = session.ended_at || session.started_at;
   const duration = formatDuration(session.started_at, session.ended_at);
-  const isActive = !session.ended_at;
   const project = session.project_path.split("/").slice(-2).join("/");
 
   // Build metadata items for line 2
@@ -146,17 +145,6 @@ function SessionRow({
       {/* Line 1: Title + Meta pills + Time */}
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-2 min-w-0 shrink">
-          {isActive && (
-            <span
-              className="shrink-0 rounded-full"
-              style={{
-                width: 7,
-                height: 7,
-                background: "#10b981",
-                boxShadow: "0 0 6px #10b98180",
-              }}
-            />
-          )}
           <p
             className="text-[13.5px] font-medium truncate"
             style={{ color: "var(--text-primary)" }}
@@ -179,9 +167,9 @@ function SessionRow({
           ))}
           <span
             className="text-[11px] tabular-nums ml-1"
-            style={{ color: isActive ? "#10b981" : "var(--text-muted)" }}
+            style={{ color: "var(--text-muted)" }}
           >
-            {isActive ? "Active" : formatRelative(lastActivity)}
+            {formatRelative(lastActivity)}
           </span>
         </div>
       </div>
@@ -278,29 +266,14 @@ export function Sessions() {
     ? sessions[0].ended_at || sessions[0].started_at
     : null;
 
-  // Split active sessions (last activity < 5min ago) from the rest
-  const now = Date.now();
-  const ACTIVE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
-  const activeSessions: SessionListItem[] = [];
-  const restSessions: SessionListItem[] = [];
-
-  for (const s of visible) {
-    const lastActivity = new Date(s.ended_at || s.started_at).getTime();
-    if (now - lastActivity < ACTIVE_THRESHOLD) {
-      activeSessions.push(s);
-    } else {
-      restSessions.push(s);
-    }
-  }
-
-  // Group non-active sessions by start date
+  // Group sessions by last activity date (matches Claude Code ordering)
   const groupMap = new Map<string, { dateVal: number; sessions: SessionListItem[] }>();
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
 
-  for (const s of restSessions) {
-    const date = new Date(s.started_at);
+  for (const s of visible) {
+    const date = new Date(s.ended_at || s.started_at);
 
     let key: string;
     if (date.toDateString() === today.toDateString()) {
@@ -321,16 +294,10 @@ export function Sessions() {
     groupMap.get(key)!.sessions.push(s);
   }
 
-  // Build final groups: Active first, then date groups newest-first
-  const grouped: Array<[string, SessionListItem[]]> = [];
-  if (activeSessions.length > 0) {
-    grouped.push(["Active", activeSessions]);
-  }
-  grouped.push(
-    ...[...groupMap.entries()]
-      .sort((a, b) => b[1].dateVal - a[1].dateVal)
-      .map(([key, val]) => [key, val.sessions] as [string, SessionListItem[]]),
-  );
+  // Sort groups by date descending (Today first)
+  const grouped = [...groupMap.entries()]
+    .sort((a, b) => b[1].dateVal - a[1].dateVal)
+    .map(([key, val]) => [key, val.sessions] as [string, SessionListItem[]]);
 
   return (
     <div className="h-full flex flex-col">
