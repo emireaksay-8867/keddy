@@ -128,6 +128,7 @@ export interface Segment {
 export type MilestoneType =
   | "commit"
   | "push"
+  | "pull"
   | "pr"
   | "branch"
   | "test_pass"

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { extractActivityGroups, deriveDisplayType } from "../../capture/activity-groups.js";
 import { extractMilestones } from "../../capture/milestones.js";
 import { extractPlans } from "../../capture/plans.js";
+import { parseLatestExchanges } from "../../capture/parser.js";
 import {
   searchSessions,
   getRecentSessions,
@@ -12,8 +13,25 @@ import {
   getSessionMilestones,
   getSessionCompactionEvents,
   getSessionPlans,
+  insertExchange,
+  insertToolCall,
+  insertMilestone,
+  insertPlan,
+  extractToolCallFields,
 } from "../../db/queries.js";
 import { getDb } from "../../db/index.js";
+
+function extractPlanTitle(planText: string): string | null {
+  for (const line of planText.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("#")) {
+      let title = trimmed.replace(/^#+\s*/, "");
+      title = title.replace(/^Plan:\s*/i, "");
+      return title || null;
+    }
+  }
+  return null;
+}
 
 export const sessionsRoutes = new Hono();
 
@@ -93,6 +111,135 @@ sessionsRoutes.get("/", (c) => {
     }
   } catch { /* non-critical */ }
 
+  // Live-sync: for recently modified sessions, pull new exchanges from JSONL
+  // so plans, milestones, and timestamps stay current even if the Stop hook lags
+  try {
+    const { existsSync, statSync } = require("node:fs");
+    const now = Date.now();
+    const LIVE_THRESHOLD = 15 * 60 * 1000; // 15 minutes
+    for (const s of sessions) {
+      if (!s.jsonl_path || !existsSync(s.jsonl_path)) continue;
+      const mtime = statSync(s.jsonl_path).mtimeMs;
+      if (now - mtime > LIVE_THRESHOLD) continue;
+
+      // Check if DB is stale: JSONL modified after last known exchange
+      const endedMs = s.ended_at ? new Date(s.ended_at).getTime() : 0;
+      if (mtime - endedMs < 5000) continue; // close enough, skip
+
+      // Parse new exchanges from JSONL
+      const existingExchanges = getSessionExchanges(s.id);
+      const sinceIndex = existingExchanges.length;
+      let latestExchanges;
+      try {
+        latestExchanges = parseLatestExchanges(s.jsonl_path, sinceIndex);
+      } catch { continue; }
+      if (latestExchanges.length === 0) continue;
+
+      // Insert new exchanges
+      for (const exchange of latestExchanges) {
+        const exchangeId = insertExchange({
+          session_id: s.id,
+          exchange_index: exchange.index,
+          user_prompt: exchange.user_prompt,
+          assistant_response: exchange.assistant_response,
+          tool_call_count: exchange.tool_calls.length,
+          timestamp: exchange.timestamp,
+          is_interrupt: exchange.is_interrupt,
+          is_compact_summary: exchange.is_compact_summary,
+          model: exchange.model,
+          input_tokens: exchange.input_tokens,
+          output_tokens: exchange.output_tokens,
+          cache_read_tokens: exchange.cache_read_tokens,
+          cache_write_tokens: exchange.cache_write_tokens,
+          stop_reason: exchange.stop_reason,
+          has_thinking: exchange.has_thinking,
+          permission_mode: exchange.permission_mode,
+          is_sidechain: exchange.is_sidechain,
+          entrypoint: exchange.entrypoint,
+          cwd: exchange.cwd,
+          git_branch: exchange.git_branch,
+          turn_duration_ms: exchange.turn_duration_ms,
+        });
+        for (const tc of exchange.tool_calls) {
+          const enriched = extractToolCallFields(tc.name, tc.input);
+          insertToolCall({
+            exchange_id: exchangeId,
+            session_id: s.id,
+            tool_name: tc.name,
+            tool_input: JSON.stringify(tc.input),
+            tool_result: tc.result ?? null,
+            tool_use_id: tc.id,
+            is_error: tc.is_error ?? false,
+            ...enriched,
+          });
+        }
+      }
+
+      // Extract milestones from new exchanges
+      const newMilestones = extractMilestones(latestExchanges);
+      for (const m of newMilestones) {
+        insertMilestone({
+          session_id: s.id,
+          milestone_type: m.milestone_type,
+          exchange_index: m.exchange_index,
+          description: m.description,
+          metadata: m.metadata ? JSON.stringify(m.metadata) : null,
+        });
+      }
+
+      // Re-extract plans from ALL exchanges (status depends on full context)
+      const hasPlanTools = latestExchanges.some((ex) =>
+        ex.tool_calls.some((tc) => tc.name === "EnterPlanMode" || tc.name === "ExitPlanMode"),
+      );
+      if (hasPlanTools) {
+        const allExchanges = getSessionExchanges(s.id);
+        const parsedForPlans = allExchanges.map((e: any) => {
+          const tcs = db
+            .prepare("SELECT tool_name as name, tool_input as input, tool_result as result, tool_use_id as id, is_error FROM tool_calls WHERE exchange_id = ?")
+            .all(e.id)
+            .map((tc: any) => ({
+              ...tc,
+              input: tc.input ? (() => { try { return JSON.parse(tc.input); } catch { return {}; } })() : {},
+              is_error: !!tc.is_error,
+            }));
+          return {
+            index: e.exchange_index,
+            user_prompt: e.user_prompt,
+            assistant_response: e.assistant_response,
+            tool_calls: tcs,
+            timestamp: e.timestamp,
+            is_interrupt: !!e.is_interrupt,
+            is_compact_summary: !!e.is_compact_summary,
+          };
+        });
+        const plans = extractPlans(parsedForPlans);
+        db.prepare("DELETE FROM plans WHERE session_id = ?").run(s.id);
+        for (const plan of plans) {
+          insertPlan({
+            session_id: s.id,
+            version: plan.version,
+            plan_text: plan.plan_text,
+            status: plan.status,
+            user_feedback: plan.user_feedback,
+            exchange_index_start: plan.exchange_index_start,
+            exchange_index_end: plan.exchange_index_end,
+          });
+        }
+      }
+
+      // Update session timestamp and exchange count
+      const lastEx = latestExchanges[latestExchanges.length - 1];
+      db.prepare(`
+        UPDATE sessions SET
+          ended_at = COALESCE(?, ended_at),
+          exchange_count = (SELECT COUNT(*) FROM exchanges WHERE session_id = ?)
+        WHERE id = ?
+      `).run(lastEx.timestamp || new Date().toISOString(), s.id, s.id);
+      s.ended_at = lastEx.timestamp || s.ended_at;
+      s.exchange_count = existingExchanges.length + latestExchanges.length;
+    }
+  } catch { /* non-critical — live sync is best-effort */ }
+
   // Enrich with segment data + plans + AI status + fork info
   const enriched = sessions.map((s) => {
     const segments = getSessionSegments(s.id);
@@ -113,23 +260,28 @@ sessionsRoutes.get("/", (c) => {
     }
 
     // Compute outcomes from milestones
-    // For tests, use the LAST test result — if you fix a failing test, the session outcome is "passed"
-    const testMilestones = milestones.filter(
-      (m) => m.milestone_type === "test_pass" || m.milestone_type === "test_fail",
-    );
-    const lastTest = testMilestones.length > 0 ? testMilestones[testMilestones.length - 1] : null;
+    // Collect push/pull in chronological order for correct chip sequencing
+    const gitOps: Array<{ type: "push" | "pull"; idx: number }> = [];
+    for (const m of milestones) {
+      if (m.milestone_type === "push") gitOps.push({ type: "push", idx: m.exchange_index });
+      if (m.milestone_type === "pull") gitOps.push({ type: "pull", idx: m.exchange_index });
+    }
+    // Deduplicate consecutive same-type ops (push,push → push)
+    const dedupedOps: Array<"push" | "pull"> = [];
+    for (const op of gitOps) {
+      if (dedupedOps[dedupedOps.length - 1] !== op.type) dedupedOps.push(op.type);
+    }
     const outcomes = {
-      commits: milestones.filter((m) => m.milestone_type === "commit").length,
-      has_push: milestones.some((m) => m.milestone_type === "push"),
+      has_commits: milestones.some((m) => m.milestone_type === "commit"),
+      git_ops: dedupedOps,
       has_pr: milestones.some((m) => m.milestone_type === "pr"),
-      tests_passed: lastTest?.milestone_type === "test_pass",
-      tests_failed: lastTest?.milestone_type === "test_fail",
     };
 
-    // Find latest non-superseded plan status
-    const latestPlan = plans.length > 0
-      ? plans.filter((p) => p.status !== "superseded").pop() || plans[plans.length - 1]
-      : null;
+    // Find best plan: prefer implemented > approved > last non-superseded
+    const nonSuperseded = plans.filter((p) => p.status !== "superseded");
+    const acceptedPlan = nonSuperseded.find((p) => p.status === "implemented")
+      ?? nonSuperseded.find((p) => p.status === "approved");
+    const latestPlan = acceptedPlan ?? nonSuperseded[nonSuperseded.length - 1] ?? null;
 
     // Facts-first: activity group summaries for the activity strip
     const activityGroups = segments
@@ -212,7 +364,12 @@ sessionsRoutes.get("/", (c) => {
       })),
       milestone_count: milestones.length,
       outcomes,
-      latest_plan: latestPlan ? { version: latestPlan.version, status: latestPlan.status, total_versions: plans.length } : null,
+      latest_plan: latestPlan ? {
+        version: latestPlan.version,
+        status: latestPlan.status,
+        total_versions: plans.length,
+        plan_title: extractPlanTitle(latestPlan.plan_text),
+      } : null,
       has_ai: hasAiSummaries,
       compaction_count: s.compaction_count,
       forked_from: s.forked_from,

@@ -11,16 +11,15 @@ export interface SessionListItem {
   segments: Array<{ type: string; start: number; end: number; has_summary?: boolean }>;
   milestone_count: number;
   outcomes?: {
-    commits: number;
-    has_push: boolean;
+    has_commits: boolean;
+    git_ops: Array<"push" | "pull">;
     has_pr: boolean;
-    tests_passed: boolean;
-    tests_failed: boolean;
   };
   latest_plan?: {
     version: number;
     status: string;
     total_versions: number;
+    plan_title: string | null;
   } | null;
   plans?: Array<{ version: number; status: string }>;
   has_ai?: boolean;

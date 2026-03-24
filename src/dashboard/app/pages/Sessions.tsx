@@ -4,13 +4,11 @@ import { useAppContext } from "../App.js";
 import { getSessions } from "../lib/api.js";
 import type { SessionListItem } from "../lib/types.js";
 import {
-  ClipboardList,
-  GitCommitHorizontal,
-  ArrowUpToLine,
-  CircleCheck,
-  CircleX,
-  GitPullRequestArrow,
-  MessageSquare,
+  FileText,
+  ChevronUp,
+  ChevronDown,
+  GitPullRequest,
+  Split,
 } from "lucide-react";
 
 function formatDuration(start: string, end: string | null): string {
@@ -44,85 +42,92 @@ function formatRelative(dateStr: string): string {
 
 /** Factual session chips — shows what actually happened based on observable data */
 function SessionChips({ session }: { session: SessionListItem }) {
-  const chips: Array<{ icon: typeof ClipboardList; label: string; color: string }> = [];
+  const pills: Array<{ icon: typeof ChevronUp; label: string; iconColor: string }> = [];
   const outcomes = session.outcomes;
 
-  // Plan chip
+  // Plan title — rendered as [icon Title], color by status
+  let planText: { label: string; color: string } | null = null;
   if (session.latest_plan) {
-    const v = session.latest_plan.total_versions;
-    const status = session.latest_plan.status;
-    const isGood = status === "approved" || status === "implemented";
-    chips.push({
-      icon: ClipboardList,
-      label: `plan v${v} ${isGood ? "✓" : "✗"}`,
-      color: isGood ? "#10b981" : "#ef4444",
-    });
+    const plan = session.latest_plan;
+    const title = plan.plan_title;
+    const shortTitle = title && title.length > 40 ? title.substring(0, 40) + "…" : title;
+    const v = plan.total_versions;
+
+    // Status → color + suffix
+    const statusMap: Record<string, { color: string; suffix: string }> = {
+      implemented: { color: "#10b981", suffix: v > 1 ? ` (v${v})` : "" },
+      approved:    { color: "#10b981", suffix: v > 1 ? ` (v${v})` : "" },
+      drafted:     { color: "#f59e0b", suffix: ` (v${v}, drafting)` },
+      revised:     { color: "#f59e0b", suffix: ` (v${v}, revising)` },
+      rejected:    { color: "#ef4444", suffix: ` (v${v}, rejected)` },
+    };
+    const s = statusMap[plan.status] || { color: "#71717a", suffix: ` (v${v})` };
+
+    planText = {
+      label: shortTitle ? `${shortTitle}${s.suffix}` : `plan${s.suffix}`,
+      color: s.color,
+    };
   }
 
-  // Commits
-  if (outcomes && outcomes.commits > 0) {
-    chips.push({
-      icon: GitCommitHorizontal,
-      label: outcomes.commits === 1 ? "1 commit" : `${outcomes.commits} commits`,
-      color: "#818cf8",
-    });
-  }
+  // Committed (only if no push/pull) — uses custom dot, not an icon
+  const hasCommitOnly = outcomes?.has_commits && (!outcomes.git_ops || outcomes.git_ops.length === 0);
 
-  // Pushed
-  if (outcomes?.has_push) {
-    chips.push({
-      icon: ArrowUpToLine,
-      label: "pushed",
-      color: "#60a5fa",
-    });
-  }
-
-  // Tests (last result wins)
-  if (outcomes?.tests_passed) {
-    chips.push({
-      icon: CircleCheck,
-      label: "tests passed",
-      color: "#10b981",
-    });
-  } else if (outcomes?.tests_failed) {
-    chips.push({
-      icon: CircleX,
-      label: "tests failed",
-      color: "#ef4444",
-    });
+  // Push/pull in chronological order
+  if (outcomes?.git_ops) {
+    for (const op of outcomes.git_ops) {
+      if (op === "push") {
+        pills.push({ icon: ChevronUp, label: "pushed", iconColor: "#60a5fa" });
+      } else {
+        pills.push({ icon: ChevronDown, label: "pulled", iconColor: "#a78bfa" });
+      }
+    }
   }
 
   // PR
   if (outcomes?.has_pr) {
-    chips.push({
-      icon: GitPullRequestArrow,
-      label: "pull request",
-      color: "#34d399",
-    });
+    pills.push({ icon: GitPullRequest, label: "PR", iconColor: "#34d399" });
   }
 
-  // Discussion fallback (zero tool calls, no plan, no milestones)
-  if (chips.length === 0 && (session.total_tool_calls ?? 0) === 0) {
-    chips.push({
-      icon: MessageSquare,
-      label: "discussion",
-      color: "#9ca3af",
-    });
+  // Forked
+  if (session.parent_title) {
+    const short = session.parent_title!.length > 25 ? session.parent_title!.substring(0, 25) + "…" : session.parent_title;
+    pills.push({ icon: Split, label: `forked: ${short}`, iconColor: "#a78bfa" });
   }
 
-  if (chips.length === 0) return null;
+  if (!planText && !hasCommitOnly && pills.length === 0) return null;
 
   return (
-    <span className="inline-flex items-center gap-2.5">
-      {chips.map((chip, i) => {
-        const Icon = chip.icon;
+    <span className="inline-flex items-center gap-x-2 gap-y-1 min-w-0 flex-wrap">
+      {/* Plan title — [icon + title] */}
+      {planText && (
+        <span className="inline-flex items-center text-[12px] min-w-0 shrink font-medium" style={{ color: "var(--text-tertiary)" }}>
+          <span className="mr-1" style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: 1 }}>[</span>
+          <FileText size={11} className="shrink-0 mr-1" style={{ color: planText.color }} />
+          <span className="truncate">{planText.label}</span>
+          <span className="ml-1" style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: 1, position: "relative", top: "-0.5px" }}>]</span>
+        </span>
+      )}
+      {/* Committed pill with custom dot */}
+      {hasCommitOnly && (
+        <span
+          className="inline-flex items-center justify-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full shrink-0 leading-none"
+          style={{ border: "1px solid var(--border)", color: "var(--text-tertiary)" }}
+        >
+          <span className="shrink-0 rounded-full" style={{ width: 3.5, height: 3.5, background: "#818cf8" }} />
+          <span style={{ lineHeight: 1 }}>committed</span>
+        </span>
+      )}
+      {/* Action pills — rounded containers */}
+      {pills.map((pill, i) => {
+        const Icon = pill.icon;
         return (
           <span
             key={i}
-            className="inline-flex items-center gap-1 text-[12px]"
+            className="inline-flex items-center justify-center gap-1 text-[11px] px-2 py-0.5 rounded-full shrink-0 leading-none"
+            style={{ border: "1px solid var(--border)", color: "var(--text-tertiary)" }}
           >
-            <Icon size={13} className="shrink-0" style={{ color: chip.color }} />
-            <span style={{ color: chip.color }}>{chip.label}</span>
+            <Icon size={11} className="shrink-0" style={{ color: pill.iconColor }} />
+            <span style={{ lineHeight: 1 }}>{pill.label}</span>
           </span>
         );
       })}

@@ -36,6 +36,13 @@ function fmtDuration(a: string, b: string | null) {
 }
 function safeJson<T>(s: string, d: T): T { try { return JSON.parse(s); } catch { return d; } }
 function trunc(s: string, n: number) { return s.length > n ? s.substring(0, n) + "..." : s; }
+function planTitle(text: string): string {
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (t.startsWith("#")) return t.replace(/^#+\s*/, "").replace(/^Plan:\s*/i, "");
+  }
+  return text.split("\n").find(l => l.trim().length > 3)?.trim().substring(0, 80) || "";
+}
 
 type PanelContent = {
   title: string;
@@ -60,6 +67,7 @@ const STATUS_STYLE: Record<string, { bg: string; fg: string; label: string }> = 
 const MS_CONFIG: Record<string, { icon: string; label: string; color: string }> = {
   commit: { icon: "●", label: "Commit", color: "#818cf8" },
   push: { icon: "↑", label: "Push", color: "#60a5fa" },
+  pull: { icon: "↓", label: "Pull", color: "#a78bfa" },
   pr: { icon: "⑂", label: "Pull Request", color: "#34d399" },
   branch: { icon: "⑃", label: "Branch", color: "#fbbf24" },
   test_pass: { icon: "✓", label: "Tests Passed", color: "#10b981" },
@@ -326,7 +334,7 @@ function TimelineView({ session, exchanges, openPanel, sortNewest = false }: {
                   <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ background: st.bg, color: st.fg }}>{st.label}</span>
                   <span className="text-[12px] ml-auto opacity-0 group-hover:opacity-100" style={{ color: "var(--accent)" }}>View →</span>
                 </div>
-                <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>{trunc(plan.plan_text, 120)}</p>
+                <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>{trunc(planTitle(plan.plan_text), 120)}</p>
                 {plan.user_feedback && <p className="text-[12px] mt-1 italic" style={{ color: "#ef4444" }}>"{trunc(plan.user_feedback, 80)}"</p>}
               </button>
             );
@@ -885,7 +893,7 @@ export function SessionDetail() {
                     {session.plans.map(p => (
                       <div key={p.id} className="text-[12px] px-3 py-1.5 rounded mb-1" style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)" }}>
                         <span className="font-medium" style={{ color: p.status === "approved" || p.status === "implemented" ? "#10b981" : "var(--text-tertiary)" }}>v{p.version} [{p.status}]</span>
-                        {" "}{p.plan_text.split("\n").find(l => l.trim().length > 3)?.trim().substring(0, 80) || ""}
+                        {" "}{trunc(planTitle(p.plan_text), 80)}
                       </div>
                     ))}
                   </div>

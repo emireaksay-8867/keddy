@@ -18,7 +18,7 @@ import {
 import { parseTranscript, parseLatestExchanges } from "./parser.js";
 import { extractPlans } from "./plans.js";
 import { extractActivityGroups, deriveDisplayType } from "./activity-groups.js";
-import { extractMilestones } from "./milestones.js";
+import { extractMilestones, extractGitMilestones } from "./milestones.js";
 import { deriveTitle } from "./titles.js";
 
 interface HookStdin {
@@ -473,7 +473,20 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
     }
 
     const milestones = extractMilestones(transcript.exchanges);
-    for (const milestone of milestones) {
+
+    // Also capture commits from git history (made outside Claude — terminal, GitKraken, etc.)
+    const existingCommitMessages = new Set(
+      milestones.filter(m => m.milestone_type === "commit").map(m => m.description),
+    );
+    const gitMilestones = extractGitMilestones(
+      session.project_path,
+      session.started_at,
+      transcript.ended_at ?? session.ended_at ?? null,
+      existingCommitMessages,
+    );
+    const allMilestones = [...milestones, ...gitMilestones];
+
+    for (const milestone of allMilestones) {
       insertMilestone({
         session_id: session.id,
         milestone_type: milestone.milestone_type,
@@ -484,7 +497,7 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
     }
 
     // Activity groups (boundary-based, replaces heuristic segments)
-    const activityGroups = extractActivityGroups(transcript.exchanges, milestones);
+    const activityGroups = extractActivityGroups(transcript.exchanges, allMilestones);
     for (const group of activityGroups) {
       const allFiles = [...new Set([...group.files_read, ...group.files_written])];
       insertSegment({
@@ -517,7 +530,7 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
     } else {
       const enrichedTitle = deriveTitle(
         transcript.exchanges.map((e) => ({ user_prompt: e.user_prompt })),
-        { plans, milestones, forkExchangeIndex: transcript.fork_exchange_index },
+        { plans, milestones: allMilestones, forkExchangeIndex: transcript.fork_exchange_index },
       );
       if (enrichedTitle) {
         db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(enrichedTitle, session.id);
