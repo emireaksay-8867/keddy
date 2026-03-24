@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { createInterface } from "node:readline";
+import { execSync } from "node:child_process";
 import { initDb, closeDb } from "../db/index.js";
 
 const CLAUDE_DIR = join(homedir(), ".claude");
@@ -119,7 +121,17 @@ function installHooks(): void {
   console.log("  ✓ Hooks installed in ~/.claude/settings.json");
 }
 
-function registerMcp(): void {
+function prompt(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+function registerMcpProject(): void {
   const mcpConfigPath = join(process.cwd(), ".mcp.json");
   let mcpConfig: Record<string, unknown> = {};
 
@@ -142,7 +154,69 @@ function registerMcp(): void {
   };
 
   writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-  console.log("  ✓ MCP server registered in .mcp.json");
+  console.log("  ✓ MCP server registered in .mcp.json (this project only)");
+}
+
+function registerMcpGlobal(): boolean {
+  const serverPath = getMcpServerPath();
+  try {
+    execSync(
+      `claude mcp add keddy --scope user -- node ${serverPath}`,
+      { stdio: "pipe" },
+    );
+    console.log("  ✓ MCP server registered globally (all projects)");
+    return true;
+  } catch (err) {
+    // claude CLI might not be in PATH — fall back to manual ~/.claude.json edit
+    const claudeJsonPath = join(homedir(), ".claude.json");
+    let claudeJson: Record<string, unknown> = {};
+
+    if (existsSync(claudeJsonPath)) {
+      try {
+        claudeJson = JSON.parse(readFileSync(claudeJsonPath, "utf8"));
+      } catch {
+        // Start fresh
+      }
+    }
+
+    if (!claudeJson.mcpServers) {
+      claudeJson.mcpServers = {};
+    }
+
+    const servers = claudeJson.mcpServers as Record<string, unknown>;
+    servers.keddy = {
+      command: "node",
+      args: [serverPath],
+    };
+
+    writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
+    console.log("  ✓ MCP server registered globally in ~/.claude.json");
+    return true;
+  }
+}
+
+async function registerMcp(): Promise<void> {
+  console.log("\n  MCP Server Scope:");
+  console.log("    1) Global — available in all projects (recommended)");
+  console.log("    2) Project — this project only (.mcp.json)");
+  console.log("    3) Both — global + project fallback\n");
+
+  const answer = await prompt("  Choose scope [1/2/3] (default: 1): ");
+  const choice = answer || "1";
+
+  switch (choice) {
+    case "2":
+      registerMcpProject();
+      break;
+    case "3":
+      registerMcpGlobal();
+      registerMcpProject();
+      break;
+    case "1":
+    default:
+      registerMcpGlobal();
+      break;
+  }
 }
 
 export async function runInit(): Promise<void> {
@@ -167,7 +241,7 @@ export async function runInit(): Promise<void> {
   installHooks();
 
   // Register MCP
-  registerMcp();
+  await registerMcp();
 
   console.log("\nKeddy is ready! Start a Claude Code session to begin capturing.");
   console.log("Run 'keddy open' to view the dashboard.");
