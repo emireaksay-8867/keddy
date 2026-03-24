@@ -12,7 +12,7 @@ import { FilesSection } from "../components/session/FilesSection.js";
 import { FileDiffs } from "../components/session/FileDiffs.js";
 import { PlanView } from "../components/session/PlanView.js";
 import { ClaudeIcon } from "../components/ClaudeIcon.js";
-import type { SessionDetail as SessionDetailType, Exchange, Plan, GitDetail, FileDiffEntry, CompactionEvent } from "../lib/types.js";
+import type { SessionDetail as SessionDetailType, Exchange, ToolCall, Plan, GitDetail, FileDiffEntry, CompactionEvent } from "../lib/types.js";
 
 // ── Helpers ────────────────────────────────────────────────────
 function fmtTime(d: string) { return new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
@@ -23,6 +23,15 @@ function fmtDuration(a: string, b: string | null) {
   const h = Math.floor(m / 60); return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
 }
 function trunc(s: string, n: number) { return s.length > n ? s.substring(0, n) + "..." : s; }
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+function fmtMs(ms: number): string {
+  if (ms >= 60000) return `${(ms / 60000).toFixed(1)}m`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
 
 // ── Detail Panel State ─────────────────────────────────────────
 interface DetailState {
@@ -35,12 +44,137 @@ interface DetailState {
 
 const EMPTY_DETAIL: DetailState = { open: false, title: "", subtitle: "", content: null, rawData: null };
 
+// ── Exchange Metadata Bar ──────────────────────────────────────
+function ExchangeMeta({ ex }: { ex: Exchange }) {
+  if (!ex.model && !ex.input_tokens) return null;
+  const model = ex.model?.replace("claude-", "").replace(/-\d{8}$/, "") ?? "";
+  const items: string[] = [];
+  if (model) items.push(model);
+  if (ex.input_tokens) items.push(`${fmtTokens(ex.input_tokens)} in / ${fmtTokens(ex.output_tokens || 0)} out`);
+  if (ex.cache_read_tokens && ex.input_tokens && ex.input_tokens > 0) {
+    items.push(`${Math.round((ex.cache_read_tokens / ex.input_tokens) * 100)}% cached`);
+  }
+  if (ex.turn_duration_ms) items.push(fmtMs(ex.turn_duration_ms));
+  return (
+    <div className="flex items-center gap-2 text-[10px] py-1 px-2 flex-wrap" style={{ color: "var(--text-muted)" }}>
+      {items.map((item, i) => (
+        <span key={i} className={i === 0 ? "font-mono" : ""}>{i > 0 && <span className="mr-2" style={{ color: "var(--border)" }}>&middot;</span>}{item}</span>
+      ))}
+      {!!ex.has_thinking && <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ background: "var(--bg-elevated)", color: "var(--text-tertiary)" }}>thinking</span>}
+      {!!ex.is_sidechain && <span className="px-1.5 py-0.5 rounded text-[9px]" style={{ background: "var(--bg-elevated)", color: "var(--text-tertiary)" }}>sidechain</span>}
+    </div>
+  );
+}
+
+// ── Tool Call Card ─────────────────────────────────────────────
+function ToolCallCard({ tc }: { tc: ToolCall }) {
+  const [expanded, setExpanded] = useState(false);
+  const isError = !!tc.is_error;
+  const name = tc.tool_name;
+
+  // Parse tool_input for display
+  let input: Record<string, unknown> = {};
+  try { input = JSON.parse(tc.tool_input || "{}"); } catch { /* ignore */ }
+
+  // Build one-liner summary based on tool type
+  let summary = "";
+  let detail: React.ReactNode = null;
+
+  if (name === "Read") {
+    const fp = tc.file_path || (input.file_path as string) || "";
+    const fname = fp.split("/").pop() || fp;
+    const lines = tc.tool_result ? tc.tool_result.split("\n").length : 0;
+    summary = `${fname}${lines > 0 ? ` \u00B7 ${lines} lines` : ""}`;
+  } else if (name === "Edit") {
+    const fp = tc.file_path || (input.file_path as string) || "";
+    const fname = fp.split("/").pop() || fp;
+    const old_str = (input.old_string as string) || "";
+    const new_str = (input.new_string as string) || "";
+    summary = fname;
+    if (old_str || new_str) {
+      detail = (
+        <div className="font-mono text-[11px] mt-1.5 rounded px-2.5 py-1.5 overflow-hidden" style={{ background: "var(--bg-elevated)" }}>
+          {old_str.split("\n").slice(0, 3).map((line, i) => (
+            <div key={`o${i}`} className="truncate" style={{ color: "#ef4444" }}>- {line}</div>
+          ))}
+          {new_str.split("\n").slice(0, 3).map((line, i) => (
+            <div key={`n${i}`} className="truncate" style={{ color: "#10b981" }}>+ {line}</div>
+          ))}
+          {(old_str.split("\n").length > 3 || new_str.split("\n").length > 3) && (
+            <div className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>...</div>
+          )}
+        </div>
+      );
+    }
+  } else if (name === "Write") {
+    const fp = tc.file_path || (input.file_path as string) || "";
+    const fname = fp.split("/").pop() || fp;
+    const contentLen = (input.content as string)?.length || 0;
+    summary = `${fname} \u00B7 created${contentLen ? ` (${fmtTokens(contentLen)} chars)` : ""}`;
+  } else if (name === "Bash") {
+    const cmd = tc.bash_command || (input.command as string) || "";
+    summary = cmd.length > 80 ? cmd.substring(0, 80) + "..." : cmd;
+    if (tc.tool_result && expanded) {
+      detail = (
+        <div className="font-mono text-[11px] mt-1.5 rounded px-2.5 py-1.5 max-h-[200px] overflow-y-auto whitespace-pre-wrap" style={{ background: "var(--bg-elevated)", color: "var(--text-tertiary)" }}>
+          {tc.tool_result.substring(0, 2000)}
+          {tc.tool_result.length > 2000 && "\n..."}
+        </div>
+      );
+    }
+  } else if (name === "Grep" || name === "Glob") {
+    const pattern = (input.pattern as string) || "";
+    const path = (input.path as string) || "";
+    summary = `${pattern}${path ? ` in ${path.split("/").pop()}` : ""}`;
+  } else if (name === "Agent") {
+    summary = tc.subagent_desc || (input.description as string) || (tc.subagent_type || "agent");
+  } else if (name === "WebSearch" || name === "WebFetch") {
+    summary = tc.web_query || tc.web_url || (input.query as string) || (input.url as string) || "";
+  } else if (name === "Skill") {
+    summary = tc.skill_name || (input.skill as string) || "";
+  } else {
+    summary = tc.bash_desc || Object.keys(input).slice(0, 2).join(", ") || "";
+  }
+
+  const hasExpandable = name === "Bash" && tc.tool_result;
+
+  return (
+    <div
+      className={`rounded px-2.5 py-1.5 text-[12px] ${hasExpandable ? "cursor-pointer" : ""}`}
+      style={{
+        background: "var(--bg-surface)",
+        border: `1px solid ${isError ? "#ef444440" : "var(--border)"}`,
+        borderLeft: isError ? "3px solid #ef4444" : undefined,
+      }}
+      onClick={hasExpandable ? () => setExpanded(!expanded) : undefined}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="shrink-0 font-medium text-[11px]" style={{ color: isError ? "#ef4444" : "var(--accent)" }}>{name}</span>
+        <span className="truncate font-mono text-[11px]" style={{ color: "var(--text-tertiary)" }}>{summary}</span>
+        {isError && <span className="shrink-0 text-[10px] font-medium" style={{ color: "#ef4444" }}>ERROR</span>}
+        {hasExpandable && !expanded && (
+          <span className="shrink-0 text-[10px] ml-auto" style={{ color: "var(--text-muted)" }}>{"\u25B8"} output</span>
+        )}
+      </div>
+      {/* Error message shown immediately */}
+      {isError && tc.tool_result && (
+        <div className="font-mono text-[11px] mt-1 truncate" style={{ color: "#ef4444" }}>
+          {trunc(tc.tool_result.split("\n")[0] || "", 200)}
+        </div>
+      )}
+      {/* Inline detail (Edit diff, Bash output) */}
+      {detail}
+    </div>
+  );
+}
+
 // ── Exchange Bubble (used in transcript) ───────────────────────
 function ExchangeBubble({ ex }: { ex: Exchange }) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const tools = ex.tool_calls || [];
   const { cleaned: userText } = cleanText(ex.user_prompt);
   const { cleaned: claudeText } = cleanText(ex.assistant_response || "");
+  const hasErrors = tools.some(tc => !!tc.is_error);
 
   return (
     <div id={`exchange-${ex.exchange_index}`} className="scroll-mt-16">
@@ -59,25 +193,25 @@ function ExchangeBubble({ ex }: { ex: Exchange }) {
           </div>
         </div>
       )}
+      {/* Exchange metadata bar */}
+      <ExchangeMeta ex={ex} />
       {claudeText && (
         <div className="flex justify-start mb-3">
           <div className="max-w-[85%] flex gap-2">
             <div className="shrink-0 mt-1"><ClaudeIcon size={18} /></div>
-            <div>
-              <div className="px-4 py-2.5 rounded-2xl rounded-tl-md text-[13px]" style={{ background: "var(--bg-surface)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>
+            <div className="min-w-0 flex-1">
+              <div className="px-4 py-2.5 rounded-2xl rounded-tl-md text-[13px]" style={{ background: "var(--bg-surface)", color: "var(--text-secondary)", border: `1px solid ${hasErrors ? "#ef444430" : "var(--border)"}` }}>
                 <div className="whitespace-pre-wrap break-words">{trunc(claudeText, 2000)}</div>
               </div>
+              {/* Rich tool call cards */}
               {tools.length > 0 && (
-                <div className="mt-1.5 ml-1">
-                  {(toolsOpen ? tools : tools.slice(0, 3)).map((tc, i) => (
-                    <div key={i} className="text-[11px] flex items-center gap-1.5 py-0.5" style={{ color: "var(--text-muted)" }}>
-                      <span style={{ color: tc.is_error ? "#ef4444" : "var(--text-tertiary)" }}>{tc.tool_name}</span>
-                      {tc.is_error ? <span style={{ color: "#ef4444" }}>error</span> : null}
-                    </div>
+                <div className="mt-2 ml-1 flex flex-col gap-1">
+                  {(toolsOpen ? tools : tools.slice(0, 5)).map((tc, i) => (
+                    <ToolCallCard key={i} tc={tc} />
                   ))}
-                  {!toolsOpen && tools.length > 3 && (
-                    <button className="text-[11px] hover:underline" style={{ color: "var(--text-muted)" }} onClick={() => setToolsOpen(true)}>
-                      +{tools.length - 3} more tools
+                  {!toolsOpen && tools.length > 5 && (
+                    <button className="text-[11px] hover:underline py-0.5" style={{ color: "var(--text-muted)" }} onClick={() => setToolsOpen(true)}>
+                      +{tools.length - 5} more tools
                     </button>
                   )}
                 </div>
