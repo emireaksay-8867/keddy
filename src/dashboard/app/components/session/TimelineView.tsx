@@ -14,6 +14,20 @@ function fmtMs(ms: number): string {
 }
 function trunc(s: string, n: number) { return s.length > n ? s.substring(0, n) + "..." : s; }
 
+/** Routine errors that Claude retries automatically — not worth highlighting */
+const ROUTINE_ERRORS = [
+  /File content .* exceeds maximum/i,
+  /File has not been read yet/i,
+  /old_string.*is not unique/i,
+  /No replacement was performed/i,
+  /tool_use_error/i,
+];
+function isNotableError(tc: { is_error: number; tool_result: string | null }): boolean {
+  if (!tc.is_error) return false;
+  if (!tc.tool_result) return true;
+  return !ROUTINE_ERRORS.some(p => p.test(tc.tool_result!));
+}
+
 const BOUNDARY_COLORS: Record<string, string> = {
   plan_change: "#a78bfa", compaction: "#f59e0b", tool_shift: "#60a5fa",
   file_shift: "#10b981", time_gap: "#6b7280", session_start: "#818cf8",
@@ -58,7 +72,10 @@ function ActivityGroupCard({
   const maxVisible = 3;
   const visibleExchanges = showAll ? groupExchanges : groupExchanges.slice(0, maxVisible);
 
-  const errCount = group.error_count || 0;
+  // Count only notable errors (not routine retries like "file too large")
+  const errCount = groupExchanges.reduce((sum, ex) =>
+    sum + (ex.tool_calls || []).filter(tc => isNotableError(tc)).length, 0
+  );
 
   return (
     <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)", borderLeft: `3px solid ${borderColor}` }}>
@@ -105,7 +122,7 @@ function ActivityGroupCard({
           {visibleExchanges.map(ex => {
             const { cleaned: prompt } = cleanText(ex.user_prompt || "");
             const tools = ex.tool_calls || [];
-            const hasErrors = tools.some(tc => !!tc.is_error);
+            const hasErrors = tools.some(tc => isNotableError(tc));
             const time = ex.timestamp ? new Date(ex.timestamp).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
 
             return (
@@ -121,12 +138,12 @@ function ActivityGroupCard({
                 {showTools && tools.length > 0 && (
                   <div className={`flex flex-col gap-0.5 ${showPrompts ? "ml-[56px]" : ""} mt-0.5`}>
                     {tools.slice(0, 4).map((tc, i) => {
-                      const isErr = !!tc.is_error;
+                      const notable = isNotableError(tc);
                       let label = tc.file_path ? tc.file_path.split("/").pop()! : tc.bash_command ? trunc(tc.bash_command, 50) : tc.bash_desc || tc.subagent_desc || "";
                       return (
                         <div key={i} className="flex items-center gap-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
-                          <span className="shrink-0 w-[40px] text-right font-medium" style={{ color: isErr ? "#ef444480" : "var(--text-tertiary)" }}>{tc.tool_name}</span>
-                          <span className="truncate font-mono" style={{ color: isErr ? "#ef444480" : "var(--text-muted)" }}>{label}</span>
+                          <span className="shrink-0 w-[40px] text-right font-medium" style={{ color: notable ? "#ef444480" : "var(--text-tertiary)" }}>{tc.tool_name}</span>
+                          <span className="truncate font-mono" style={{ color: notable ? "#ef444480" : "var(--text-muted)" }}>{label}</span>
                         </div>
                       );
                     })}
@@ -218,14 +235,19 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
     }
     if (filter === "errors") {
       return timelineItems.filter(item => {
-        if (item.type === "group") return (groups[item.idx].error_count || 0) > 0;
-        return false;
+        if (item.type !== "group") return false;
+        const g = groups[item.idx];
+        const groupExs = exchanges.filter(e => e.exchange_index >= g.exchange_start && e.exchange_index <= g.exchange_end);
+        return groupExs.some(ex => (ex.tool_calls || []).some(tc => isNotableError(tc)));
       });
     }
     return timelineItems;
   }, [filter, timelineItems, groups, milestones]);
 
-  const errorCount = groups.reduce((sum, g) => sum + (g.error_count || 0), 0);
+  // Count only notable errors across all exchanges
+  const errorCount = exchanges.reduce((sum, ex) =>
+    sum + (ex.tool_calls || []).filter(tc => isNotableError(tc)).length, 0
+  );
   const gitCount = milestones.length;
 
   // Handler for clicking "view" on an activity group
@@ -233,25 +255,45 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
     const title = group.ai_label || trunc(cleanText(group.first_prompt || "").cleaned, 60);
     const subtitle = `#${group.exchange_start}-${group.exchange_end} \u00B7 ${group.exchange_count} exchanges`;
     const content = (
-      <div className="text-[13px] space-y-3">
+      <div className="text-[13px] space-y-4">
         {group.ai_summary && <div className="italic" style={{ color: "var(--text-tertiary)" }}>{group.ai_summary}</div>}
+
+        {/* Full exchange logs */}
         <div>
-          <div className="text-[11px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: "var(--text-muted)" }}>Exchanges</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>Conversation</div>
           {groupExchanges.map(ex => {
             const { cleaned: prompt } = cleanText(ex.user_prompt || "");
+            const { cleaned: response } = cleanText(ex.assistant_response || "");
             const tools = ex.tool_calls || [];
+            const time = ex.timestamp ? new Date(ex.timestamp).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+
             return (
-              <div key={ex.exchange_index} className="mb-2">
-                <div className="text-[12px] mb-0.5" style={{ color: "var(--text-secondary)" }}>{trunc(prompt, 150)}</div>
+              <div key={ex.exchange_index} className="mb-3 pb-3" style={{ borderBottom: "1px solid var(--border)" }}>
+                {/* User prompt */}
+                {prompt && (
+                  <div className="mb-1.5">
+                    <div className="text-[10px] mb-0.5" style={{ color: "var(--text-muted)" }}>{time} &middot; User</div>
+                    <div className="text-[12px] whitespace-pre-wrap" style={{ color: "var(--text-primary)" }}>{trunc(prompt, 500)}</div>
+                  </div>
+                )}
+                {/* Claude response */}
+                {response && (
+                  <div className="mb-1.5">
+                    <div className="text-[10px] mb-0.5" style={{ color: "var(--text-muted)" }}>Claude</div>
+                    <div className="text-[12px] whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }}>{trunc(response, 500)}</div>
+                  </div>
+                )}
+                {/* Tool calls */}
                 {tools.length > 0 && (
-                  <div className="flex flex-col gap-0.5 ml-2">
+                  <div className="flex flex-col gap-1 mt-1">
                     {tools.map((tc, i) => {
-                      const isErr = !!tc.is_error;
+                      const notable = isNotableError(tc);
                       let label = tc.file_path ? tc.file_path.split("/").pop()! : tc.bash_command || tc.bash_desc || tc.subagent_desc || "";
                       return (
-                        <div key={i} className="text-[11px] flex items-center gap-1.5" style={{ color: isErr ? "#ef444480" : "var(--text-muted)" }}>
-                          <span className="font-medium" style={{ color: isErr ? "#ef444480" : "var(--text-tertiary)" }}>{tc.tool_name}</span>
-                          <span className="font-mono truncate">{trunc(label, 60)}</span>
+                        <div key={i} className="text-[11px] flex items-center gap-1.5" style={{ color: notable ? "#ef444480" : "var(--text-muted)" }}>
+                          <span className="font-medium shrink-0" style={{ color: notable ? "#ef444480" : "var(--text-tertiary)" }}>{tc.tool_name}</span>
+                          <span className="font-mono truncate">{trunc(label, 80)}</span>
+                          {notable && <span className="shrink-0 text-[9px]" style={{ color: "#ef444460" }}>failed</span>}
                         </div>
                       );
                     })}
@@ -261,6 +303,8 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
             );
           })}
         </div>
+
+        {/* Files written */}
         {group.files_written && group.files_written.length > 0 && (
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: "var(--text-muted)" }}>Files Written</div>

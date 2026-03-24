@@ -43,12 +43,26 @@ function countTools(exchanges: ParsedExchange[]): Record<string, number> {
   return counts;
 }
 
-/** Count errors across a set of exchanges */
+/** Routine errors that Claude retries automatically — not worth surfacing */
+const ROUTINE_ERROR_PATTERNS = [
+  /File content .* exceeds maximum/i,
+  /File has not been read yet/i,
+  /old_string.*is not unique/i,
+  /No replacement was performed/i,
+  /tool_use_error/i,
+];
+
+function isRoutineError(result: string | null | undefined): boolean {
+  if (!result) return false;
+  return ROUTINE_ERROR_PATTERNS.some(p => p.test(result));
+}
+
+/** Count notable errors (excluding routine retries) across exchanges */
 function countErrors(exchanges: ParsedExchange[]): number {
   let count = 0;
   for (const ex of exchanges) {
     for (const tc of ex.tool_calls) {
-      if (tc.is_error) count++;
+      if (tc.is_error && !isRoutineError(tc.result)) count++;
     }
   }
   return count;
