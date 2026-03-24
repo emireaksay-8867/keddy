@@ -89,10 +89,10 @@ function ActivityGroupCard({
           {errCount > 0 && <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{errCount} err</span>}
           {/* View detail button */}
           <button
-            className="text-[10px] px-1.5 py-0.5 rounded hover:bg-[var(--bg-elevated)]"
-            style={{ color: "var(--text-muted)" }}
+            className="text-[11px] px-2 py-0.5 rounded hover:underline"
+            style={{ color: "var(--accent)" }}
             onClick={(e) => { e.stopPropagation(); onSelect(group, groupExchanges); }}
-          >view</button>
+          >view &rarr;</button>
         </div>
       </div>
 
