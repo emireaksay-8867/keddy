@@ -233,7 +233,7 @@ export async function* generateSessionNotesStream(
   const mcpServerPath = getMcpServerPath();
   const modelName = options?.model || "sonnet";
 
-  yield { type: "status", message: "Starting analysis agent", detail: `${modelName}, effort: low`, timestamp: Date.now() };
+  yield { type: "status", message: "Starting analysis agent", detail: `${modelName}, effort: medium`, timestamp: Date.now() };
 
   // Phase 3: Sonnet with pre-fed context + MCP access for deep dives
   const env: Record<string, string | undefined> = { ...process.env };
@@ -251,7 +251,7 @@ export async function* generateSessionNotesStream(
     options: {
       systemPrompt: SYSTEM_PROMPT,
       model: modelName,
-      effort: "low",
+      effort: "medium",
       mcpServers: {
         keddy: {
           command: process.execPath,
@@ -260,8 +260,8 @@ export async function* generateSessionNotesStream(
       },
       strictMcpConfig: true,  // ONLY connect to keddy — skip global MCP servers (Notion, Gmail, etc.)
       allowedTools: ["mcp__keddy__*"],
-      maxTurns: 5,
-      maxBudgetUsd: 0.10,
+      maxTurns: 10,
+      maxBudgetUsd: 0.50,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       env,
