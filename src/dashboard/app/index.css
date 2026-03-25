@@ -102,6 +102,9 @@ code, pre {
 .md-content strong { color: var(--text-primary); font-weight: 600; }
 .md-content hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
 .md-content a { color: var(--accent); text-decoration: underline; }
+/* Scale mermaid diagrams to fit without dominating the page */
+.md-content .mermaid-container svg { max-height: 320px; width: auto; }
+.mermaid-compact svg { max-height: 240px; width: auto; font-size: 11px; }
 .md-content blockquote { border-left: 3px solid var(--border-bright); padding-left: 1rem; color: var(--text-tertiary); margin: 0.5rem 0; }
 .md-content table { border-collapse: collapse; margin: 0.5rem 0; width: 100%; font-size: 0.85rem; }
 .md-content th, .md-content td { border: 1px solid var(--border); padding: 0.35rem 0.65rem; text-align: left; }

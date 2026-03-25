@@ -1,6 +1,8 @@
-import { useState, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
 import type { SessionDetail, Exchange, ActivityGroupDetail, Plan } from "../../lib/types.js";
 import { cleanText } from "../../lib/cleanText.js";
+import { getSessionNotes } from "../../lib/api.js";
+import { MermaidDiagram } from "./NotesTab.js";
 
 // ── Helpers ────────────────────────────────────────────────────
 function fmtTokens(n: number): string {
@@ -368,6 +370,33 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
           </div>
         )}
       </div>
+
+      {/* Session Flow Diagram (from latest note, if available) */}
+      <SessionFlowDiagram sessionId={session.session_id} />
+    </div>
+  );
+}
+
+// ── Session Flow Diagram (bottom of Timeline) ────────────────
+function SessionFlowDiagram({ sessionId }: { sessionId: string }) {
+  const [mermaid, setMermaid] = useState<string | null>(null);
+
+  useEffect(() => {
+    getSessionNotes(sessionId)
+      .then((notes: any[]) => {
+        if (notes?.[0]?.mermaid) setMermaid(notes[0].mermaid);
+      })
+      .catch(() => {});
+  }, [sessionId]);
+
+  if (!mermaid) return null;
+
+  return (
+    <div className="mt-4 pt-4" style={{ borderTop: "1px solid var(--border)" }}>
+      <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>
+        Session Flow
+      </div>
+      <MermaidDiagram chart={mermaid} compact />
     </div>
   );
 }

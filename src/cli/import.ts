@@ -88,6 +88,19 @@ export async function runImport(forceReimport = false): Promise<void> {
         continue;
       }
 
+      // Skip Agent SDK sessions — these are spawned by Keddy's notes generator
+      // and contain analysis prompts, not real user sessions
+      if (transcript.exchanges.length > 0) {
+        const firstPrompt = transcript.exchanges[0].user_prompt || "";
+        if (
+          firstPrompt.startsWith("Analyze the coding session with session_id") ||
+          firstPrompt.startsWith("Here is the complete session data")
+        ) {
+          skipped++;
+          continue;
+        }
+      }
+
       // Check if already imported
       const existing = getSession(transcript.session_id);
       if (existing) {

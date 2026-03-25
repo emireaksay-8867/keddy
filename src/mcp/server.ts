@@ -56,7 +56,7 @@ function enrichSession(s: { session_id: string; id?: string }) {
 // Tool 1: Search sessions
 server.tool(
   "keddy_search_sessions",
-  "Search past Claude Code sessions by keyword. Returns session metadata including model, token counts, error count, and file count. Searches user prompts and plan text via full-text search.",
+  "Search past sessions by keyword across user prompts and plan text. Returns session metadata with model, token counts, errors, and files touched.",
   {
     query: z.string().describe("Search query (supports FTS5 syntax)"),
     project: z.string().optional().describe("Filter by project path substring"),
@@ -86,7 +86,7 @@ server.tool(
 // Tool 2: Get session details
 server.tool(
   "keddy_get_session",
-  "Get full details of a specific session including segments, plans, milestones, and compaction events.",
+  "Get everything about a session — full segments, plans, milestones, exchanges, activity groups, and token summary. Returns a large response (100KB+). Prefer keddy_get_session_skeleton for a lightweight overview first.",
   {
     session_id: z.string().describe("The session ID to retrieve"),
   },
@@ -217,7 +217,7 @@ server.tool(
 // Tool 3: Get plans
 server.tool(
   "keddy_get_plans",
-  "Get plan versions with full text, feedback, and status. Without session_id, returns recent plans across all sessions.",
+  "Get plan details — full text, version history, user feedback, and status transitions. Use after keddy_get_session_skeleton shows plan activity worth investigating.",
   {
     session_id: z.string().optional().describe("Session ID (optional, returns recent plans if omitted)"),
   },
@@ -251,7 +251,7 @@ server.tool(
 // Tool 4: Recent activity
 server.tool(
   "keddy_recent_activity",
-  "Get a summary of recent Claude Code sessions with model, token usage, and error counts per session.",
+  "Start here for cross-project overview. Shows recent sessions across all projects with activity summaries. Use this to see what's been happening before diving into a specific session.",
   {
     days: z.number().optional().describe("Number of days to look back (default 7)"),
   },
@@ -286,7 +286,7 @@ server.tool(
 // Tool 5: Get transcript
 server.tool(
   "keddy_get_transcript",
-  "Get the full conversation transcript for a session — includes both user prompts and Claude's responses. Use exchange range to get a specific portion.",
+  "Read specific exchanges in full — both user prompts and Claude's complete responses. Use keddy_transcript_summary first to find the right exchange range, then call this with from/to parameters to read just that section.",
   {
     session_id: z.string().describe("The session ID"),
     from: z.number().optional().describe("Start exchange index (inclusive)"),
@@ -351,7 +351,7 @@ server.tool(
 // Tool 7: Project status
 server.tool(
   "keddy_project_status",
-  "Get the current state of a project: active plan with full text, task progress, recent milestones, segment types, and active files. Use this to understand where a project stands before starting work.",
+  "Start here for project context. Returns the active plan with full text, task progress, recent milestones, and what the last session was working on. Call this before starting work or when you need to understand where things stand.",
   {
     project_path: z.string().describe("The project path (usually the current working directory)"),
   },
@@ -498,7 +498,7 @@ server.tool(
 // Tool 9: Find errors
 server.tool(
   "keddy_find_errors",
-  "Find error patterns across sessions. Returns failed tool calls with the user prompt that triggered them — useful for debugging recurring issues or understanding how errors were resolved.",
+  "Investigate errors — returns failed tool calls with the triggering user prompt and error context. Use after keddy_get_session_skeleton shows errors worth investigating, or to search for recurring error patterns across sessions.",
   {
     pattern: z.string().optional().describe("Search within error messages"),
     tool_name: z.string().optional().describe("Filter by tool type (e.g. 'Bash' for command failures)"),
@@ -616,6 +616,146 @@ server.tool(
       });
     } catch (err) {
       return textResult(`Error fetching bash history: ${err}`);
+    }
+  },
+);
+
+// ── Agent-optimized lightweight tools ─────────────────────────
+
+server.tool(
+  "keddy_get_session_skeleton",
+  "Get a session's structure before reading details. Returns timeline of events (milestones, plans, compactions, interrupts), task summary, error counts, and top files touched — all in 3-5KB. Call this after finding a session to understand what happened, then use keddy_transcript_summary or keddy_get_transcript to read specifics.",
+  {
+    session_id: z.string().describe("Session ID"),
+  },
+  async ({ session_id }) => {
+    try {
+      const session = getSession(session_id);
+      if (!session) return textResult(`Session not found: ${session_id}`);
+
+      const db = getDb();
+      const milestones = getSessionMilestones(session.id);
+      const plans = getSessionPlans(session.id);
+      const tasks = getSessionTasks(session.id);
+      const compactions = getSessionCompactionEvents(session.id);
+
+      // Build timeline of key events (milestones, plans, compactions, interrupts)
+      const timeline: Array<{ exchange: number; type: string; label: string }> = [];
+
+      for (const ms of milestones) {
+        timeline.push({ exchange: ms.exchange_index, type: ms.milestone_type, label: ms.description });
+      }
+      for (const plan of plans) {
+        timeline.push({ exchange: plan.exchange_index_start, type: "plan", label: `Plan v${plan.version} (${plan.status})${plan.user_feedback ? " — feedback: " + plan.user_feedback.substring(0, 100) : ""}` });
+      }
+      for (const c of compactions) {
+        timeline.push({ exchange: c.exchange_index, type: "compaction", label: `Context compacted (${c.exchanges_before}→${c.exchanges_after} exchanges)` });
+      }
+
+      // Interrupts
+      const interrupts = db.prepare(
+        "SELECT exchange_index FROM exchanges WHERE session_id = ? AND is_interrupt = 1 ORDER BY exchange_index",
+      ).all(session.id) as Array<{ exchange_index: number }>;
+      for (const intr of interrupts) {
+        timeline.push({ exchange: intr.exchange_index, type: "interrupt", label: "User interrupted" });
+      }
+
+      timeline.sort((a, b) => a.exchange - b.exchange);
+
+      // Error summary
+      const errorRows = db.prepare(
+        "SELECT tool_name, COUNT(*) as cnt FROM tool_calls WHERE session_id = ? AND is_error = 1 GROUP BY tool_name",
+      ).all(session.id) as Array<{ tool_name: string; cnt: number }>;
+      const errorsByTool: Record<string, number> = {};
+      let totalErrors = 0;
+      for (const r of errorRows) { errorsByTool[r.tool_name] = r.cnt; totalErrors += r.cnt; }
+
+      // Token summary
+      const tokenRow = db.prepare(`
+        SELECT SUM(input_tokens) as inp, SUM(output_tokens) as out, SUM(cache_read_tokens) as cache
+        FROM exchanges WHERE session_id = ?
+      `).get(session.id) as any;
+
+      // File summary
+      const fileRows = db.prepare(`
+        SELECT file_path, COUNT(*) as cnt FROM tool_calls
+        WHERE session_id = ? AND file_path IS NOT NULL
+        GROUP BY file_path ORDER BY cnt DESC LIMIT 15
+      `).all(session.id) as Array<{ file_path: string; cnt: number }>;
+
+      return jsonResult({
+        session: {
+          session_id: session.session_id,
+          title: session.title,
+          project: session.project_path,
+          branch: session.git_branch,
+          exchange_count: session.exchange_count,
+          started: session.started_at,
+          ended: session.ended_at,
+        },
+        timeline,
+        plans_summary: plans.map((p) => ({
+          version: p.version,
+          status: p.status,
+          feedback: p.user_feedback,
+          text_preview: p.plan_text.substring(0, 300),
+        })),
+        tasks: tasks.map((t: any) => ({ subject: t.subject, status: t.status })),
+        errors: { total: totalErrors, by_tool: errorsByTool },
+        tokens: { input: tokenRow?.inp || 0, output: tokenRow?.out || 0, cache_read: tokenRow?.cache || 0 },
+        top_files: fileRows.map((f) => f.file_path),
+      });
+    } catch (err) {
+      return textResult(`Error: ${err}`);
+    }
+  },
+);
+
+server.tool(
+  "keddy_transcript_summary",
+  "Scan a session's conversation flow. Shows the first line of each user prompt with tool counts and error flags — the full session outline in 5-8KB. Use this to find which exchange ranges contain what you're looking for, then call keddy_get_transcript with from/to for full detail.",
+  {
+    session_id: z.string().describe("Session ID"),
+    from: z.number().optional().describe("Start exchange index"),
+    to: z.number().optional().describe("End exchange index"),
+    max_prompt_length: z.number().optional().describe("Max chars per prompt (default 150)"),
+  },
+  async ({ session_id, from, to, max_prompt_length }) => {
+    try {
+      const session = getSession(session_id);
+      if (!session) return textResult(`Session not found: ${session_id}`);
+
+      const maxLen = max_prompt_length || 150;
+      const db = getDb();
+
+      let sql = `
+        SELECT e.exchange_index, e.user_prompt, e.tool_call_count, e.is_interrupt,
+               e.is_compact_summary, e.model, e.timestamp,
+               (SELECT COUNT(*) FROM tool_calls tc WHERE tc.exchange_id = e.id AND tc.is_error = 1) as error_count
+        FROM exchanges e
+        WHERE e.session_id = ?
+      `;
+      const params: unknown[] = [session.id];
+      if (from !== undefined) { sql += " AND e.exchange_index >= ?"; params.push(from); }
+      if (to !== undefined) { sql += " AND e.exchange_index <= ?"; params.push(to); }
+      sql += " ORDER BY e.exchange_index";
+
+      const rows = db.prepare(sql).all(...params) as any[];
+
+      return jsonResult({
+        session_id: session.session_id,
+        exchange_count: rows.length,
+        exchanges: rows.map((r) => ({
+          index: r.exchange_index,
+          prompt: r.user_prompt.split("\n")[0].substring(0, maxLen),
+          tools: r.tool_call_count,
+          errors: r.error_count,
+          ...(r.is_interrupt ? { interrupted: true } : {}),
+          ...(r.is_compact_summary ? { compaction: true } : {}),
+        })),
+      });
+    } catch (err) {
+      return textResult(`Error: ${err}`);
     }
   },
 );

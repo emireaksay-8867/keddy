@@ -59,15 +59,39 @@ async function handleSessionStart(input: HookStdin): Promise<void> {
 
     // Build project context for Claude
     const ctx = getProjectContextForSessionStart(input.cwd!);
+    const db = getDb();
     const parts: string[] = [`[Keddy] ${ctx.sessionCount} sessions tracked.`];
 
+    // Last session's final 3 user prompts — what was being worked on
+    try {
+      const lastPrompts = db.prepare(`
+        SELECT e.user_prompt FROM exchanges e
+        JOIN sessions s ON s.id = e.session_id
+        WHERE s.project_path = ? AND s.exchange_count > 0 AND s.session_id != ?
+        ORDER BY s.started_at DESC, e.exchange_index DESC LIMIT 3
+      `).all(input.cwd, input.session_id) as Array<{ user_prompt: string }>;
+      if (lastPrompts.length > 0) {
+        const prompts = lastPrompts.reverse().map((p) => {
+          const line = p.user_prompt.split("\n")[0].trim().substring(0, 80);
+          return `"${line}"`;
+        });
+        parts.push(`Last session ended with: ${prompts.join(" → ")}`);
+      }
+    } catch { /* non-critical */ }
+
+    // Active plan — full text (not just 200-char excerpt)
     if (ctx.activePlan) {
-      const firstLine = ctx.activePlan.excerpt
-        .split("\n")
-        .find((l: string) => l.trim().length > 3 && !l.trim().startsWith("#"))
-        ?.trim() || "";
-      const planLine = firstLine.length > 60 ? firstLine.substring(0, 60) + "..." : firstLine;
-      parts.push(`Active plan v${ctx.activePlan.version} (${ctx.activePlan.status}): ${planLine}`);
+      try {
+        const fullPlan = db.prepare(`
+          SELECT p.plan_text FROM plans p WHERE p.session_id = ?
+          ORDER BY p.version DESC LIMIT 1
+        `).get(ctx.activePlan.sessionId) as { plan_text: string } | undefined;
+        if (fullPlan) {
+          parts.push(`Active plan v${ctx.activePlan.version} (${ctx.activePlan.status}):\n${fullPlan.plan_text}`);
+        }
+      } catch {
+        parts.push(`Active plan v${ctx.activePlan.version} (${ctx.activePlan.status}): ${ctx.activePlan.excerpt}`);
+      }
     }
 
     if (ctx.pendingTasks.length > 0) {
@@ -75,15 +99,26 @@ async function handleSessionStart(input: HookStdin): Promise<void> {
     }
 
     if (ctx.lastMilestone) {
-      parts.push(`Last: ${ctx.lastMilestone}`);
+      parts.push(`Last milestone: ${ctx.lastMilestone}`);
     }
 
-    if (ctx.activePlan || ctx.lastMilestone) {
-      parts.push("Use keddy_project_status or keddy_continue_plan for full details.");
-    }
+    // Latest session note summary (if one was generated)
+    try {
+      const latestNote = db.prepare(`
+        SELECT sn.content FROM session_notes sn
+        JOIN sessions s ON s.id = sn.session_id
+        WHERE s.project_path = ?
+        ORDER BY sn.generated_at DESC LIMIT 1
+      `).get(input.cwd) as { content: string } | undefined;
+      if (latestNote) {
+        parts.push(`Latest analysis: ${latestNote.content.substring(0, 500)}`);
+      }
+    } catch { /* non-critical — table may not exist yet */ }
+
+    parts.push("Use keddy_project_status for full project context, or keddy_get_session_skeleton to inspect a specific session.");
 
     const context = {
-      additionalContext: parts.join(" | "),
+      additionalContext: parts.join("\n"),
     };
     process.stdout.write(JSON.stringify(context));
   } finally {
@@ -386,6 +421,17 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
 
     // Full transcript parse
     const transcript = parseTranscript(input.transcript_path);
+
+    // Skip Agent SDK sessions (spawned by Keddy's notes generator)
+    if (transcript.exchanges.length > 0) {
+      const firstPrompt = transcript.exchanges[0].user_prompt || "";
+      if (
+        firstPrompt.startsWith("Analyze the coding session with session_id") ||
+        firstPrompt.startsWith("Here is the complete session data")
+      ) {
+        return;
+      }
+    }
 
     // Update session metadata
     if (transcript.git_branch || transcript.claude_version || transcript.slug) {

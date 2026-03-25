@@ -161,7 +161,19 @@ export function initSchema(db: Database.Database): void {
       shared_files TEXT NOT NULL DEFAULT '[]'
     );
 
+    CREATE TABLE IF NOT EXISTS session_notes (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      mermaid TEXT,
+      model TEXT,
+      agent_turns INTEGER,
+      cost_usd REAL,
+      generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Indexes
+    CREATE INDEX IF NOT EXISTS idx_session_notes_session ON session_notes(session_id);
     CREATE INDEX IF NOT EXISTS idx_exchanges_session ON exchanges(session_id);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_exchange ON tool_calls(exchange_id);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);

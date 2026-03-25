@@ -313,6 +313,19 @@ export interface KeddyConfig {
   analysis: AnalysisConfig;
 }
 
+// --- Session Notes (Agent SDK analysis) ---
+
+export interface SessionNote {
+  id: string;
+  session_id: string;
+  content: string;
+  mermaid: string | null;
+  model: string | null;
+  agent_turns: number | null;
+  cost_usd: number | null;
+  generated_at: string;
+}
+
 // --- Hook Types ---
 
 export interface HookInput {

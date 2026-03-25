@@ -15,7 +15,7 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   outDir: "dist",
-  external: ["better-sqlite3"],
+  external: ["better-sqlite3", "@anthropic-ai/claude-agent-sdk"],
   define: {
     "process.env.KEDDY_VERSION": JSON.stringify(pkg.version),
   },

@@ -117,3 +117,78 @@ export async function getFileDiffs(sessionId: string, filePath: string) {
 export async function getToolCall(sessionId: string, toolCallId: string) {
   return fetchJson(`/sessions/${sessionId}/tool-call/${toolCallId}`);
 }
+
+// --- Session Notes ---
+
+export async function getSessionNotes(sessionId: string) {
+  return fetchJson<import("./types.js").SessionNote[]>(`/sessions/${sessionId}/notes`);
+}
+
+export async function deleteSessionNotes(sessionId: string) {
+  return fetchJson(`/sessions/${sessionId}/notes`, { method: "DELETE" });
+}
+
+export async function deleteSessionNote(sessionId: string, noteId: string) {
+  return fetchJson(`/sessions/${sessionId}/notes/${noteId}`, { method: "DELETE" });
+}
+
+/** Stream session notes generation via SSE — returns cleanup function */
+export function generateSessionNotesSSE(
+  sessionId: string,
+  callbacks: {
+    onEvent: (event: { type: string; message: string; detail?: string; timestamp: number }) => void;
+    onDone: (note: import("./types.js").SessionNote) => void;
+    onError: (error: string) => void;
+  },
+  options?: { apiKey?: string; model?: string },
+): () => void {
+  const controller = new AbortController();
+
+  fetch(`${BASE}/sessions/${sessionId}/notes/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options || {}),
+    signal: controller.signal,
+  }).then(async (response) => {
+    if (!response.ok || !response.body) {
+      callbacks.onError(`HTTP ${response.status}`);
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith("data:")) {
+          const data = line.slice(5).trim();
+          if (!data) continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.ok && parsed.note) {
+              callbacks.onDone(parsed.note);
+            } else if (parsed.error) {
+              callbacks.onError(parsed.error);
+            } else if (parsed.type) {
+              callbacks.onEvent(parsed);
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+    }
+  }).catch((err) => {
+    if (err.name !== "AbortError") {
+      callbacks.onError(err.message || "Connection failed");
+    }
+  });
+
+  return () => controller.abort();
+}

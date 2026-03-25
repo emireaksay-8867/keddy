@@ -10,6 +10,7 @@ import type {
   Decision,
   CompactionEvent,
   SessionLink,
+  SessionNote,
 } from "../types.js";
 
 // --- Sessions ---
@@ -1071,6 +1072,58 @@ export function getActivePlanForProject(projectPath: string): {
     tasks,
     lastMilestone: milestone ?? null,
   };
+}
+
+// --- Session Notes ---
+
+/** Get all notes for a session, most recent first */
+export function getSessionNotes(sessionId: string): SessionNote[] {
+  const db = getDb();
+  return db.prepare(
+    "SELECT * FROM session_notes WHERE session_id = ? ORDER BY generated_at DESC",
+  ).all(sessionId) as SessionNote[];
+}
+
+/** Get the most recent note for a session */
+export function getSessionNote(sessionId: string): SessionNote | undefined {
+  const db = getDb();
+  return db.prepare(
+    "SELECT * FROM session_notes WHERE session_id = ? ORDER BY generated_at DESC LIMIT 1",
+  ).get(sessionId) as SessionNote | undefined;
+}
+
+/** Insert a new session note (keeps history — no upsert) */
+export function upsertSessionNote(data: {
+  session_id: string;
+  content: string;
+  mermaid?: string | null;
+  model?: string | null;
+  agent_turns?: number | null;
+  cost_usd?: number | null;
+  generated_at?: string;
+}): string {
+  const db = getDb();
+  const id = randomUUID();
+  db.prepare(`
+    INSERT INTO session_notes (id, session_id, content, mermaid, model, agent_turns, cost_usd, generated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    data.session_id,
+    data.content,
+    data.mermaid ?? null,
+    data.model ?? null,
+    data.agent_turns ?? null,
+    data.cost_usd ?? null,
+    data.generated_at ?? new Date().toISOString(),
+  );
+  return id;
+}
+
+/** Delete all notes for a session */
+export function deleteSessionNote(sessionId: string): void {
+  const db = getDb();
+  db.prepare("DELETE FROM session_notes WHERE session_id = ?").run(sessionId);
 }
 
 /** Batch-enrich sessions with plan/milestone/segment data (avoids N+1 queries) */

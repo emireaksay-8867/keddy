@@ -235,6 +235,17 @@ export interface FileDiffEntry {
   content_length?: number;
 }
 
+export interface SessionNote {
+  id: string;
+  session_id: string;
+  content: string;
+  mermaid: string | null;
+  model: string | null;
+  agent_turns: number | null;
+  cost_usd: number | null;
+  generated_at: string;
+}
+
 export interface RawToolCall {
   id: string;
   tool_name: string;

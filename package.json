@@ -67,6 +67,7 @@
     "@types/react-dom": "^19.0.0",
     "concurrently": "^9.1.0",
     "dotenv": "^17.3.1",
+    "mermaid": "^11.4.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
@@ -80,6 +81,7 @@
     "vitest": "^3.0.0"
   },
   "optionalDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.77",
     "@anthropic-ai/sdk": "^0.74.0"
   }
 }

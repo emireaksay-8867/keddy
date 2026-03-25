@@ -166,8 +166,8 @@ function SessionRow({
         {/* Left: Title + Factual chips */}
         <div className="flex-1 min-w-0">
           <p
-            className="text-[13.5px] font-medium truncate"
-            style={{ color: "var(--text-primary)" }}
+            className="text-[13px] truncate"
+            style={{ color: "var(--text-primary)", fontFamily: "'Geist Mono', 'JetBrains Mono', 'SF Mono', monospace" }}
           >
             {title}
           </p>

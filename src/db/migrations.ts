@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 
-const CURRENT_VERSION = 5;
+const CURRENT_VERSION = 6;
 
 interface Migration {
   version: number;
@@ -177,6 +177,29 @@ const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_exchanges_model ON exchanges(model);
         CREATE INDEX IF NOT EXISTS idx_segments_boundary ON segments(session_id, boundary_type);
       `);
+    },
+  },
+  {
+    version: 6,
+    description: "Add session_notes table for Agent SDK-powered analysis",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS session_notes (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          content TEXT NOT NULL,
+          mermaid TEXT,
+          model TEXT,
+          agent_turns INTEGER,
+          cost_usd REAL,
+          generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_notes_session ON session_notes(session_id);
+      `);
+      // Drop unique constraint on existing tables (from earlier schema)
+      try {
+        db.exec("DROP INDEX IF EXISTS sqlite_autoindex_session_notes_1");
+      } catch { /* index may not exist */ }
     },
   },
 ];

@@ -10,8 +10,8 @@ import { FileDiffs } from "../components/session/FileDiffs.js";
 import { PlanView } from "../components/session/PlanView.js";
 import { TimelineView } from "../components/session/TimelineView.js";
 import { TerminalView } from "../components/session/TerminalView.js";
+import { NotesTab } from "../components/session/NotesTab.js";
 import type { SessionDetail as SessionDetailType, Exchange, Plan, FileDiffEntry } from "../lib/types.js";
-
 
 // ── Helpers ────────────────────────────────────────────────────
 function trunc(s: string, n: number) { return s.length > n ? s.substring(0, n) + "..." : s; }
@@ -35,7 +35,7 @@ export function SessionDetail() {
   const [session, setSession] = useState<SessionDetailType | null>(null);
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"timeline" | "terminal" | "files">("timeline");
+  const [tab, setTab] = useState<"timeline" | "terminal" | "files" | "notes">("timeline");
   const [detail, setDetail] = useState<DetailState>(EMPTY_DETAIL);
 
   // AI analysis state (preserved from original)
@@ -153,6 +153,7 @@ export function SessionDetail() {
           { key: "timeline" as const, label: "Timeline" },
           { key: "terminal" as const, label: "Terminal Log" },
           { key: "files" as const, label: `Files (${session.file_operations?.length || 0})` },
+          { key: "notes" as const, label: "Notes" },
         ]).map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} className="px-4 py-2.5 text-[13px] relative font-medium" style={{ color: tab === t.key ? "var(--text-primary)" : "var(--text-muted)" }}>
             {t.label}
@@ -196,13 +197,15 @@ export function SessionDetail() {
               milestones={session.milestones}
               compactionEvents={session.compaction_events}
             />
-          ) : (
+          ) : tab === "files" ? (
             <div className="px-6 py-5">
               <FilesSection
                 fileOps={session.file_operations || []}
                 onViewFile={handleViewFile}
               />
             </div>
+          ) : (
+            <NotesTab sessionId={id!} />
           )}
         </div>
 
