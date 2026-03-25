@@ -307,7 +307,7 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
   }
 
   return (
-    <div className="px-6 py-4">
+    <div className="px-6 pb-4 pt-1">
       {/* Filter chips */}
       <div className="flex items-center gap-1.5 mb-4 flex-wrap">
         {([
