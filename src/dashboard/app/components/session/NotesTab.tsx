@@ -78,7 +78,7 @@ export function MermaidDiagram({ chart, compact }: { chart: string; compact?: bo
 
 // ── Markdown with Mermaid ────────────────────────────────────
 
-function MarkdownWithMermaid({ content, compact }: { content: string; compact?: boolean }) {
+export function MarkdownWithMermaid({ content, compact }: { content: string; compact?: boolean }) {
   const parts: Array<{ type: "text" | "mermaid"; content: string }> = [];
   const regex = /```mermaid\n([\s\S]*?)```/g;
   let lastIndex = 0;
@@ -184,7 +184,7 @@ const EVENT_COLORS: Record<string, string> = {
   error: "#ef4444",
 };
 
-function ActivityFeed({ events }: { events: AgentEvent[] }) {
+export function ActivityFeed({ events }: { events: AgentEvent[] }) {
   const feedRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;

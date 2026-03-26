@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 
-const CURRENT_VERSION = 6;
+const CURRENT_VERSION = 7;
 
 interface Migration {
   version: number;
@@ -200,6 +200,25 @@ const migrations: Migration[] = [
       try {
         db.exec("DROP INDEX IF EXISTS sqlite_autoindex_session_notes_1");
       } catch { /* index may not exist */ }
+    },
+  },
+  {
+    version: 7,
+    description: "Add daily_notes table for AI-generated daily notes",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS daily_notes (
+          id TEXT PRIMARY KEY,
+          date TEXT NOT NULL UNIQUE,
+          content TEXT NOT NULL,
+          sessions_json TEXT NOT NULL DEFAULT '[]',
+          model TEXT,
+          agent_turns INTEGER,
+          cost_usd REAL,
+          generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_daily_notes_date ON daily_notes(date);
+      `);
     },
   },
 ];

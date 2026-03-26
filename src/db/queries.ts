@@ -1196,3 +1196,54 @@ export function enrichSessionBatch(sessionInternalIds: string[]): Map<string, {
 
   return result;
 }
+
+// --- Daily Notes ---
+
+export function getSessionsByDate(dateStr: string): Session[] {
+  const db = getDb();
+  return db.prepare(
+    "SELECT * FROM sessions WHERE date(started_at) = ? AND exchange_count > 0 ORDER BY started_at ASC",
+  ).all(dateStr) as Session[];
+}
+
+export function getDailyMilestones(dateStr: string): Array<{
+  session_id: string; session_title: string | null;
+  milestone_type: string; exchange_index: number; description: string;
+}> {
+  const db = getDb();
+  return db.prepare(`
+    SELECT m.milestone_type, m.exchange_index, m.description, s.session_id, s.title as session_title
+    FROM milestones m JOIN sessions s ON s.id = m.session_id
+    WHERE date(s.started_at) = ? AND s.exchange_count > 0
+    ORDER BY s.started_at, m.exchange_index
+  `).all(dateStr) as any[];
+}
+
+export function getDailyNote(dateStr: string): import("../types.js").DailyNote | undefined {
+  const db = getDb();
+  return db.prepare("SELECT * FROM daily_notes WHERE date = ?").get(dateStr) as any;
+}
+
+export function upsertDailyNote(data: {
+  date: string; content: string; sessions_json: string;
+  model?: string | null; agent_turns?: number | null; cost_usd?: number | null;
+}): string {
+  const db = getDb();
+  const existing = db.prepare("SELECT id FROM daily_notes WHERE date = ?").get(data.date) as { id: string } | undefined;
+  if (existing) {
+    db.prepare(
+      "UPDATE daily_notes SET content = ?, sessions_json = ?, model = ?, agent_turns = ?, cost_usd = ?, generated_at = datetime('now') WHERE id = ?",
+    ).run(data.content, data.sessions_json, data.model ?? null, data.agent_turns ?? null, data.cost_usd ?? null, existing.id);
+    return existing.id;
+  }
+  const id = randomUUID();
+  db.prepare(
+    "INSERT INTO daily_notes (id, date, content, sessions_json, model, agent_turns, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(id, data.date, data.content, data.sessions_json, data.model ?? null, data.agent_turns ?? null, data.cost_usd ?? null);
+  return id;
+}
+
+export function deleteDailyNote(dateStr: string): void {
+  const db = getDb();
+  db.prepare("DELETE FROM daily_notes WHERE date = ?").run(dateStr);
+}

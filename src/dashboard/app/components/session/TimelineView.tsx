@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, type ReactNode } from "react";
 import type { SessionDetail, Exchange, ActivityGroupDetail, Plan } from "../../lib/types.js";
 import { cleanText } from "../../lib/cleanText.js";
-import { getSessionNotes } from "../../lib/api.js";
+import { getSessionNotes, getSessionMermaid } from "../../lib/api.js";
 import { MermaidDiagram } from "./NotesTab.js";
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -310,6 +310,9 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
 
   return (
     <div className="px-6 pb-4 pt-1">
+      {/* Session Flow Diagram — instant, from activity data or AI-enhanced */}
+      <SessionFlowDiagram sessionId={session.session_id} />
+
       {/* Filter chips */}
       <div className="flex items-center gap-1.5 mb-4 flex-wrap">
         {([
@@ -370,21 +373,33 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
           </div>
         )}
       </div>
-
-      {/* Session Flow Diagram (from latest note, if available) */}
-      <SessionFlowDiagram sessionId={session.session_id} />
     </div>
   );
 }
 
-// ── Session Flow Diagram (bottom of Timeline) ────────────────
+// ── Session Flow Diagram ──────────────────────────────────────
 function SessionFlowDiagram({ sessionId }: { sessionId: string }) {
   const [mermaid, setMermaid] = useState<string | null>(null);
+  const [isAiEnhanced, setIsAiEnhanced] = useState(false);
 
   useEffect(() => {
+    // Fetch programmatic diagram immediately (instant, zero AI cost)
+    getSessionMermaid(sessionId)
+      .then((data) => {
+        if (data?.mermaid) {
+          setMermaid(data.mermaid);
+          setIsAiEnhanced(false);
+        }
+      })
+      .catch(() => {});
+
+    // Also check for AI-enhanced mermaid from notes (takes priority)
     getSessionNotes(sessionId)
       .then((notes: any[]) => {
-        if (notes?.[0]?.mermaid) setMermaid(notes[0].mermaid);
+        if (notes?.[0]?.mermaid) {
+          setMermaid(notes[0].mermaid);
+          setIsAiEnhanced(true);
+        }
       })
       .catch(() => {});
   }, [sessionId]);
@@ -392,11 +407,22 @@ function SessionFlowDiagram({ sessionId }: { sessionId: string }) {
   if (!mermaid) return null;
 
   return (
-    <div className="mt-4 pt-4" style={{ borderTop: "1px solid var(--border)" }}>
-      <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>
-        Session Flow
+    <div className="mb-4 pb-4" style={{ borderBottom: "1px solid var(--border)" }}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+          Session Flow
+        </span>
+        <span
+          className="text-[10px] px-1.5 py-0.5 rounded"
+          style={{
+            color: isAiEnhanced ? "#a78bfa" : "var(--text-muted)",
+            border: `1px solid ${isAiEnhanced ? "#a78bfa33" : "var(--border)"}`,
+          }}
+        >
+          {isAiEnhanced ? "AI-enhanced" : "from activity data"}
+        </span>
       </div>
-      <MermaidDiagram chart={mermaid} compact />
+      <MermaidDiagram chart={mermaid} />
     </div>
   );
 }

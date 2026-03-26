@@ -326,6 +326,19 @@ export interface SessionNote {
   generated_at: string;
 }
 
+// --- Daily Notes ---
+
+export interface DailyNote {
+  id: string;
+  date: string;
+  content: string;
+  sessions_json: string;
+  model: string | null;
+  agent_turns: number | null;
+  cost_usd: number | null;
+  generated_at: string;
+}
+
 // --- Hook Types ---
 
 export interface HookInput {

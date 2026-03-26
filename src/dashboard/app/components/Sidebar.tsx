@@ -5,6 +5,7 @@ import {
   Layers,
   Settings,
   ChevronRight,
+  CalendarDays,
 } from "lucide-react";
 
 export function Sidebar() {
@@ -112,7 +113,26 @@ export function Sidebar() {
                 {personalRepos.map((p) => <Item key={p.project_path} active={isSelected(p)} onClick={() => select(p)} label={p.repo} count={p.session_count} />)}
               </div>
             )}
+
           </div>
+        </div>
+
+        {/* Daily Notes — separate section */}
+        <div className="mt-1 px-1">
+          <Link
+            to="/daily"
+            className="w-full text-left px-3 py-[6px] text-[13px] rounded-md transition-all flex items-center gap-2"
+            style={{
+              color: location.pathname.startsWith("/daily") ? "var(--text-primary)" : "var(--text-secondary)",
+              background: location.pathname.startsWith("/daily") ? "var(--accent-dim)" : undefined,
+              fontWeight: location.pathname.startsWith("/daily") ? 500 : 400,
+            }}
+            onMouseEnter={(e) => { if (!location.pathname.startsWith("/daily")) e.currentTarget.style.background = "var(--bg-hover)"; }}
+            onMouseLeave={(e) => { if (!location.pathname.startsWith("/daily")) e.currentTarget.style.background = "transparent"; }}
+          >
+            <CalendarDays size={14} className="shrink-0" style={{ color: location.pathname.startsWith("/daily") ? "var(--text-primary)" : "var(--text-muted)" }} />
+            <span className="flex-1">Daily Notes</span>
+          </Link>
         </div>
       </div>
 

@@ -4,12 +4,16 @@ import {
   getSession,
   getSessionNote,
   getSessionNotes,
+  getSessionSegments,
+  getSessionMilestones,
   upsertSessionNote,
   deleteSessionNote,
 } from "../../db/queries.js";
 import { getDb } from "../../db/index.js";
 import { loadConfig } from "../../cli/config.js";
 import { generateSessionNotesStream } from "../../analysis/agent.js";
+import { generateSessionMermaid } from "../../analysis/mermaid-generator.js";
+import type { MermaidGroup } from "../../analysis/mermaid-generator.js";
 
 export const notesRoutes = new Hono();
 
@@ -19,6 +23,49 @@ function resolveSession(id: string) {
   const db = getDb();
   return db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as any | undefined;
 }
+
+// GET /sessions/:id/mermaid — programmatic flow diagram (instant, zero AI cost)
+notesRoutes.get("/sessions/:id/mermaid", (c) => {
+  const id = c.req.param("id");
+  const session = resolveSession(id);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+
+  const segments = getSessionSegments(session.id);
+  const milestones = getSessionMilestones(session.id);
+
+  // Convert segments (with boundary_type) to MermaidGroup format
+  const groups: MermaidGroup[] = segments
+    .filter((s) => s.boundary_type)
+    .map((s) => {
+      let filesWritten: string[] = [];
+      let filesRead: string[] = [];
+      let toolCounts: Record<string, number> = {};
+      let markers: Array<{ exchange_index: number; type: string; label: string }> = [];
+      try { filesWritten = JSON.parse(s.files_written || "[]"); } catch {}
+      try { filesRead = JSON.parse(s.files_read || "[]"); } catch {}
+      try { toolCounts = JSON.parse(s.tool_counts); } catch {}
+      try { markers = JSON.parse(s.markers || "[]"); } catch {}
+      return {
+        exchange_start: s.exchange_index_start,
+        exchange_end: s.exchange_index_end,
+        exchange_count: s.exchange_count,
+        boundary: s.boundary_type,
+        files_written: filesWritten,
+        files_read: filesRead,
+        tool_counts: toolCounts,
+        error_count: s.error_count,
+        markers,
+      };
+    });
+
+  const mermaid = generateSessionMermaid(groups, milestones.map((m) => ({
+    milestone_type: m.milestone_type,
+    exchange_index: m.exchange_index,
+    description: m.description,
+  })));
+
+  return c.json({ mermaid });
+});
 
 // GET /sessions/:id/notes — get all session notes (most recent first)
 notesRoutes.get("/sessions/:id/notes", (c) => {

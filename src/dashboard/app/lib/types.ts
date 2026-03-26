@@ -257,3 +257,36 @@ export interface RawToolCall {
   exchange_index: number;
   timestamp: string;
 }
+
+export interface DailyNote {
+  id: string;
+  date: string;
+  content: string;
+  sessions_json: string;
+  model: string | null;
+  agent_turns: number | null;
+  cost_usd: number | null;
+  generated_at: string;
+}
+
+export interface DailyData {
+  date: string;
+  sessions: Array<{
+    id: string;
+    session_id: string;
+    title: string | null;
+    project_path: string;
+    git_branch: string | null;
+    started_at: string;
+    ended_at: string | null;
+    exchange_count: number;
+  }>;
+  milestones: Array<{
+    session_id: string;
+    session_title: string | null;
+    milestone_type: string;
+    exchange_index: number;
+    description: string;
+  }>;
+  note: DailyNote | null;
+}

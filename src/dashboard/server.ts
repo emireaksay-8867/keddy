@@ -11,6 +11,7 @@ import { configRoutes } from "./routes/config.js";
 import { projectsRoutes } from "./routes/projects.js";
 import { analyzeRoutes } from "./routes/analyze.js";
 import { notesRoutes } from "./routes/notes.js";
+import { dailyRoutes } from "./routes/daily.js";
 
 const app = new Hono();
 
@@ -55,6 +56,7 @@ app.route("/api", configRoutes);
 app.route("/api", projectsRoutes);
 app.route("/api", analyzeRoutes);
 app.route("/api", notesRoutes);
+app.route("/api/daily", dailyRoutes);
 
 // Static files — resolve from dist root (works even when bundled into cli/index.js)
 const distRoot = join(__dirname, "..");

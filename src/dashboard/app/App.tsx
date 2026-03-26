@@ -3,6 +3,7 @@ import { useState, useEffect, createContext, useContext } from "react";
 import { Sessions } from "./pages/Sessions.js";
 import { SessionDetail } from "./pages/SessionDetail.js";
 import { Settings } from "./pages/Settings.js";
+import { DailyNotes } from "./pages/DailyNotes.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { getProjects, getStats } from "./lib/api.js";
 import type { Stats } from "./lib/types.js";
@@ -64,6 +65,8 @@ export function App() {
             <Routes>
               <Route path="/" element={<Sessions />} />
               <Route path="/sessions/:id" element={<SessionDetail />} />
+              <Route path="/daily" element={<DailyNotes />} />
+              <Route path="/daily/:date" element={<DailyNotes />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>
           </main>

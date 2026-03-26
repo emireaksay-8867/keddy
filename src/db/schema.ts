@@ -172,8 +172,20 @@ export function initSchema(db: Database.Database): void {
       generated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS daily_notes (
+      id TEXT PRIMARY KEY,
+      date TEXT NOT NULL UNIQUE,
+      content TEXT NOT NULL,
+      sessions_json TEXT NOT NULL DEFAULT '[]',
+      model TEXT,
+      agent_turns INTEGER,
+      cost_usd REAL,
+      generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_session_notes_session ON session_notes(session_id);
+    CREATE INDEX IF NOT EXISTS idx_daily_notes_date ON daily_notes(date);
     CREATE INDEX IF NOT EXISTS idx_exchanges_session ON exchanges(session_id);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_exchange ON tool_calls(exchange_id);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);

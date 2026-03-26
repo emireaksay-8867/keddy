@@ -55,9 +55,9 @@ function SessionChips({ session }: { session: SessionListItem }) {
 
     // Status → color + suffix
     const statusMap: Record<string, { color: string; suffix: string }> = {
-      implemented: { color: "#10b981", suffix: v > 1 ? ` (v${v})` : "" },
-      approved:    { color: "#10b981", suffix: v > 1 ? ` (v${v})` : "" },
-      drafted:     { color: "#f59e0b", suffix: ` (v${v}, drafting)` },
+      implemented: { color: "#10b981", suffix: v > 1 ? ` (v${v}, implemented)` : " (implemented)" },
+      approved:    { color: "#10b981", suffix: v > 1 ? ` (v${v}, approved)` : " (approved)" },
+      drafted:     { color: "#f59e0b", suffix: v > 1 ? ` (v${v}, drafting)` : " (drafting)" },
       revised:     { color: "#f59e0b", suffix: ` (v${v}, revising)` },
       rejected:    { color: "#ef4444", suffix: ` (v${v}, rejected)` },
     };
