@@ -310,9 +310,6 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
 
   return (
     <div className="px-6 pb-4 pt-1">
-      {/* Session Flow Diagram — instant, from activity data or AI-enhanced */}
-      <SessionFlowDiagram sessionId={session.session_id} />
-
       {/* Filter chips */}
       <div className="flex items-center gap-1.5 mb-4 flex-wrap">
         {([
@@ -410,7 +407,7 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
 }
 
 // ── Session Flow Diagram ──────────────────────────────────────
-function SessionFlowDiagram({ sessionId }: { sessionId: string }) {
+export function SessionFlowDiagram({ sessionId }: { sessionId: string }) {
   const [mermaid, setMermaid] = useState<string | null>(null);
   const [isAiEnhanced, setIsAiEnhanced] = useState(false);
 
@@ -439,7 +436,7 @@ function SessionFlowDiagram({ sessionId }: { sessionId: string }) {
   if (!mermaid) return null;
 
   return (
-    <div className="mb-4 pb-4" style={{ borderBottom: "1px solid var(--border)" }}>
+    <div className="mb-2 pb-2">
       <div className="flex items-center gap-2 mb-2">
         <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
           Session Flow

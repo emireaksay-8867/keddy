@@ -2,19 +2,41 @@ import { useState, useEffect, useRef, useCallback, type ReactNode } from "react"
 import { useParams, useNavigate } from "react-router";
 import { getSession, getSessionExchanges, analyzeSession, getConfig, updateConfig, getFileDiffs } from "../lib/api.js";
 import { cleanText } from "../lib/cleanText.js";
+import { useAppContext } from "../App.js";
 import { DetailSplit } from "../components/session/DetailSplit.js";
-import { OutcomesBar } from "../components/session/OutcomesBar.js";
+import { GitBranch } from "lucide-react";
 import { PlanSection } from "../components/session/PlanSection.js";
 import { FilesSection } from "../components/session/FilesSection.js";
 import { FileDiffs } from "../components/session/FileDiffs.js";
 import { PlanView, parseSections } from "../components/session/PlanView.js";
-import { TimelineView } from "../components/session/TimelineView.js";
+import { TimelineView, SessionFlowDiagram } from "../components/session/TimelineView.js";
 import { TerminalView } from "../components/session/TerminalView.js";
 import { NotesTab } from "../components/session/NotesTab.js";
 import type { SessionDetail as SessionDetailType, Exchange, Plan, FileDiffEntry } from "../lib/types.js";
 
 // ── Helpers ────────────────────────────────────────────────────
 function trunc(s: string, n: number) { return s.length > n ? s.substring(0, n) + "..." : s; }
+
+function resolveRepoName(
+  projectPath: string,
+  projects: Array<{ project_path: string; repo: string }>,
+): string {
+  const direct = projects.find((p) => p.project_path === projectPath);
+  if (direct) return direct.repo;
+  const parts = projectPath.split("/");
+  const wtIdx = parts.indexOf("worktrees");
+  if (wtIdx >= 0 && wtIdx + 1 < parts.length) return parts[wtIdx + 1];
+  return parts[parts.length - 1] || projectPath;
+}
+
+function fmtDuration(start: string, end: string | null): string {
+  if (!end) return "";
+  const m = Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 60000);
+  if (m < 1) return "<1m";
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+}
 
 // ── Detail Panel State ─────────────────────────────────────────
 interface DetailState {
@@ -31,6 +53,7 @@ const EMPTY_DETAIL: DetailState = { open: false, title: "", subtitle: "", conten
 export function SessionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { projects } = useAppContext();
 
   const [session, setSession] = useState<SessionDetailType | null>(null);
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
@@ -154,53 +177,77 @@ export function SessionDetail() {
   if (!session) return <div className="p-8 text-[14px]" style={{ color: "var(--text-muted)" }}>Session not found</div>;
 
   const title = cleanText(session.title || session.session_id.substring(0, 24)).cleaned;
-  const project = session.project_path.split("/").slice(-2).join("/");
+  const repoName = resolveRepoName(session.project_path, projects);
+  const duration = fmtDuration(session.started_at, session.ended_at);
+
+  // Model display — show all if multiple were used
+  const modelDisplay = session.model_breakdown && session.model_breakdown.length > 0
+    ? session.model_breakdown.map(m => m.model.replace("claude-", "")).join(", ")
+    : null;
+
+  // Build metadata items with middle dots
+  const metaItems: Array<{ text: string; mono?: boolean; icon?: true }> = [];
+  metaItems.push({ text: repoName });
+  if (session.git_branch) metaItems.push({ text: session.git_branch, mono: true, icon: true });
+  metaItems.push({ text: `${exchanges.length} exchanges` });
+  if (duration) metaItems.push({ text: duration });
+  if (modelDisplay) metaItems.push({ text: modelDisplay, mono: true });
+
+  const runAnalysis = async () => {
+    if (!id) return;
+    try {
+      const cfg = await getConfig() as any;
+      if (!cfg.analysis?.enabled || !cfg.analysis?.apiKey) { setShowAiSetup(true); return; }
+      setAnalyzing(true);
+      setAnalyzeStep("Analyzing...");
+      await analyzeSession(id);
+      setAnalyzeStep("");
+      setAnalyzing(false);
+      fetchData(true);
+    } catch { setAnalyzeStep(""); setAnalyzing(false); }
+  };
 
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="px-6 py-4 border-b" style={{ background: "var(--bg-surface)", borderColor: "var(--border)" }}>
-        <button onClick={() => navigate("/")} className="text-[12px] mb-2 flex items-center gap-1 hover:text-[var(--text-primary)] transition-colors" style={{ color: "var(--text-muted)" }}>&larr; Sessions</button>
-        <h1 className="text-[17px] font-semibold leading-snug mb-1.5">{trunc(title, 100)}</h1>
-        <div className="flex items-center gap-2.5 text-[12px] flex-wrap mb-2" style={{ color: "var(--text-tertiary)" }}>
-          <span>{project}</span>
-          {session.git_branch && <span className="px-1.5 py-0.5 rounded font-mono text-[11px]" style={{ background: "var(--bg-elevated)" }}>{session.git_branch}</span>}
-          <span>{exchanges.length} exchanges{session.fork_exchange_index != null ? ` (${session.fork_exchange_index} inherited)` : ""}</span>
-          {session.parent_title && (
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px]" style={{ background: "rgba(167, 139, 250, 0.15)", color: "#a78bfa" }}>
-              forked: {(session.parent_title.length > 30 ? session.parent_title.substring(0, 30) + "\u2026" : session.parent_title)}
-            </span>
-          )}
-          {session.model_breakdown && session.model_breakdown.length > 0 && (
-            <span className="font-mono text-[11px]">{session.model_breakdown[0].model.replace("claude-", "")}</span>
-          )}
-          {(() => {
-            const runAnalysis = async () => {
-              if (!id) return;
-              try {
-                const cfg = await getConfig() as any;
-                if (!cfg.analysis?.enabled || !cfg.analysis?.apiKey) { setShowAiSetup(true); return; }
-                setAnalyzing(true);
-                setAnalyzeStep("Analyzing...");
-                await analyzeSession(id);
-                setAnalyzeStep("");
-                setAnalyzing(false);
-                fetchData(true);
-              } catch { setAnalyzeStep(""); setAnalyzing(false); }
-            };
-            if (analyzing) return <span className="text-[11px] ml-2" style={{ color: "var(--accent)" }}>{analyzeStep}</span>;
-            return (
-              <button onClick={runAnalysis} className="text-[11px] px-2 py-0.5 rounded hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
-                AI Analyze
+      <div className="px-4 py-4 border-b" style={{ borderColor: "var(--border)" }}>
+        <div className="flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 mb-1">
+              <button onClick={() => navigate("/")} className="text-[13px] w-5 h-5 flex items-center justify-center rounded shrink-0 hover:text-[var(--text-primary)] hover:bg-[rgba(255,255,255,0.08)] transition-all" style={{ color: "var(--text-muted)" }}>&larr;</button>
+              <h1 className="text-[17px] font-semibold leading-snug">{trunc(title, 100)}</h1>
+            </div>
+            <div className="flex items-center flex-wrap text-[12px] pl-[26px]" style={{ color: "var(--text-muted)" }}>
+              {metaItems.map((item, i) => (
+                <span key={i} className="inline-flex items-center">
+                  {i > 0 && <span className="mx-1.5">·</span>}
+                  {item.icon && <GitBranch size={11} className="mr-1 shrink-0" style={{ color: "var(--text-muted)" }} />}
+                  <span className={item.mono ? "font-mono" : ""}>{item.text}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="shrink-0">
+            {analyzing ? (
+              <span className="text-[11px]" style={{ color: "var(--accent)" }}>{analyzeStep}</span>
+            ) : (
+              <button onClick={runAnalysis} className="text-[11px] px-2.5 py-1 rounded-md hover:brightness-125 transition-colors font-medium" style={{ background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none" }}>
+                Keddy Analyze
               </button>
-            );
-          })()}
+            )}
+          </div>
         </div>
-        <OutcomesBar session={session} />
+        {session.parent_title && (
+          <div className="mt-1.5">
+            <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full" style={{ background: "rgba(167, 139, 250, 0.1)", color: "#a78bfa" }}>
+              forked: {trunc(session.parent_title, 40)}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center border-b px-6" style={{ background: "var(--bg-surface)", borderColor: "var(--border)" }}>
+      <div className="flex items-center border-b px-6" style={{ borderColor: "var(--border)" }}>
         {([
           { key: "timeline" as const, label: "Timeline" },
           { key: "terminal" as const, label: "Terminal Log" },
@@ -209,7 +256,7 @@ export function SessionDetail() {
         ]).map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} className="px-4 py-2.5 text-[13px] relative font-medium" style={{ color: tab === t.key ? "var(--text-primary)" : "var(--text-muted)" }}>
             {t.label}
-            {tab === t.key && <div className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full" style={{ background: "var(--text-primary)" }} />}
+            {tab === t.key && <div className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full" style={{ background: "rgba(56,139,253,0.75)" }} />}
           </button>
         ))}
       </div>
@@ -223,6 +270,7 @@ export function SessionDetail() {
               {/* Plans at top — strategy overview */}
               {session.plans.length > 0 && (
                 <div className="px-6 pt-5 pb-3">
+                  <div className="text-[12px] font-semibold mb-2" style={{ color: "var(--text-muted)" }}>Plans</div>
                   <PlanSection
                     plans={session.plans}
                     tasks={session.tasks}
@@ -235,9 +283,14 @@ export function SessionDetail() {
                   />
                 </div>
               )}
-              {/* Activity heading — always shown; separator line only when plans exist above */}
-              <div className={`mx-6 mb-2 ${session.plans.length > 0 ? "" : "pt-3"}`} style={session.plans.length > 0 ? { borderTop: "1px solid var(--border)" } : undefined}>
-                <div className={`text-[11px] font-semibold uppercase tracking-wider ${session.plans.length > 0 ? "pt-3" : ""} pb-1`} style={{ color: "var(--text-muted)" }}>Activity</div>
+              {/* Session Flow — between plans and activity */}
+              <div className={`px-6 ${session.plans.length > 0 ? "" : "pt-4"}`}>
+                <SessionFlowDiagram sessionId={session.session_id} />
+              </div>
+
+              {/* Activity heading */}
+              <div className="mx-6 mb-1">
+                <div className="text-[11px] font-semibold uppercase tracking-wider pb-1" style={{ color: "var(--text-muted)" }}>Activity</div>
               </div>
               {/* Activity timeline — git events appear as milestones inline here */}
               <TimelineView
