@@ -58,11 +58,13 @@ notesRoutes.get("/sessions/:id/mermaid", (c) => {
       };
     });
 
+  const forkIdx = (session as any).fork_exchange_index as number | null;
+
   const mermaid = generateSessionMermaid(groups, milestones.map((m) => ({
     milestone_type: m.milestone_type,
     exchange_index: m.exchange_index,
     description: m.description,
-  })));
+  })), forkIdx);
 
   return c.json({ mermaid });
 });

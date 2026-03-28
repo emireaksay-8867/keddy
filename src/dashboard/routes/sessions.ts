@@ -17,17 +17,35 @@ import {
   insertToolCall,
   insertMilestone,
   insertPlan,
+  insertTask,
   extractToolCallFields,
 } from "../../db/queries.js";
 import { getDb } from "../../db/index.js";
 
 function extractPlanTitle(planText: string): string | null {
+  if (!planText) return null;
+  // Try markdown heading first
   for (const line of planText.split("\n")) {
     const trimmed = line.trim();
     if (trimmed.startsWith("#")) {
       let title = trimmed.replace(/^#+\s*/, "");
       title = title.replace(/^Plan:\s*/i, "");
       return title || null;
+    }
+  }
+  // Fallback: first non-empty, non-bullet line
+  for (const line of planText.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("-") && !trimmed.startsWith("*")) {
+      return trimmed.length > 60 ? trimmed.substring(0, 60) : trimmed;
+    }
+  }
+  // Last resort: first bullet content
+  for (const line of planText.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed) {
+      const content = trimmed.replace(/^[-*]\s*/, "");
+      return content.length > 60 ? content.substring(0, 60) : content;
     }
   }
   return null;
@@ -354,12 +372,14 @@ sessionsRoutes.get("/", (c) => {
     const plans = getSessionPlans(s.id);
     const hasAiSummaries = segments.some((seg) => seg.summary);
 
-    // Resolve parent session title for forks
+    // Resolve parent session title and ID for forks
     let parentTitle: string | null = null;
+    let parentSessionId: string | null = null;
     if (s.forked_from) {
       try {
         const forkData = JSON.parse(s.forked_from);
         if (forkData.sessionId) {
+          parentSessionId = forkData.sessionId;
           const parent = db.prepare("SELECT title FROM sessions WHERE session_id = ?").get(forkData.sessionId) as { title: string | null } | undefined;
           parentTitle = parent?.title ?? null;
         }
@@ -369,11 +389,16 @@ sessionsRoutes.get("/", (c) => {
     // Compute outcomes from milestones
     const outcomes = computeOutcomes(milestones);
 
-    // Find best plan: prefer implemented > approved > last non-superseded
-    const nonSuperseded = plans.filter((p) => p.status !== "superseded");
-    const acceptedPlan = nonSuperseded.find((p) => p.status === "implemented")
-      ?? nonSuperseded.find((p) => p.status === "approved");
-    const latestPlan = acceptedPlan ?? nonSuperseded[nonSuperseded.length - 1] ?? null;
+    // Find best plan: only show approved or implemented in the session list
+    // For forked sessions, exclude inherited plans (from parent session)
+    const forkIdx = (s as any).fork_exchange_index ?? null;
+    const ownPlans = forkIdx != null
+      ? plans.filter((p: any) => p.exchange_index_end >= forkIdx)
+      : plans;
+    const acceptedPlan = ownPlans.find((p: any) => p.status === "implemented")
+      ?? ownPlans.find((p: any) => p.status === "approved")
+      ?? null;
+    const latestPlan = acceptedPlan;
 
     // Facts-first: activity group summaries for the activity strip
     const activityGroups = segments
@@ -465,7 +490,9 @@ sessionsRoutes.get("/", (c) => {
       has_ai: hasAiSummaries,
       compaction_count: s.compaction_count,
       forked_from: s.forked_from,
+      fork_exchange_index: (s as any).fork_exchange_index ?? null,
       parent_title: parentTitle,
+      parent_session_id: parentSessionId,
       // Facts-first additions
       activity_groups: activityGroups,
       milestones: milestones.map((m) => ({
@@ -579,6 +606,27 @@ sessionsRoutes.get("/:id", (c) => {
         });
       }
 
+      // Extract tasks for on-the-fly analysis
+      const hasTaskToolsInParsed = parsedExchanges.some((ex: any) =>
+        ex.tool_calls.some((tc: any) => tc.name === "TaskCreate" || tc.name === "TaskUpdate" || tc.name === "TaskStop"),
+      );
+      if (hasTaskToolsInParsed) {
+        const { extractTasks } = require("../../capture/tasks.js");
+        db.prepare("DELETE FROM tasks WHERE session_id = ?").run(session.id);
+        const newTasks = extractTasks(parsedExchanges);
+        for (const task of newTasks) {
+          insertTask({
+            session_id: session.id,
+            task_index: parseInt(task.id),
+            subject: task.subject,
+            description: task.description,
+            status: task.status,
+            exchange_index_created: task.exchange_index_created,
+            exchange_index_completed: task.exchange_index_completed,
+          });
+        }
+      }
+
       // Re-read after insert
       segments = getSessionSegments(session.id);
       milestones = getSessionMilestones(session.id);
@@ -607,6 +655,30 @@ sessionsRoutes.get("/:id", (c) => {
 
   // Git details with file/stats/hash parsing
   const gitDetails = extractGitDetails(db, session.id, milestones);
+
+  // Resolve GitHub repo for URL construction
+  try {
+    const { execSync } = require("node:child_process");
+    const { parseGitRemote, commitUrl: mkCommitUrl, branchUrl: mkBranchUrl, prUrl: mkPrUrl } = require("../../capture/github.js");
+    const remoteUrl = execSync("git remote get-url origin", {
+      cwd: session.project_path,
+      encoding: "utf8",
+      timeout: 3000,
+    }).trim();
+    const ghRepo = parseGitRemote(remoteUrl);
+    if (ghRepo) {
+      for (const gd of gitDetails) {
+        if (gd.type === "commit" && gd.hash) {
+          (gd as any).url = mkCommitUrl(ghRepo, gd.hash);
+        } else if (gd.type === "push" && gd.push_branch) {
+          (gd as any).url = mkBranchUrl(ghRepo, gd.push_branch);
+        } else if (gd.type === "pr" && gd.description) {
+          const prMatch = gd.description.match(/#(\d+)/);
+          if (prMatch) (gd as any).url = mkPrUrl(ghRepo, parseInt(prMatch[1]));
+        }
+      }
+    }
+  } catch { /* no git remote or not a git repo — URLs just won't be added */ }
 
   // Test status — final state only (last test milestone)
   let testStatus: { passing: boolean; description: string; exchange_index: number } | null = null;
@@ -723,16 +795,36 @@ sessionsRoutes.get("/:id", (c) => {
     `).all(session.id) as any[];
   } catch { /* non-critical */ }
 
-  // File operations
+  // Fork metadata for detail view (computed before file ops since they depend on it)
+  const forkExIdx = (session as any).fork_exchange_index as number | null;
+  let detailParentTitle: string | null = null;
+  let detailParentSessionId: string | null = null;
+  if (session.forked_from) {
+    try {
+      const forkData = JSON.parse(session.forked_from);
+      if (forkData.sessionId) {
+        detailParentSessionId = forkData.sessionId;
+        const parent = db.prepare("SELECT title FROM sessions WHERE session_id = ?").get(forkData.sessionId) as { title: string | null } | undefined;
+        detailParentTitle = parent?.title ?? null;
+      }
+    } catch (e) {
+      console.error("[keddy] Fork metadata parse error:", e);
+    }
+  }
+
+  // File operations (for forked sessions, only show post-fork file ops)
   let fileOperations: Array<{ file_path: string; short_name: string; reads: number; edits: number; writes: number }> = [];
   try {
+    const forkFilter = forkExIdx != null
+      ? `AND tc.exchange_id IN (SELECT id FROM exchanges WHERE session_id = tc.session_id AND exchange_index >= ${forkExIdx})`
+      : "";
     const rows = db.prepare(`
-      SELECT file_path,
-        SUM(CASE WHEN tool_name IN ('Read', 'Grep', 'Glob') THEN 1 ELSE 0 END) as reads,
-        SUM(CASE WHEN tool_name = 'Edit' THEN 1 ELSE 0 END) as edits,
-        SUM(CASE WHEN tool_name = 'Write' THEN 1 ELSE 0 END) as writes
-      FROM tool_calls WHERE session_id = ? AND file_path IS NOT NULL
-      GROUP BY file_path ORDER BY (edits + writes) DESC, reads DESC
+      SELECT tc.file_path,
+        SUM(CASE WHEN tc.tool_name IN ('Read', 'Grep', 'Glob') THEN 1 ELSE 0 END) as reads,
+        SUM(CASE WHEN tc.tool_name = 'Edit' THEN 1 ELSE 0 END) as edits,
+        SUM(CASE WHEN tc.tool_name = 'Write' THEN 1 ELSE 0 END) as writes
+      FROM tool_calls tc WHERE tc.session_id = ? AND tc.file_path IS NOT NULL ${forkFilter}
+      GROUP BY tc.file_path ORDER BY (edits + writes) DESC, reads DESC
     `).all(session.id) as any[];
     fileOperations = rows.map((r: any) => ({
       ...r,
@@ -740,8 +832,28 @@ sessionsRoutes.get("/:id", (c) => {
     }));
   } catch { /* non-critical */ }
 
+  // Fork children: sessions that were forked FROM this session
+  let forkChildren: Array<{ session_id: string; title: string | null; fork_exchange_index: number | null }> = [];
+  try {
+    const childLinks = db.prepare(
+      "SELECT source_session_id FROM session_links WHERE target_session_id = ? AND link_type = 'fork'",
+    ).all(session.id) as Array<{ source_session_id: string }>;
+    for (const link of childLinks) {
+      const child = db.prepare(
+        "SELECT session_id, title, fork_exchange_index FROM sessions WHERE id = ?",
+      ).get(link.source_session_id) as { session_id: string; title: string | null; fork_exchange_index: number | null } | undefined;
+      if (child) forkChildren.push(child);
+    }
+    // Sort by fork_exchange_index so they appear in order
+    forkChildren.sort((a, b) => (a.fork_exchange_index ?? 0) - (b.fork_exchange_index ?? 0));
+  } catch { /* non-critical */ }
+
   return c.json({
     ...session,
+    fork_exchange_index: forkExIdx,
+    parent_title: detailParentTitle,
+    parent_session_id: detailParentSessionId,
+    fork_children: forkChildren.length > 0 ? forkChildren : undefined,
     segments,
     milestones,
     plans: plans.map((p: any) => {

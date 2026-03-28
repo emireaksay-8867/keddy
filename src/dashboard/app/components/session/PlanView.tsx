@@ -1,13 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 interface PlanViewProps {
   planText: string;
   version: number;
   status: string;
+  changedSections?: Set<number>;
 }
 
 /** Parse plan text into structured sections */
-function parseSections(text: string): Array<{ heading: string; level: number; content: string }> {
+export function parseSections(text: string): Array<{ heading: string; level: number; content: string }> {
   const lines = text.split("\n");
   const sections: Array<{ heading: string; level: number; content: string }> = [];
   let currentHeading = "";
@@ -157,29 +158,48 @@ function InlineText({ text }: { text: string }) {
   );
 }
 
-export function PlanView({ planText, version, status }: PlanViewProps) {
+export function PlanView({ planText, version, status, changedSections }: PlanViewProps) {
   if (!planText) return <div className="text-[12px]" style={{ color: "var(--text-muted)" }}>(empty plan)</div>;
 
   const sections = parseSections(planText);
+  const firstChangedRef = useRef<HTMLDivElement>(null);
+  const hasChanges = changedSections && changedSections.size > 0;
+
+  // Scroll to first changed section instantly after render
+  useEffect(() => {
+    if (hasChanges && firstChangedRef.current) {
+      requestAnimationFrame(() => {
+        firstChangedRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }, [hasChanges, planText]);
 
   return (
     <div className="space-y-4">
-      {sections.map((sec, i) => (
-        <div key={i}>
-          {sec.heading && (
-            <div
-              className={`font-mono font-medium mb-1.5 ${sec.level === 1 ? "text-[14px]" : sec.level === 2 ? "text-[12px]" : "text-[11px]"}`}
-              style={{
-                color: sec.level === 1 ? "var(--text-primary)" : "var(--text-secondary)",
-                letterSpacing: "-0.02em",
-              }}
-            >
-              {sec.heading}
-            </div>
-          )}
-          <ContentBlock text={sec.content} />
-        </div>
-      ))}
+      {sections.map((sec, i) => {
+        const isChanged = changedSections?.has(i) ?? false;
+        const isFirstChanged = isChanged && ![...Array(i)].some((_, j) => changedSections?.has(j));
+
+        return (
+          <div
+            key={i}
+            ref={isFirstChanged ? firstChangedRef : undefined}
+          >
+            {sec.heading && (
+              <div
+                className={`font-mono font-medium mb-1.5 ${sec.level === 1 ? "text-[14px]" : sec.level === 2 ? "text-[12px]" : "text-[11px]"}`}
+                style={{
+                  color: sec.level === 1 ? "var(--text-primary)" : "var(--text-secondary)",
+                  letterSpacing: "-0.02em",
+                }}
+              >
+                {sec.heading}
+              </div>
+            )}
+            <ContentBlock text={sec.content} />
+          </div>
+        );
+      })}
     </div>
   );
 }

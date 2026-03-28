@@ -36,3 +36,7 @@ coverage/
 # Local config
 .superset/
 .mcp.json
+
+# Local data
+daily-notes/
+memory/

@@ -162,16 +162,23 @@ function edgeLabel(boundary: string | null): string {
 /**
  * Generate a mermaid flowchart from pre-computed activity groups and milestones.
  * Returns empty string if insufficient data.
+ *
+ * @param forkExchangeIndex - If set, filter out groups entirely before this exchange
  */
 export function generateSessionMermaid(
   groups: MermaidGroup[],
   _milestones: MermaidMilestone[],
+  forkExchangeIndex?: number | null,
 ): string {
-  if (groups.length === 0) return "";
+  // Filter out inherited groups for forked sessions
+  const filtered = forkExchangeIndex != null
+    ? groups.filter((g) => g.exchange_end >= forkExchangeIndex)
+    : groups;
+  if (filtered.length === 0) return "";
 
   // Phase 1: Merge small groups (1 exchange, no markers, no files_written)
   let merged: MermaidGroup[] = [];
-  for (const group of groups) {
+  for (const group of filtered) {
     const isSmall = group.exchange_count <= 1
       && group.markers.length === 0
       && group.files_written.length === 0;
@@ -197,6 +204,9 @@ export function generateSessionMermaid(
     const mergedGroup = mergeGroups(merged[minIdx], merged[minIdx + 1]);
     merged.splice(minIdx, 2, mergedGroup);
   }
+
+  // A single node communicates no flow — let the AI generate from transcript instead
+  if (merged.length <= 1) return "";
 
   // Phase 3: Generate mermaid
   const lines: string[] = ["graph LR"];

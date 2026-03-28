@@ -24,7 +24,9 @@ export interface SessionListItem {
   plans?: Array<{ version: number; status: string }>;
   has_ai?: boolean;
   forked_from?: string | null;
+  fork_exchange_index?: number | null;
   parent_title?: string | null;
+  parent_session_id?: string | null;
   // Facts-first
   activity_groups?: ActivityGroupSummary[];
   milestones?: MilestoneMarker[];
@@ -92,6 +94,11 @@ export interface SessionDetail {
   started_at: string;
   ended_at: string | null;
   exchange_count: number;
+  forked_from?: string | null;
+  fork_exchange_index?: number | null;
+  parent_title?: string | null;
+  parent_session_id?: string | null;
+  fork_children?: Array<{ session_id: string; title: string | null; fork_exchange_index: number | null }>;
   segments: Segment[];
   milestones: Milestone[];
   plans: Plan[];
@@ -222,6 +229,7 @@ export interface GitDetail {
   hash?: string;
   push_range?: string;
   push_branch?: string;
+  url?: string;
 }
 
 export interface FileDiffEntry {

@@ -45,20 +45,27 @@ function truncateAtWord(text: string, maxLen: number): string {
 export function deriveTitle(
   exchanges: Array<{ user_prompt: string }>,
   context?: {
-    plans?: Array<{ plan_text: string; status: string }>;
-    milestones?: Array<{ milestone_type: string; description: string }>;
+    plans?: Array<{ plan_text: string; status: string; exchange_index_start?: number }>;
+    milestones?: Array<{ milestone_type: string; description: string; exchange_index?: number }>;
     /** For forked sessions: index where new content starts (skip inherited exchanges) */
     forkExchangeIndex?: number | null;
   },
 ): string | null {
+  const forkIdx = context?.forkExchangeIndex ?? null;
+
   // For forked sessions, only consider exchanges after the fork point
-  const relevantExchanges = context?.forkExchangeIndex != null
-    ? exchanges.slice(context.forkExchangeIndex)
+  const relevantExchanges = forkIdx != null
+    ? exchanges.slice(forkIdx)
     : exchanges;
 
   // Priority 1: Use the latest approved/implemented plan's first meaningful line
+  // For forked sessions, only consider plans created after the fork point
   if (context?.plans) {
-    const activePlan = [...context.plans]
+    const relevantPlans = forkIdx != null
+      ? context.plans.filter((p) => p.exchange_index_start == null || p.exchange_index_start >= forkIdx)
+      : context.plans;
+
+    const activePlan = [...relevantPlans]
       .reverse()
       .find((p) => p.status === "implemented" || p.status === "approved");
     if (activePlan) {
@@ -74,8 +81,13 @@ export function deriveTitle(
   }
 
   // Priority 2: Use first commit message
+  // For forked sessions, only consider milestones after the fork point
   if (context?.milestones) {
-    const firstCommit = context.milestones.find((m) => m.milestone_type === "commit");
+    const relevantMilestones = forkIdx != null
+      ? context.milestones.filter((m) => m.exchange_index == null || m.exchange_index >= forkIdx)
+      : context.milestones;
+
+    const firstCommit = relevantMilestones.find((m) => m.milestone_type === "commit");
     if (firstCommit && firstCommit.description.length > 3) {
       return truncateAtWord(firstCommit.description, 80);
     }

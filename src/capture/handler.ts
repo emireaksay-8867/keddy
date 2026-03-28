@@ -324,8 +324,9 @@ async function handleStop(input: HookStdin): Promise<void> {
       if (customTitle) {
         // Custom title from Claude Code — always takes priority
         db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(customTitle, sessionRow.id);
-      } else {
+      } else if (!sessionRow.forked_from) {
         // Fallback: derive title from first real user prompt if not already set
+        // Skip for forked sessions — let SessionEnd handle it with full fork context
         const currentTitle = db.prepare("SELECT title FROM sessions WHERE id = ?").get(sessionRow.id) as { title: string | null } | undefined;
         if (!currentTitle?.title) {
           const allExchanges = getSessionExchanges(sessionRow.id);
@@ -442,6 +443,7 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
         claude_version: transcript.claude_version,
         slug: transcript.slug,
         forked_from: transcript.forked_from,
+        fork_exchange_index: transcript.fork_exchange_index,
         title: transcript.custom_title || deriveTitle(transcript.exchanges, { forkExchangeIndex: transcript.fork_exchange_index }) || null,
       });
     }
@@ -496,12 +498,36 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
     db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
     db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);
     db.prepare("DELETE FROM compaction_events WHERE session_id = ?").run(session.id);
-    // Update forked_from if parser found it (branches set this on every JSONL entry)
+    db.prepare("DELETE FROM tasks WHERE session_id = ?").run(session.id);
+    // Update fork metadata if parser found it
     if (transcript.forked_from) {
-      db.prepare("UPDATE sessions SET forked_from = ? WHERE id = ?").run(
+      db.prepare("UPDATE sessions SET forked_from = ?, fork_exchange_index = COALESCE(?, fork_exchange_index) WHERE id = ?").run(
         transcript.forked_from,
+        transcript.fork_exchange_index,
         session.id,
       );
+
+      // Create "fork" session link for bidirectional navigation
+      try {
+        const forkData = JSON.parse(transcript.forked_from);
+        if (forkData.sessionId) {
+          const parentSession = getSession(forkData.sessionId);
+          if (parentSession) {
+            // Check if link already exists
+            const existingLink = db.prepare(
+              "SELECT id FROM session_links WHERE source_session_id = ? AND target_session_id = ? AND link_type = 'fork'",
+            ).get(session.id, parentSession.id);
+            if (!existingLink) {
+              insertSessionLink({
+                source_session_id: session.id,
+                target_session_id: parentSession.id,
+                link_type: "fork",
+                shared_files: "[]",
+              });
+            }
+          }
+        }
+      } catch { /* invalid forked_from JSON — non-critical */ }
     }
 
     // Run programmatic analysis

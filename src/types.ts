@@ -18,6 +18,7 @@ export interface Session {
   compaction_count: number;
   jsonl_path: string | null;
   forked_from: string | null;
+  fork_exchange_index: number | null;
   metadata: string | null; // JSON string
   entrypoint: string | null;
 }

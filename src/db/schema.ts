@@ -16,6 +16,7 @@ export function initSchema(db: Database.Database): void {
       compaction_count INTEGER NOT NULL DEFAULT 0,
       jsonl_path TEXT,
       forked_from TEXT,
+      fork_exchange_index INTEGER,
       metadata TEXT,
       entrypoint TEXT
     );

@@ -22,7 +22,7 @@ export function DetailSplit({ title, subtitle, content, rawData, onClose }: Deta
   return (
     <div
       className="h-full flex flex-col overflow-hidden"
-      style={{ borderLeft: "1px solid var(--border)", background: "var(--bg-main)" }}
+      style={{ borderLeft: "1px solid var(--border)", background: "var(--bg-surface)" }}
     >
       {/* Header */}
       <div className="flex items-start justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--border)" }}>

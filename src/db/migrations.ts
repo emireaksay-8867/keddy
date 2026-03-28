@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 
-const CURRENT_VERSION = 7;
+const CURRENT_VERSION = 8;
 
 interface Migration {
   version: number;
@@ -219,6 +219,17 @@ const migrations: Migration[] = [
         );
         CREATE INDEX IF NOT EXISTS idx_daily_notes_date ON daily_notes(date);
       `);
+    },
+  },
+  {
+    version: 8,
+    description: "Add fork_exchange_index to sessions for fork content separation",
+    up: (db) => {
+      try {
+        db.exec("ALTER TABLE sessions ADD COLUMN fork_exchange_index INTEGER");
+      } catch {
+        // Column might already exist
+      }
     },
   },
 ];

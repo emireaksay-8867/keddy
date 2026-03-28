@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Children, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { getSessionNotes, generateSessionNotesSSE, deleteSessionNote } from "../../lib/api.js";
@@ -76,6 +76,35 @@ export function MermaidDiagram({ chart, compact }: { chart: string; compact?: bo
   );
 }
 
+// ── Session Reference Styling ────────────────────────────────
+
+function renderSessionRefs(text: string): ReactNode {
+  const pattern = /\[sessions?\s+[\d,\s\-:#]+\]/gi;
+  const parts: ReactNode[] = [];
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(text)) !== null) {
+    if (m.index > lastIndex) parts.push(text.slice(lastIndex, m.index));
+    parts.push(<span key={`sr-${m.index}`} className="session-ref">{m[0].slice(1, -1)}</span>);
+    lastIndex = m.index + m[0].length;
+  }
+  if (parts.length === 0) return text;
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return <>{parts}</>;
+}
+
+function processTextChildren(children: ReactNode): ReactNode {
+  return Children.map(children, (child) =>
+    typeof child === "string" ? renderSessionRefs(child) : child,
+  );
+}
+
+const mdComponents = {
+  p: ({ node, children, ...props }: any) => <p {...props}>{processTextChildren(children)}</p>,
+  li: ({ node, children, ...props }: any) => <li {...props}>{processTextChildren(children)}</li>,
+  strong: ({ node, children, ...props }: any) => <strong {...props}>{processTextChildren(children)}</strong>,
+};
+
 // ── Markdown with Mermaid ────────────────────────────────────
 
 export function MarkdownWithMermaid({ content, compact }: { content: string; compact?: boolean }) {
@@ -97,7 +126,7 @@ export function MarkdownWithMermaid({ content, compact }: { content: string; com
         part.type === "mermaid" ? (
           <MermaidDiagram key={i} chart={part.content} compact={compact} />
         ) : (
-          <ReactMarkdown key={i} remarkPlugins={[remarkGfm]}>{part.content}</ReactMarkdown>
+          <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} components={mdComponents}>{part.content}</ReactMarkdown>
         ),
       )}
     </div>
@@ -113,7 +142,8 @@ interface NoteSection {
   hasMermaid: boolean;
 }
 
-function parseNoteSections(content: string): NoteSection[] {
+export { type NoteSection };
+export function parseNoteSections(content: string): NoteSection[] {
   const sections: NoteSection[] = [];
   const lines = content.split("\n");
   let current: { title: string; lines: string[] } | null = null;
@@ -205,9 +235,38 @@ export function ActivityFeed({ events }: { events: AgentEvent[] }) {
   );
 }
 
+// ── Expandable Content ───────────────────────────────────────
+
+function ExpandableContent({ content, compact }: { content: string; compact?: boolean }) {
+  const [showFull, setShowFull] = useState(false);
+  const markerIndex = content.indexOf("<!-- more -->");
+
+  if (markerIndex === -1 || markerIndex < 50) {
+    return <MarkdownWithMermaid content={content} compact={compact} />;
+  }
+
+  const condensed = content.substring(0, markerIndex).trim();
+  const full = content.replace("<!-- more -->", "").trim();
+
+  return (
+    <div>
+      <MarkdownWithMermaid content={showFull ? full : condensed} compact={compact} />
+      <button
+        onClick={() => setShowFull(!showFull)}
+        className="text-[11px] mt-1.5 transition-colors"
+        style={{ color: "var(--text-tertiary)" }}
+        onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}
+        onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-tertiary)")}
+      >
+        {showFull ? "\u25B4 Show less" : "\u25BE Show more"}
+      </button>
+    </div>
+  );
+}
+
 // ── Section Card ─────────────────────────────────────────────
 
-function SectionCard({ section, expanded, onToggle }: { section: NoteSection; expanded: boolean; onToggle: () => void }) {
+export function SectionCard({ section, expanded, onToggle }: { section: NoteSection; expanded: boolean; onToggle: () => void }) {
   return (
     <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)", background: "var(--bg-surface)" }}>
       <button
@@ -215,15 +274,17 @@ function SectionCard({ section, expanded, onToggle }: { section: NoteSection; ex
         onClick={onToggle}
       >
         <span className="text-[13px] font-medium" style={{ color: "var(--text-primary)" }}>{section.title}</span>
-        <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-          {expanded ? "\u25B2" : "\u25BC"}
+        <span className="text-[11px] transition-transform" style={{ color: "var(--text-muted)", transform: expanded ? "rotate(180deg)" : "rotate(0deg)", transitionDuration: "0.2s" }}>
+          {"\u25BC"}
         </span>
       </button>
-      {expanded && (
-        <div className="px-4 pb-4 pt-1" style={{ borderTop: "1px solid var(--border)" }}>
-          <MarkdownWithMermaid content={section.content} />
+      <div className="section-collapse" style={{ gridTemplateRows: expanded ? "1fr" : "0fr", borderTop: expanded ? "1px solid var(--border)" : "1px solid transparent" }}>
+        <div className="overflow-hidden">
+          <div className="px-4 pb-4 pt-1">
+            <ExpandableContent content={section.content} />
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

@@ -82,13 +82,24 @@ code, pre {
 }
 .animate-spin { animation: spin 0.7s linear infinite; }
 
+/* Section collapse transition */
+.section-collapse {
+  display: grid;
+  transition: grid-template-rows 0.2s ease, border-color 0.2s ease;
+}
+
 /* Markdown rendered content */
 .md-content h1 { font-size: 1.25rem; font-weight: 600; margin: 1rem 0 0.5rem; }
 .md-content h2 { font-size: 1.1rem; font-weight: 600; margin: 1rem 0 0.5rem; color: var(--text-primary); }
 .md-content h3 { font-size: 0.95rem; font-weight: 600; margin: 0.75rem 0 0.25rem; }
-.md-content p { margin: 0.4rem 0; color: var(--text-secondary); }
-.md-content ul, .md-content ol { margin: 0.4rem 0; padding-left: 1.5rem; color: var(--text-secondary); }
-.md-content li { margin: 0.2rem 0; }
+.md-content p { margin: 0.4rem 0; color: var(--text-secondary); line-height: 1.65; }
+.md-content ul { list-style: none; margin: 0.5rem 0; padding-left: 0; color: var(--text-secondary); }
+.md-content ul ul { padding-left: 1rem; margin: 0.1rem 0; }
+.md-content ol { margin: 0.5rem 0; padding-left: 1.5rem; color: var(--text-secondary); }
+.md-content ul > li { position: relative; padding-left: 1.2rem; }
+.md-content ul > li::before { content: "▸"; position: absolute; left: 0; color: var(--border-bright); font-size: 0.85em; }
+.md-content ol > li::marker { color: var(--text-muted); }
+.md-content li { margin: 0.3rem 0; line-height: 1.6; }
 .md-content code {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.85em;
@@ -100,6 +111,18 @@ code, pre {
 .md-content pre { background: var(--bg-root); padding: 0.75rem; border-radius: 6px; overflow-x: auto; margin: 0.5rem 0; }
 .md-content pre code { background: none; padding: 0; }
 .md-content strong { color: var(--text-primary); font-weight: 600; }
+.session-ref {
+  font-size: 0.78em;
+  font-weight: 550;
+  padding: 0.1em 0.4em;
+  border-radius: 3px;
+  background: var(--accent-dim);
+  color: var(--accent-hover);
+  border: 1px solid rgba(99, 102, 241, 0.12);
+  font-family: 'Geist Mono', 'JetBrains Mono', monospace;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
 .md-content hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
 .md-content a { color: var(--accent); text-decoration: underline; }
 /* Scale mermaid diagrams to fit without dominating the page */

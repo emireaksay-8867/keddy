@@ -121,7 +121,7 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
       const nextPlanStartIdx = hasNextVersion ? plans[i + 1].exchange_index_start : Infinity;
 
       const followingExchanges = exchanges.filter(
-        (e) => e.index > planEndIdx && e.index < nextPlanStartIdx,
+        (e) => e.index >= planEndIdx && e.index < nextPlanStartIdx,
       );
 
       const implTools = new Set(["Edit", "Write", "Bash", "NotebookEdit"]);
@@ -142,7 +142,7 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
     const nextPlanStartIdx = (i + 1 < plans.length) ? plans[i + 1].exchange_index_start : Infinity;
 
     const followingExchanges = exchanges.filter(
-      (e) => e.index > planEndIdx && e.index < nextPlanStartIdx,
+      (e) => e.index >= planEndIdx && e.index < nextPlanStartIdx,
     );
 
     let tasksCreated = 0;
@@ -173,20 +173,23 @@ export function extractPlans(exchanges: ParsedExchange[]): ExtractedPlan[] {
     }
   }
 
-  // Mark superseded: all implemented/approved plans except the last one
+  // Mark superseded: only "approved" (not "implemented") plans when newer active plans exist
+  // Implemented plans stay implemented — they were done. Only approved-but-not-acted-on get superseded.
   const activePlans = plans.filter((p) => p.status === "approved" || p.status === "implemented");
   if (activePlans.length > 1) {
     for (let i = 0; i < activePlans.length - 1; i++) {
-      activePlans[i].status = "superseded";
+      if (activePlans[i].status === "approved") {
+        activePlans[i].status = "superseded";
+      }
     }
   }
 
-  // If the last plan is "drafted" (entered but not exited), supersede any previous
-  // approved/implemented plans — re-entering plan mode means the old plan is being replaced
+  // If the last plan is "drafted" (entered but not exited), supersede previous approved plans
+  // But NOT implemented plans — those are done
   const lastPlan = plans[plans.length - 1];
   if (lastPlan && lastPlan.status === "drafted" && plans.length > 1) {
     for (let i = 0; i < plans.length - 1; i++) {
-      if (plans[i].status === "approved" || plans[i].status === "implemented") {
+      if (plans[i].status === "approved") {
         plans[i].status = "superseded";
       }
     }

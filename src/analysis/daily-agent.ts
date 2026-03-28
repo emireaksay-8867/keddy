@@ -68,33 +68,83 @@ async function consumeSessionNoteGenerator(
 
 // ── System Prompt ────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You write a daily note by synthesizing individual session notes.
+function buildDailySystemPrompt(sessionCount: number): string {
+  const isLowSession = sessionCount <= 2;
+
+  const summary = isLowSession
+    ? `## Summary
+Detailed narrative of what the session(s) accomplished. Since there are few sessions,
+include the specific progression — what was attempted, what worked, what changed direction.
+Reference exchanges as [session N, #X]. Quote from session notes where relevant.
+Do not abbreviate.`
+    : `## Summary
+Narrative of the day's work. Connect sessions that relate to each other —
+show how work flowed across sessions, not just what each session did individually.
+Reference sessions as [session N]. Quote from session notes where relevant.
+Proportional: 5+ sessions = detailed narrative.`;
+
+  const keyDecisions = isLowSession
+    ? `## Key Decisions
+Include all decisions that had meaningful impact — architectural choices, approach changes,
+tool selections, configuration changes. Do not filter for cross-session significance
+since there are only ${sessionCount} session${sessionCount > 1 ? "s" : ""}.
+Format: **[session N, #X]** Bold decision — explanation
+Omit if no decisions were made.`
+    : `## Key Decisions
+Decisions with day-level significance from across the session notes.
+Do not list every decision from every session — only those that shaped
+the day's direction or had consequences across sessions.
+Format: **[session N]** Bold decision — explanation
+Omit if no significant decisions.`;
+
+  const frictionPoints = isLowSession
+    ? `## Friction Points
+Include specific friction that occurred — errors, dead ends, tooling issues, confusion points.
+Since there are few sessions, include anything that cost time or changed approach.
+Format: bullet list with [session N, #X] references.
+Omit if the session(s) went smoothly.`
+    : `## Friction Points
+Patterns of friction that span sessions or had notable impact.
+Not every error from every session — only recurring issues, cross-session
+problems, or friction that changed the day's direction.
+Format: bullet list with [session N] references.
+Omit if the day was smooth.`;
+
+  const proportionRule = isLowSession
+    ? ""
+    : "\n- Keep the total length proportional to the number of sessions";
+
+  const moreMarkerRule = `
+- For sections with substantial content (5+ bullet items or 3+ paragraphs), place <!-- more --> after the first 2-3 items. Content before the marker is shown condensed; content after is revealed on expand. Only use when the section has enough content to warrant it.`;
+
+  return `You synthesize individual session notes into a daily note.
 Sessions are numbered chronologically: session 1 = first of the day.
+Use the same section format as the session notes you're reading.
 
-Structure the note as:
+${summary}
 
-## {Date}
+## Session Flow
+A mermaid diagram (\`\`\`mermaid code block, graph LR).
+Show sessions as nodes with their key activity. Connect sessions that
+share work (same files, continuation of features, related decisions).
+Keep it readable — one node per session, not per exchange.
 
-### Your Day
-Narrative connecting the sessions. Quote from the session notes where relevant.
-Reference sessions as [session N]. Connect sessions that relate to each other.
+${keyDecisions}
 
-### Milestones
-List milestones with session references. Omit if none.
+${frictionPoints}
 
-### Sessions
-One line per session: title, project, exchange count.
-
-### Observations
-Cross-session patterns or notable items from the session notes.
-Omit if nothing notable.
+## Files Changed
+Files modified across all sessions, grouped by feature or purpose.
+Include the explanation of WHY from the session notes.
+Format: **Feature area:** file1.ts, file2.ts — explanation [sessions N, M]
+Omit files that were only read.
 
 Rules:
+- Synthesize, don't aggregate. Show connections between sessions.
 - Reference sessions as [session N]
-- Milestones are events, not "accomplishments"
-- No labels: goal, accomplished, pending
-- Proportional: 1 session = 2-3 sentences, 5+ sessions = full sections
-- Start directly with the ## heading`;
+- Omit sections with no meaningful content
+- Start directly with ## Summary — no preamble${proportionRule}${moreMarkerRule}`;
+}
 
 // ── Generator ────────────────────────────────────────────────
 
@@ -131,7 +181,23 @@ export async function* generateDailyNotesStream(
     const s = sessions[i];
     const num = i + 1;
     const project = s.project_path.split("/").pop() || s.project_path;
-    const header = `## Session ${num}: "${s.title || s.session_id.substring(0, 16)}" — ${project}, ${s.exchange_count} exchanges`;
+    let header = `## Session ${num}: "${s.title || s.session_id.substring(0, 16)}" — ${project}, ${s.exchange_count} exchanges`;
+
+    // Add fork relationship context
+    if (s.forked_from) {
+      try {
+        const forkData = JSON.parse(s.forked_from);
+        if (forkData.sessionId) {
+          const parentSession = getSession(forkData.sessionId);
+          const parentNum = sessions.findIndex((ps) => ps.session_id === forkData.sessionId) + 1;
+          if (parentNum > 0) {
+            header += ` (forked from session ${parentNum})`;
+          } else if (parentSession?.title) {
+            header += ` (forked from "${parentSession.title}")`;
+          }
+        }
+      } catch {}
+    }
 
     const existingNotes = getSessionNotes(s.id);
     if (existingNotes.length > 0) {
@@ -155,7 +221,14 @@ export async function* generateDailyNotesStream(
       const s = sessions[i];
       const num = i + 1;
       const project = s.project_path.split("/").pop() || s.project_path;
-      const header = `## Session ${num}: "${s.title || s.session_id.substring(0, 16)}" — ${project}, ${s.exchange_count} exchanges`;
+      let header = `## Session ${num}: "${s.title || s.session_id.substring(0, 16)}" — ${project}, ${s.exchange_count} exchanges`;
+      if (s.forked_from) {
+        try {
+          const forkData = JSON.parse(s.forked_from);
+          const parentNum = sessions.findIndex((ps) => ps.session_id === forkData.sessionId) + 1;
+          if (parentNum > 0) header += ` (forked from session ${parentNum})`;
+        } catch {}
+      }
 
       const result = await consumeSessionNoteGenerator(s.session_id, options);
       if (result) {
@@ -186,7 +259,8 @@ export async function* generateDailyNotesStream(
       }).join("\n")
     : "";
 
-  const prompt = `${sessionNoteContents.map((n) => n.content).join("\n\n---\n\n")}${milestoneLines}\n\nWrite the daily note for ${dateStr}.`;
+  const sessionMeta = `Date: ${dateStr}\nTotal sessions: ${sessions.length}\nSession exchanges: ${sessions.map((s, i) => `session ${i + 1}: ${s.exchange_count}`).join(", ")}\n\n`;
+  const prompt = `${sessionMeta}${sessionNoteContents.map((n) => n.content).join("\n\n---\n\n")}${milestoneLines}\n\nWrite the daily note for ${dateStr}.`;
 
   let queryFn: any;
   try {
@@ -205,7 +279,7 @@ export async function* generateDailyNotesStream(
   for await (const msg of queryFn({
     prompt,
     options: {
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: buildDailySystemPrompt(sessions.length),
       model: options?.model || "opus",
       effort: "medium",
       maxTurns: 5,
@@ -235,6 +309,10 @@ export async function* generateDailyNotesStream(
   }
 
   if (!result) throw new Error("Synthesis returned empty result");
+
+  // Strip any preamble before the first ## heading
+  const firstHeading = result.indexOf("## ");
+  if (firstHeading > 0) result = result.substring(firstHeading);
 
   return { content: result, model, agentTurns: totalTurns, costUsd: totalCost, sessionIds };
 }

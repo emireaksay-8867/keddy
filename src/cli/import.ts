@@ -11,6 +11,7 @@ import {
   insertSegment,
   insertMilestone,
   insertCompactionEvent,
+  insertSessionLink,
   updateSessionEnd,
   getSession,
 } from "../db/queries.js";
@@ -123,6 +124,7 @@ export async function runImport(forceReimport = false): Promise<void> {
         slug: transcript.slug || null,
         jsonl_path: filePath,
         forked_from: transcript.forked_from || null,
+        fork_exchange_index: transcript.fork_exchange_index ?? null,
         started_at: transcript.started_at || null,
         title: transcript.custom_title || deriveTitle(transcript.exchanges, { forkExchangeIndex: transcript.fork_exchange_index }) || null,
         metadata: null,
@@ -177,6 +179,7 @@ export async function runImport(forceReimport = false): Promise<void> {
       db.prepare("DELETE FROM segments WHERE session_id = ?").run(session.id);
       db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
       db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);
+      db.prepare("DELETE FROM tasks WHERE session_id = ?").run(session.id);
 
       // Run analysis
       const plans = extractPlans(transcript.exchanges);
@@ -254,6 +257,29 @@ export async function runImport(forceReimport = false): Promise<void> {
           exchange_index_created: task.exchange_index_created,
           exchange_index_completed: task.exchange_index_completed,
         });
+      }
+
+      // Create fork session link if this is a forked session
+      if (transcript.forked_from) {
+        try {
+          const forkData = JSON.parse(transcript.forked_from);
+          if (forkData.sessionId) {
+            const parentSession = getSession(forkData.sessionId);
+            if (parentSession) {
+              const existingLink = db.prepare(
+                "SELECT id FROM session_links WHERE source_session_id = ? AND target_session_id = ? AND link_type = 'fork'",
+              ).get(session.id, parentSession.id);
+              if (!existingLink) {
+                insertSessionLink({
+                  source_session_id: session.id,
+                  target_session_id: parentSession.id,
+                  link_type: "fork",
+                  shared_files: "[]",
+                });
+              }
+            }
+          }
+        } catch { /* invalid forked_from JSON */ }
       }
 
       updateSessionEnd(transcript.session_id, transcript.exchanges.length, transcript.ended_at ?? undefined);

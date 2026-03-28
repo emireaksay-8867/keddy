@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Link, useParams, useNavigate } from "react-router";
 import { getDailyData, generateDailyNoteSSE, deleteDailyNote } from "../lib/api.js";
 import type { DailyData } from "../lib/types.js";
-import { MarkdownWithMermaid, ActivityFeed } from "../components/session/NotesTab.js";
+import { MarkdownWithMermaid, ActivityFeed, parseNoteSections, SectionCard } from "../components/session/NotesTab.js";
 import { CalendarDays, Trash2 } from "lucide-react";
 
 function formatDate(d: Date): string {
@@ -82,6 +82,7 @@ export function DailyNotes() {
   const [events, setEvents] = useState<Array<{ type: string; message: string; detail?: string; timestamp: number }>>([]);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [excludedSessions, setExcludedSessions] = useState<Set<string>>(new Set());
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const cleanupRef = useRef<(() => void) | null>(null);
 
   // Fetch data for selected date
@@ -110,6 +111,7 @@ export function DailyNotes() {
         if (generatingDate !== null && targetDate !== generatingDate) return; // stale
         setEvents((prev) => [...prev, e]);
         if (e.type === "result") {
+          setExpandedSections(new Set());
           getDailyData(targetDate)
             .then((d) => { setDataByDate((prev) => ({ ...prev, [targetDate]: d })); setGeneratingDate(null); })
             .catch(() => setGeneratingDate(null));
@@ -236,26 +238,59 @@ export function DailyNotes() {
               </div>
             </section>
 
+            {/* Generating state */}
             {isGenerating && (
               <section>
                 <h2 className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>Daily Analysis</h2>
-                <div className="rounded-lg p-4" style={{ border: "1px solid var(--border)", background: "var(--bg-elevated)" }}>
-                  <ActivityFeed events={events} />
+                <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+                  <div className="flex items-center gap-3 px-4 py-2.5" style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-surface)" }}>
+                    <div className="animate-spin w-3.5 h-3.5 rounded-full shrink-0" style={{ border: "2px solid var(--border)", borderTopColor: "var(--accent)" }} />
+                    <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>Generating daily analysis...</span>
+                  </div>
+                  <div className="p-4" style={{ background: "var(--bg-elevated)" }}>
+                    <ActivityFeed events={events} />
+                    {events.length === 0 && (
+                      <div className="text-[11px] py-2" style={{ color: "var(--text-muted)" }}>Waiting for agent to start...</div>
+                    )}
+                  </div>
                 </div>
               </section>
             )}
 
-            {!isGenerating && data.note && (
-              <section>
-                <div className="flex items-center gap-2 mb-2">
-                  <h2 className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Daily Analysis</h2>
-                  <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{data.note.agent_turns} turns · ${data.note.cost_usd?.toFixed(3)}</span>
-                </div>
-                <div className="rounded-lg p-5" style={{ border: "1px solid var(--border)" }}>
-                  <MarkdownWithMermaid content={data.note.content} />
-                </div>
-              </section>
-            )}
+            {/* Daily Analysis — AI sections in SectionCard containers */}
+            {!isGenerating && data.note && (() => {
+              const sections = parseNoteSections(data.note!.content).filter((s) => s.id !== "overview");
+              const sectionIds = new Set(sections.map((s) => s.id));
+              // On first load (empty set), expand all sections
+              const effectiveExpanded = expandedSections.size === 0 ? sectionIds : expandedSections;
+              const toggle = (id: string) => setExpandedSections((prev) => {
+                // Initialize from effectiveExpanded if this is the first toggle
+                const base = prev.size === 0 ? new Set(sectionIds) : new Set(prev);
+                if (base.has(id)) base.delete(id); else base.add(id);
+                return base;
+              });
+              return (
+                <section>
+                  <div className="flex items-center gap-2 mb-2">
+                    <h2 className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Daily Analysis</h2>
+                    <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                      {data.note!.agent_turns} turns · ${data.note!.cost_usd?.toFixed(3)}
+                      {data.note!.model && ` · ${data.note!.model.replace("claude-", "").replace(/-\d{8}$/, "")}`}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {sections.map((section) => (
+                      <SectionCard
+                        key={section.id}
+                        section={section}
+                        expanded={effectiveExpanded.has(section.id)}
+                        onToggle={() => toggle(section.id)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              );
+            })()}
           </div>
         )}
       </div>

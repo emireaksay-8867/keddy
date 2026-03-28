@@ -226,22 +226,52 @@ function ToolRow({ tc }: { tc: ToolCall }) {
 }
 
 // ── Main Component ─────────────────────────────────────────────
+interface ForkChild {
+  session_id: string;
+  title: string | null;
+  fork_exchange_index: number | null;
+}
+
 interface TerminalViewProps {
   exchanges: Exchange[];
   milestones: Array<{ milestone_type: string; exchange_index: number; description: string }>;
   compactionEvents: CompactionEvent[];
+  forkExchangeIndex?: number | null;
+  parentTitle?: string | null;
+  forkChildren?: ForkChild[];
 }
 
-export function TerminalView({ exchanges, milestones }: TerminalViewProps) {
+export function TerminalView({ exchanges, milestones, forkExchangeIndex, parentTitle, forkChildren }: TerminalViewProps) {
+  const [showInherited, setShowInherited] = useState(false);
   const milestonesByIdx = new Map<number, Array<{ type: string; desc: string }>>();
   for (const m of milestones) {
     if (!milestonesByIdx.has(m.exchange_index)) milestonesByIdx.set(m.exchange_index, []);
     milestonesByIdx.get(m.exchange_index)!.push({ type: m.milestone_type, desc: m.description });
   }
 
+  const inheritedCount = forkExchangeIndex != null ? exchanges.filter(e => e.exchange_index < forkExchangeIndex).length : 0;
+
   return (
     <div className="font-mono text-[12px] leading-relaxed">
+      {/* Collapsed inherited exchanges for forked sessions */}
+      {forkExchangeIndex != null && inheritedCount > 0 && (
+        <div className="px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+          <button
+            onClick={() => setShowInherited(!showInherited)}
+            className="flex items-center gap-2 text-[11px] w-full"
+            style={{ color: "#a78bfa", fontFamily: "var(--font-sans, system-ui)" }}
+          >
+            <span>{showInherited ? "\u25BC" : "\u25B6"}</span>
+            <span>{inheritedCount} inherited exchanges from {parentTitle ? `"${parentTitle.length > 35 ? parentTitle.substring(0, 35) + "\u2026" : parentTitle}"` : "parent session"}</span>
+          </button>
+        </div>
+      )}
       {exchanges.map((ex) => {
+        const isInherited = forkExchangeIndex != null && ex.exchange_index < forkExchangeIndex;
+        const isFirstNew = forkExchangeIndex != null && ex.exchange_index === forkExchangeIndex;
+
+        // Hide inherited exchanges when collapsed
+        if (isInherited && !showInherited) return null;
         const { cleaned: userText } = cleanText(ex.user_prompt);
         const { cleaned: claudeText } = cleanText(ex.assistant_response || "");
         const tools = ex.tool_calls || [];
@@ -266,6 +296,16 @@ export function TerminalView({ exchanges, milestones }: TerminalViewProps) {
 
         return (
           <div key={ex.exchange_index} id={`terminal-${ex.exchange_index}`} className="scroll-mt-16">
+            {/* Fork divider */}
+            {isFirstNew && (
+              <div className="flex items-center gap-3 py-3 px-5">
+                <div className="flex-1 h-px" style={{ background: "#a78bfa" }} />
+                <span className="text-[11px] font-medium shrink-0" style={{ color: "#a78bfa", fontFamily: "var(--font-sans, system-ui)" }}>
+                  {parentTitle ? `Forked from "${parentTitle.length > 40 ? parentTitle.substring(0, 40) + "\u2026" : parentTitle}"` : "Fork point \u2014 new content below"}
+                </span>
+                <div className="flex-1 h-px" style={{ background: "#a78bfa" }} />
+              </div>
+            )}
             {/* Milestones */}
             {milestonesByIdx.get(ex.exchange_index)?.map((ms, i) => (
               <div key={i} className="px-5 py-1" style={{ borderBottom: "1px solid var(--border)" }}>
@@ -281,7 +321,7 @@ export function TerminalView({ exchanges, milestones }: TerminalViewProps) {
             )}
 
             {/* Exchange */}
-            <div className="px-5 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+            <div className="px-5 py-3" style={{ borderBottom: "1px solid var(--border)", opacity: isInherited ? 0.35 : 1 }}>
               {/* Header */}
               <div className="flex items-center gap-2 mb-2 text-[10px]" style={{ color: "var(--text-muted)" }}>
                 <span className="font-bold">#{ex.exchange_index}</span>
@@ -344,6 +384,21 @@ export function TerminalView({ exchanges, milestones }: TerminalViewProps) {
                 </div>
               )}
             </div>
+
+            {/* Fork-out markers: show where child sessions were forked from this one */}
+            {forkChildren?.filter((fc) => fc.fork_exchange_index === ex.exchange_index).map((fc) => (
+              <div key={fc.session_id} className="flex items-center gap-3 py-2 px-5">
+                <div className="flex-1 h-px" style={{ background: "#a78bfa" }} />
+                <a
+                  href={`/sessions/${fc.session_id}`}
+                  className="text-[11px] font-medium shrink-0 hover:underline"
+                  style={{ color: "#a78bfa", fontFamily: "var(--font-sans, system-ui)" }}
+                >
+                  {"\u2192"} Forked into "{fc.title && fc.title.length > 40 ? fc.title.substring(0, 40) + "\u2026" : fc.title || fc.session_id.substring(0, 12)}"
+                </a>
+                <div className="flex-1 h-px" style={{ background: "#a78bfa" }} />
+              </div>
+            ))}
           </div>
         );
       })}

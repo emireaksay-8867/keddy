@@ -24,14 +24,15 @@ export function insertSession(data: {
   claude_version?: string | null;
   jsonl_path?: string | null;
   forked_from?: string | null;
+  fork_exchange_index?: number | null;
   started_at?: string | null;
   metadata?: string | null;
 }): string {
   const db = getDb();
   const id = randomUUID();
   db.prepare(`
-    INSERT INTO sessions (id, session_id, project_path, git_branch, title, slug, claude_version, jsonl_path, forked_from, started_at, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO sessions (id, session_id, project_path, git_branch, title, slug, claude_version, jsonl_path, forked_from, fork_exchange_index, started_at, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.session_id,
@@ -42,6 +43,7 @@ export function insertSession(data: {
     data.claude_version ?? null,
     data.jsonl_path ?? null,
     data.forked_from ?? null,
+    data.fork_exchange_index ?? null,
     data.started_at ?? new Date().toISOString(),
     data.metadata ?? null,
   );
@@ -57,6 +59,7 @@ export function upsertSession(data: {
   claude_version?: string | null;
   jsonl_path?: string | null;
   forked_from?: string | null;
+  fork_exchange_index?: number | null;
   started_at?: string | null;
   metadata?: string | null;
 }): string {
@@ -75,6 +78,7 @@ export function upsertSession(data: {
         claude_version = COALESCE(?, claude_version),
         jsonl_path = COALESCE(?, jsonl_path),
         forked_from = COALESCE(?, forked_from),
+        fork_exchange_index = COALESCE(?, fork_exchange_index),
         metadata = COALESCE(?, metadata)
       WHERE session_id = ?
     `).run(
@@ -85,6 +89,7 @@ export function upsertSession(data: {
       data.claude_version ?? null,
       data.jsonl_path ?? null,
       data.forked_from ?? null,
+      data.fork_exchange_index ?? null,
       data.metadata ?? null,
       data.session_id,
     );
@@ -1202,8 +1207,8 @@ export function enrichSessionBatch(sessionInternalIds: string[]): Map<string, {
 export function getSessionsByDate(dateStr: string): Session[] {
   const db = getDb();
   return db.prepare(
-    "SELECT * FROM sessions WHERE date(started_at) = ? AND exchange_count > 0 ORDER BY started_at ASC",
-  ).all(dateStr) as Session[];
+    "SELECT * FROM sessions WHERE date(started_at) <= ? AND date(COALESCE(ended_at, started_at)) >= ? AND exchange_count > 0 ORDER BY started_at ASC",
+  ).all(dateStr, dateStr) as Session[];
 }
 
 export function getDailyMilestones(dateStr: string): Array<{
@@ -1214,9 +1219,9 @@ export function getDailyMilestones(dateStr: string): Array<{
   return db.prepare(`
     SELECT m.milestone_type, m.exchange_index, m.description, s.session_id, s.title as session_title
     FROM milestones m JOIN sessions s ON s.id = m.session_id
-    WHERE date(s.started_at) = ? AND s.exchange_count > 0
+    WHERE date(s.started_at) <= ? AND date(COALESCE(s.ended_at, s.started_at)) >= ? AND s.exchange_count > 0
     ORDER BY s.started_at, m.exchange_index
-  `).all(dateStr) as any[];
+  `).all(dateStr, dateStr) as any[];
 }
 
 export function getDailyNote(dateStr: string): import("../types.js").DailyNote | undefined {

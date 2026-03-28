@@ -55,10 +55,13 @@ function enrichSession(s: { session_id: string; id?: string }) {
 }
 
 /**
- * Create a Keddy MCP server with all tools registered.
+ * Create a Keddy MCP server with tools registered.
  * No side effects — does not connect to any transport or initialize the DB.
+ *
+ * @param options.agentTools - Include agent-optimized tools (skeleton, transcript_summary)
+ *   that help the analysis agent work efficiently. Not needed for the user-facing MCP server.
  */
-export function createKeddyMcpServer(): McpServer {
+export function createKeddyMcpServer(options?: { agentTools?: boolean }): McpServer {
   const server = new McpServer({
     name: "keddy",
     version: process.env.KEDDY_VERSION || "0.0.0",
@@ -113,6 +116,19 @@ export function createKeddyMcpServer(): McpServer {
       const milestones = getSessionMilestones(session.id);
       const compactions = getSessionCompactionEvents(session.id);
 
+      const forkIdx = (session as any).fork_exchange_index as number | null;
+      let fork: { exchange_index: number; parent_session_id: string; parent_title: string | null } | undefined;
+      if (session.forked_from && forkIdx != null) {
+        try {
+          const db = getDb();
+          const forkData = JSON.parse(session.forked_from);
+          if (forkData.sessionId) {
+            const parent = db.prepare("SELECT title FROM sessions WHERE session_id = ?").get(forkData.sessionId) as { title: string | null } | undefined;
+            fork = { exchange_index: forkIdx, parent_session_id: forkData.sessionId, parent_title: parent?.title ?? null };
+          }
+        } catch {}
+      }
+
       return jsonResult({
         session: {
           session_id: session.session_id,
@@ -123,11 +139,13 @@ export function createKeddyMcpServer(): McpServer {
           ended: session.ended_at,
           exchange_count: session.exchange_count,
         },
+        ...(fork ? { fork } : {}),
         plans: plans.map((p) => ({
           version: p.version,
           status: p.status,
           feedback: p.user_feedback,
           text: p.plan_text,
+          ...(forkIdx != null && p.exchange_index_start < forkIdx ? { inherited: true } : {}),
         })),
         tasks: getSessionTasks(session.id).map((t) => ({
           subject: t.subject,
@@ -151,6 +169,7 @@ export function createKeddyMcpServer(): McpServer {
           type: m.milestone_type,
           index: m.exchange_index,
           description: m.description,
+          ...(forkIdx != null && m.exchange_index < forkIdx ? { inherited: true } : {}),
         })),
         compactions: compactions.map((c) => ({
           index: c.exchange_index,
@@ -163,6 +182,7 @@ export function createKeddyMcpServer(): McpServer {
           response_preview: (e.assistant_response || "").substring(0, 300),
           tools: e.tool_call_count,
           is_interrupt: !!e.is_interrupt,
+          ...(forkIdx != null && e.exchange_index < forkIdx ? { inherited: true } : {}),
         })),
         activity_groups: segments.filter((s) => s.boundary_type).map((s) => {
           let toolCounts: unknown = {};
@@ -187,6 +207,7 @@ export function createKeddyMcpServer(): McpServer {
             markers,
             boundary: s.boundary_type,
             ai_summary: s.ai_summary || undefined,
+            ...(forkIdx != null && s.exchange_index_end < forkIdx ? { inherited: true } : {}),
           };
         }),
         token_summary: (() => {
@@ -433,201 +454,13 @@ export function createKeddyMcpServer(): McpServer {
     },
   );
 
-  // Tool 8: Search tool calls
-  server.tool(
-    "keddy_search_tool_calls",
-    "Search across all tool calls — bash commands, file operations, web searches. Find specific commands run, files touched, or operations performed across sessions.",
-    {
-      tool_name: z.string().optional().describe("Filter by tool name (Bash, Read, Edit, Write, Grep, Agent, etc.)"),
-      command_pattern: z.string().optional().describe("Search within bash commands (e.g. 'npm test', 'git push')"),
-      file_pattern: z.string().optional().describe("Search file paths (e.g. 'auth.ts', 'src/api')"),
-      project: z.string().optional().describe("Filter by project path substring"),
-      days: z.number().optional().describe("Limit to last N days"),
-      limit: z.number().optional().describe("Max results (default 30)"),
-    },
-    async ({ tool_name, command_pattern, file_pattern, project, days, limit }) => {
-      try {
-        const db = getDb();
-        const conditions: string[] = [];
-        const params: unknown[] = [];
+  // ── Agent-optimized tools (skeleton + transcript_summary) ────
+  // These help the analysis agent work efficiently: skeleton gives a 3-5KB
+  // session overview (vs 100KB+ from get_session), transcript_summary lets
+  // the agent scan conversation flow without reading full transcripts.
+  // Only registered when agentTools is true (in-process MCP for agent.ts).
 
-        if (tool_name) { conditions.push("tc.tool_name = ?"); params.push(tool_name); }
-        if (command_pattern) { conditions.push("tc.bash_command LIKE ?"); params.push(`%${command_pattern}%`); }
-        if (file_pattern) { conditions.push("tc.file_path LIKE ?"); params.push(`%${file_pattern}%`); }
-        if (project) { conditions.push("s.project_path LIKE ?"); params.push(`%${project}%`); }
-        if (days) {
-          conditions.push("s.started_at > datetime('now', ?)");
-          params.push(`-${days} days`);
-        }
-
-        if (conditions.length === 0) {
-          return textResult("Please provide at least one search parameter (tool_name, command_pattern, or file_pattern).");
-        }
-
-        const where = conditions.join(" AND ");
-        const rows = db.prepare(`
-          SELECT tc.tool_name, tc.bash_command, tc.bash_desc, tc.file_path, tc.web_query, tc.is_error,
-                 SUBSTR(tc.tool_result, 1, 200) as result_preview,
-                 e.exchange_index, e.timestamp, s.session_id, s.title, s.project_path
-          FROM tool_calls tc
-          JOIN exchanges e ON tc.exchange_id = e.id
-          JOIN sessions s ON tc.session_id = s.id
-          WHERE ${where}
-          ORDER BY e.timestamp DESC
-          LIMIT ?
-        `).all(...params, limit ?? 30) as any[];
-
-        if (rows.length === 0) return textResult("No matching tool calls found.");
-
-        return jsonResult({
-          count: rows.length,
-          results: rows.map((r: any) => ({
-            session_id: r.session_id,
-            title: r.title,
-            project: r.project_path,
-            exchange_index: r.exchange_index,
-            timestamp: r.timestamp,
-            tool_name: r.tool_name,
-            bash_command: r.bash_command || undefined,
-            bash_desc: r.bash_desc || undefined,
-            file_path: r.file_path || undefined,
-            web_query: r.web_query || undefined,
-            is_error: !!r.is_error,
-            result_preview: r.result_preview || undefined,
-          })),
-        });
-      } catch (err) {
-        return textResult(`Error searching tool calls: ${err}`);
-      }
-    },
-  );
-
-  // Tool 9: Find errors
-  server.tool(
-    "keddy_find_errors",
-    "Investigate errors — returns failed tool calls with the triggering user prompt and error context. Use after keddy_get_session_skeleton shows errors worth investigating, or to search for recurring error patterns across sessions.",
-    {
-      pattern: z.string().optional().describe("Search within error messages"),
-      tool_name: z.string().optional().describe("Filter by tool type (e.g. 'Bash' for command failures)"),
-      project: z.string().optional().describe("Filter by project path substring"),
-      days: z.number().optional().describe("Limit to last N days"),
-      limit: z.number().optional().describe("Max results (default 20)"),
-    },
-    async ({ pattern, tool_name, project, days, limit }) => {
-      try {
-        const db = getDb();
-        const conditions: string[] = ["tc.is_error = 1"];
-        const params: unknown[] = [];
-
-        if (pattern) { conditions.push("tc.tool_result LIKE ?"); params.push(`%${pattern}%`); }
-        if (tool_name) { conditions.push("tc.tool_name = ?"); params.push(tool_name); }
-        if (project) { conditions.push("s.project_path LIKE ?"); params.push(`%${project}%`); }
-        if (days) {
-          conditions.push("s.started_at > datetime('now', ?)");
-          params.push(`-${days} days`);
-        }
-
-        const where = conditions.join(" AND ");
-        const rows = db.prepare(`
-          SELECT tc.tool_name, tc.bash_command, tc.file_path,
-                 SUBSTR(tc.tool_result, 1, 300) as error_preview,
-                 SUBSTR(e.user_prompt, 1, 200) as prompt_context,
-                 e.exchange_index, e.timestamp, s.session_id, s.title, s.project_path
-          FROM tool_calls tc
-          JOIN exchanges e ON tc.exchange_id = e.id
-          JOIN sessions s ON tc.session_id = s.id
-          WHERE ${where}
-          ORDER BY e.timestamp DESC
-          LIMIT ?
-        `).all(...params, limit ?? 20) as any[];
-
-        if (rows.length === 0) return textResult("No errors found matching your criteria.");
-
-        return jsonResult({
-          count: rows.length,
-          errors: rows.map((r: any) => ({
-            session_id: r.session_id,
-            title: r.title,
-            project: r.project_path,
-            exchange_index: r.exchange_index,
-            timestamp: r.timestamp,
-            tool_name: r.tool_name,
-            bash_command: r.bash_command || undefined,
-            file_path: r.file_path || undefined,
-            error_preview: r.error_preview,
-            prompt_context: r.prompt_context,
-          })),
-        });
-      } catch (err) {
-        return textResult(`Error searching errors: ${err}`);
-      }
-    },
-  );
-
-  // Tool 10: Bash history
-  server.tool(
-    "keddy_get_bash_history",
-    "Get chronological bash command history for a project. Shows every shell command Claude ran with results — useful for understanding what was tried and what worked.",
-    {
-      project: z.string().describe("Project path (or substring)"),
-      days: z.number().optional().describe("Limit to last N days (default 7)"),
-      limit: z.number().optional().describe("Max results (default 50)"),
-      errors_only: z.boolean().optional().describe("Only show failed commands"),
-    },
-    async ({ project, days, limit, errors_only }) => {
-      try {
-        const db = getDb();
-        const conditions: string[] = [
-          "tc.tool_name = 'Bash'",
-          "tc.bash_command IS NOT NULL",
-          "s.project_path LIKE ?",
-        ];
-        const params: unknown[] = [`%${project}%`];
-
-        if (errors_only) { conditions.push("tc.is_error = 1"); }
-        if (days) {
-          conditions.push("s.started_at > datetime('now', ?)");
-          params.push(`-${days} days`);
-        } else {
-          conditions.push("s.started_at > datetime('now', '-7 days')");
-        }
-
-        const where = conditions.join(" AND ");
-        const rows = db.prepare(`
-          SELECT tc.bash_command, tc.bash_desc, tc.is_error,
-                 SUBSTR(tc.tool_result, 1, 200) as result_preview,
-                 e.exchange_index, e.timestamp, s.session_id, s.title
-          FROM tool_calls tc
-          JOIN exchanges e ON tc.exchange_id = e.id
-          JOIN sessions s ON tc.session_id = s.id
-          WHERE ${where}
-          ORDER BY e.timestamp DESC
-          LIMIT ?
-        `).all(...params, limit ?? 50) as any[];
-
-        if (rows.length === 0) return textResult(`No bash commands found for project: ${project}`);
-
-        return jsonResult({
-          project,
-          count: rows.length,
-          commands: rows.map((r: any) => ({
-            session_id: r.session_id,
-            title: r.title,
-            exchange_index: r.exchange_index,
-            timestamp: r.timestamp,
-            command: r.bash_command,
-            description: r.bash_desc || undefined,
-            is_error: !!r.is_error,
-            result_preview: r.result_preview || undefined,
-          })),
-        });
-      } catch (err) {
-        return textResult(`Error fetching bash history: ${err}`);
-      }
-    },
-  );
-
-  // ── Agent-optimized lightweight tools ─────────────────────────
+  if (options?.agentTools) {
 
   server.tool(
     "keddy_get_session_skeleton",
@@ -685,6 +518,19 @@ export function createKeddyMcpServer(): McpServer {
           GROUP BY file_path ORDER BY cnt DESC LIMIT 15
         `).all(session.id) as Array<{ file_path: string; cnt: number }>;
 
+        // Fork metadata
+        const forkIdx = (session as any).fork_exchange_index as number | null;
+        let fork: { exchange_index: number; parent_session_id: string; parent_title: string | null } | undefined;
+        if (session.forked_from && forkIdx != null) {
+          try {
+            const forkData = JSON.parse(session.forked_from);
+            if (forkData.sessionId) {
+              const parent = db.prepare("SELECT title FROM sessions WHERE session_id = ?").get(forkData.sessionId) as { title: string | null } | undefined;
+              fork = { exchange_index: forkIdx, parent_session_id: forkData.sessionId, parent_title: parent?.title ?? null };
+            }
+          } catch {}
+        }
+
         return jsonResult({
           session: {
             session_id: session.session_id,
@@ -695,12 +541,17 @@ export function createKeddyMcpServer(): McpServer {
             started: session.started_at,
             ended: session.ended_at,
           },
-          timeline,
+          ...(fork ? { fork } : {}),
+          timeline: timeline.map((t) => ({
+            ...t,
+            ...(forkIdx != null && t.exchange < forkIdx ? { inherited: true } : {}),
+          })),
           plans_summary: plans.map((p) => ({
             version: p.version,
             status: p.status,
             feedback: p.user_feedback,
             text_preview: p.plan_text.substring(0, 300),
+            ...(forkIdx != null && p.exchange_index_start < forkIdx ? { inherited: true } : {}),
           })),
           tasks: tasks.map((t: any) => ({ subject: t.subject, status: t.status })),
           errors: { total: totalErrors, by_tool: errorsByTool },
@@ -744,9 +595,12 @@ export function createKeddyMcpServer(): McpServer {
 
         const rows = db.prepare(sql).all(...params) as any[];
 
+        const forkIdx = (session as any).fork_exchange_index as number | null;
+
         return jsonResult({
           session_id: session.session_id,
           exchange_count: rows.length,
+          ...(forkIdx != null ? { fork_exchange_index: forkIdx } : {}),
           exchanges: rows.map((r) => {
             // Extract first meaningful line of Claude's response (skip empty/code-only)
             const resp = (r.assistant_response || "").trim();
@@ -763,6 +617,7 @@ export function createKeddyMcpServer(): McpServer {
               errors: r.error_count,
               ...(r.is_interrupt ? { interrupted: true } : {}),
               ...(r.is_compact_summary ? { compaction: true } : {}),
+              ...(forkIdx != null && r.exchange_index < forkIdx ? { inherited: true } : {}),
             };
           }),
         });
@@ -771,6 +626,8 @@ export function createKeddyMcpServer(): McpServer {
       }
     },
   );
+
+  } // end agentTools
 
   return server;
 }

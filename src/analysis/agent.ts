@@ -40,6 +40,7 @@ export interface AgentEvent {
 function buildLightweightContext(sessionId: string): {
   context: string;
   exchangeCount: number;
+  effectiveExchangeCount: number;
   sessionIdInternal: string;
   programmaticMermaid: string;
 } | null {
@@ -56,28 +57,49 @@ function buildLightweightContext(sessionId: string): {
   if (session.git_branch) lines.push(`Branch: ${session.git_branch}`);
   lines.push(`Exchanges: ${session.exchange_count}`);
   lines.push(`Started: ${session.started_at} | Ended: ${session.ended_at || "ongoing"}`);
-  if (session.forked_from) {
-    lines.push(`Forked from: ${session.forked_from}`);
-    lines.push(`Note: This is a forked/branched session. The transcript includes inherited exchanges from the parent session. When reading the transcript, focus on where the conversation shifts to new topics — that is where this session's own work begins.`);
+
+  // Fork context: precise exchange boundary instead of vague hint
+  const forkIdx = (session as any).fork_exchange_index as number | null;
+  if (session.forked_from && forkIdx != null) {
+    let parentTitle = "unknown";
+    try {
+      const forkData = JSON.parse(session.forked_from);
+      if (forkData.sessionId) {
+        const parent = getSession(forkData.sessionId);
+        if (parent?.title) parentTitle = parent.title;
+      }
+    } catch {}
+    lines.push(`Forked from: "${parentTitle}"`);
+    lines.push(`Fork point: exchange #${forkIdx} — content before this is inherited from parent`);
+    lines.push(`This session's own work: exchanges #${forkIdx} through #${session.exchange_count - 1}`);
   }
 
-  if (plans.length > 0) {
+  // Filter plans and milestones to post-fork content only
+  const relevantPlans = forkIdx != null
+    ? plans.filter((p) => p.exchange_index_start >= forkIdx)
+    : plans;
+  const relevantMilestones = forkIdx != null
+    ? milestones.filter((m) => m.exchange_index >= forkIdx)
+    : milestones;
+
+  if (relevantPlans.length > 0) {
     lines.push("");
-    lines.push(`Plans: ${plans.map((p) => `v${p.version}(${p.status}${p.user_feedback ? `, feedback: "${p.user_feedback.substring(0, 80)}"` : ""})`).join(", ")}`);
+    lines.push(`Plans: ${relevantPlans.map((p) => `v${p.version}(${p.status}${p.user_feedback ? `, feedback: "${p.user_feedback.substring(0, 80)}"` : ""})`).join(", ")}`);
   }
 
-  if (milestones.length > 0) {
+  if (relevantMilestones.length > 0) {
     lines.push("");
     lines.push("Milestones:");
-    for (const ms of milestones) {
+    for (const ms of relevantMilestones) {
       lines.push(`  [#${ms.exchange_index}] ${ms.milestone_type}: ${ms.description}`);
     }
   }
 
-  // Generate programmatic mermaid from activity groups
+  // Generate programmatic mermaid from activity groups (post-fork only)
   const segments = getSessionSegments(session.id);
   const groups: MermaidGroup[] = segments
     .filter((s) => s.boundary_type)
+    .filter((s) => forkIdx == null || s.exchange_index_end >= forkIdx)
     .map((s) => {
       let filesWritten: string[] = [];
       let filesRead: string[] = [];
@@ -102,16 +124,18 @@ function buildLightweightContext(sessionId: string): {
 
   const programmaticMermaid = generateSessionMermaid(
     groups,
-    milestones.map((m) => ({
+    relevantMilestones.map((m) => ({
       milestone_type: m.milestone_type,
       exchange_index: m.exchange_index,
       description: m.description,
     })),
+    forkIdx,
   );
 
   return {
     context: lines.join("\n"),
     exchangeCount: session.exchange_count,
+    effectiveExchangeCount: session.exchange_count - (forkIdx ?? 0),
     sessionIdInternal: session.id,
     programmaticMermaid,
   };
@@ -149,6 +173,7 @@ Rules:
 - Do not label phases as "debugging", "implementing", etc. — describe the specific actions and files
 - If the session is straightforward, keep the note brief
 - Do not add sections beyond these three unless the data clearly warrants it
+- If the session is forked, focus on exchanges AFTER the fork point. Inherited exchanges are context from the parent session — mention the fork briefly in the summary but do not narrate the parent's work
 - Start directly with ## Summary — no preamble`;
 
 // ── Short session fast path (≤3 exchanges) ───────────────────
@@ -159,6 +184,11 @@ const SHORT_SESSION_PROMPT = `You are a session analyst. Produce a brief session
 One paragraph: what the user asked for, what happened, what was the outcome.
 Reference exchange numbers [#N].
 
+## Session Flow
+A mermaid diagram (\`\`\`mermaid code block, graph LR format).
+Even for short sessions, show the progression: what was asked → what was done → the result.
+Use 2-3 nodes maximum. Label nodes with what actually happened, not file names.
+
 ## Files Changed
 Files created or modified (if any).
 
@@ -167,12 +197,15 @@ Keep it concise. Start directly with ## Summary.`;
 async function generateShortSessionNote(
   sessionId: string,
   context: string,
+  programmaticMermaid: string,
   options?: { apiKey?: string; model?: string },
 ): Promise<NotesResult> {
   const session = getSession(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
 
-  const exchanges = getSessionTranscript(session.id, {});
+  const forkIdx = (session as any).fork_exchange_index as number | null;
+  const allExchanges = getSessionTranscript(session.id, {});
+  const exchanges = forkIdx != null ? allExchanges.filter((e) => e.exchange_index >= forkIdx) : allExchanges;
   const transcript = exchanges.map((e) => {
     let text = `#${e.exchange_index} User: ${e.user_prompt}`;
     if (e.assistant_response) text += `\nClaude: ${e.assistant_response.substring(0, 500)}`;
@@ -195,7 +228,7 @@ async function generateShortSessionNote(
     model: options?.model === "opus" ? "claude-opus-4-6" : options?.model === "haiku" ? "claude-haiku-4-5-20251001" : "claude-sonnet-4-6",
     max_tokens: 1024,
     system: SHORT_SESSION_PROMPT,
-    messages: [{ role: "user", content: `Session: ${context}\n\nTranscript:\n${transcript}` }],
+    messages: [{ role: "user", content: `Session: ${context}${programmaticMermaid ? `\nProgrammatic diagram (enhance labels):\n\`\`\`mermaid\n${programmaticMermaid}\n\`\`\`` : ""}\n\nTranscript:\n${transcript}` }],
   });
 
   const content = response.content[0]?.type === "text" ? response.content[0].text : "";
@@ -230,11 +263,11 @@ export async function* generateSessionNotesStream(
     timestamp: Date.now(),
   };
 
-  // Phase 2: Short session fast path (≤3 exchanges — skip Agent SDK entirely)
-  if (data.exchangeCount <= 3) {
+  // Phase 2: Short session fast path (≤3 effective exchanges — skip Agent SDK entirely)
+  if (data.effectiveExchangeCount <= 3) {
     yield { type: "status", message: "Short session — using direct API", detail: `${data.exchangeCount} exchanges`, timestamp: Date.now() };
     try {
-      const result = await generateShortSessionNote(sessionId, data.context, options);
+      const result = await generateShortSessionNote(sessionId, data.context, data.programmaticMermaid, options);
       yield {
         type: "result",
         message: `Done — 1 turn, $${result.costUsd.toFixed(4)}`,
@@ -261,7 +294,7 @@ export async function* generateSessionNotesStream(
   yield { type: "status", message: "Starting analysis agent", detail: `${modelName}, in-process MCP`, timestamp: Date.now() };
 
   // Create in-process MCP server (no subprocess, no stdio handshake)
-  const keddyServer = createKeddyMcpServer();
+  const keddyServer = createKeddyMcpServer({ agentTools: true });
 
   const env: Record<string, string | undefined> = { ...process.env };
   if (options?.apiKey) env.ANTHROPIC_API_KEY = options.apiKey;

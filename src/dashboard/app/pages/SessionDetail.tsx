@@ -7,7 +7,7 @@ import { OutcomesBar } from "../components/session/OutcomesBar.js";
 import { PlanSection } from "../components/session/PlanSection.js";
 import { FilesSection } from "../components/session/FilesSection.js";
 import { FileDiffs } from "../components/session/FileDiffs.js";
-import { PlanView } from "../components/session/PlanView.js";
+import { PlanView, parseSections } from "../components/session/PlanView.js";
 import { TimelineView } from "../components/session/TimelineView.js";
 import { TerminalView } from "../components/session/TerminalView.js";
 import { NotesTab } from "../components/session/NotesTab.js";
@@ -78,16 +78,63 @@ export function SessionDetail() {
 
   const closeDetail = () => setDetail(EMPTY_DETAIL);
 
-  const handleViewPlan = (plan: Plan) => {
+  const handleViewPlan = (plan: Plan, compareWithText?: string) => {
     const time = plan.ended_at || plan.started_at || plan.created_at;
-    const fmtDate = time ? new Date(time).toLocaleString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+    const fmtDate = time ? new Date(time).toLocaleString("en-US", { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" }) : "";
+    // Extract clean title from plan text
+    let planTitle = "Plan";
+    if (plan.plan_text) {
+      for (const line of plan.plan_text.split("\n")) {
+        const t = line.trim();
+        if (t.startsWith("#")) {
+          planTitle = t.replace(/^#+\s*/, "").replace(/^Plan:\s*/i, "");
+          break;
+        }
+      }
+    }
+
+    // Compute section-level diff if comparison text is provided
+    let changedSections: Set<number> | undefined;
+    if (compareWithText && plan.plan_text) {
+      const currentSections = parseSections(plan.plan_text);
+      const nextSections = parseSections(compareWithText);
+      changedSections = new Set<number>();
+      for (let i = 0; i < currentSections.length; i++) {
+        const cur = currentSections[i];
+        // Find matching section in next version by heading
+        const match = nextSections.find(s => s.heading === cur.heading && s.level === cur.level);
+        if (!match || match.content !== cur.content) {
+          changedSections.add(i);
+        }
+      }
+    }
+
     openDetail(
-      `Plan V${plan.version} \u00B7 ${plan.status}`,
-      `${fmtDate} \u00B7 Exchange #${plan.exchange_index_start}${plan.exchange_index_end !== plan.exchange_index_start ? `-${plan.exchange_index_end}` : ""}`,
-      <PlanView planText={plan.plan_text} version={plan.version} status={plan.status} />,
+      planTitle,
+      fmtDate,
+      <div key={`plan-${plan.version}-${plan.id}`}>
+        <PlanView planText={plan.plan_text} version={plan.version} status={plan.status} changedSections={changedSections} />
+        {plan.user_feedback && (
+          <div className="mt-5 px-3 py-2 rounded text-[12px] leading-relaxed"
+            style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)", borderLeft: "2px solid rgba(255,255,255,0.08)" }}>
+            <div className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: "var(--text-muted)" }}>Your feedback on this version</div>
+            {plan.user_feedback}
+          </div>
+        )}
+      </div>,
       plan,
     );
   };
+
+  const handleViewInTerminal = useCallback((exchangeIndex: number) => {
+    setTab("terminal");
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`terminal-${exchangeIndex}`);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+  }, []);
 
   const handleViewFile = async (filePath: string) => {
     if (!session) return;
@@ -118,7 +165,12 @@ export function SessionDetail() {
         <div className="flex items-center gap-2.5 text-[12px] flex-wrap mb-2" style={{ color: "var(--text-tertiary)" }}>
           <span>{project}</span>
           {session.git_branch && <span className="px-1.5 py-0.5 rounded font-mono text-[11px]" style={{ background: "var(--bg-elevated)" }}>{session.git_branch}</span>}
-          <span>{exchanges.length} exchanges</span>
+          <span>{exchanges.length} exchanges{session.fork_exchange_index != null ? ` (${session.fork_exchange_index} inherited)` : ""}</span>
+          {session.parent_title && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px]" style={{ background: "rgba(167, 139, 250, 0.15)", color: "#a78bfa" }}>
+              forked: {(session.parent_title.length > 30 ? session.parent_title.substring(0, 30) + "\u2026" : session.parent_title)}
+            </span>
+          )}
           {session.model_breakdown && session.model_breakdown.length > 0 && (
             <span className="font-mono text-[11px]">{session.model_breakdown[0].model.replace("claude-", "")}</span>
           )}
@@ -174,8 +226,12 @@ export function SessionDetail() {
                   <PlanSection
                     plans={session.plans}
                     tasks={session.tasks}
+                    milestones={session.milestones}
+                    gitDetails={session.git_details || []}
                     sessionExchangeCount={session.exchange_count}
+                    forkExchangeIndex={session.fork_exchange_index}
                     onViewPlan={handleViewPlan}
+                    onViewInTerminal={handleViewInTerminal}
                   />
                 </div>
               )}
@@ -196,6 +252,9 @@ export function SessionDetail() {
               exchanges={exchanges}
               milestones={session.milestones}
               compactionEvents={session.compaction_events}
+              forkExchangeIndex={session.fork_exchange_index}
+              parentTitle={session.parent_title}
+              forkChildren={session.fork_children}
             />
           ) : tab === "files" ? (
             <div className="px-6 py-5">

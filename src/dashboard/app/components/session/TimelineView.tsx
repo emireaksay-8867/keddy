@@ -342,21 +342,53 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
         {filteredItems.map((item, i) => {
           if (item.type === "group") {
             const group = groups[item.idx];
+            const forkIdx = session.fork_exchange_index;
+            const isInherited = forkIdx != null && group.exchange_end < forkIdx;
+            const isFirstNew = forkIdx != null && group.exchange_start >= forkIdx
+              && (item.idx === 0 || groups[item.idx - 1].exchange_end < forkIdx);
             const trailingMs = milestones.filter(m =>
               m.exchange_index >= group.exchange_start && m.exchange_index <= group.exchange_end
             );
             return (
               <div key={`g-${i}`}>
-                <ActivityGroupCard
-                  group={group}
-                  exchanges={exchanges}
-                  defaultOpen={defaultOpen(item.idx)}
-                  filter={filter}
-                  onSelect={handleSelectGroup}
-                />
+                {/* Fork divider — shown before the first post-fork group */}
+                {isFirstNew && (
+                  <div className="fork-divider flex items-center gap-3 my-3 px-2">
+                    <div className="flex-1 h-px" style={{ background: "#a78bfa" }} />
+                    <span className="text-[11px] font-medium shrink-0" style={{ color: "#a78bfa" }}>
+                      {session.parent_title
+                        ? `Forked from "${trunc(session.parent_title, 40)}"`
+                        : "Fork point — new content below"}
+                    </span>
+                    <div className="flex-1 h-px" style={{ background: "#a78bfa" }} />
+                  </div>
+                )}
+                <div style={{ opacity: isInherited ? 0.4 : 1 }}>
+                  <ActivityGroupCard
+                    group={group}
+                    exchanges={exchanges}
+                    defaultOpen={isInherited ? false : defaultOpen(item.idx)}
+                    filter={filter}
+                    onSelect={handleSelectGroup}
+                  />
+                </div>
                 {/* Show inline milestones only when not in git filter (git filter shows them separately) */}
                 {filter !== "git" && trailingMs.map((ms, j) => (
                   <MilestoneItem key={`ms-${i}-${j}`} type={ms.milestone_type} description={ms.description} />
+                ))}
+                {/* Fork-out markers: child sessions forked from within this group's range */}
+                {session.fork_children?.filter((fc) =>
+                  fc.fork_exchange_index != null &&
+                  fc.fork_exchange_index >= group.exchange_start &&
+                  fc.fork_exchange_index <= group.exchange_end
+                ).map((fc) => (
+                  <div key={fc.session_id} className="flex items-center gap-3 my-2 px-2">
+                    <div className="flex-1 h-px" style={{ background: "#a78bfa" }} />
+                    <a href={`/sessions/${fc.session_id}`} className="text-[11px] font-medium shrink-0 hover:underline" style={{ color: "#a78bfa" }}>
+                      {"\u2192"} Forked into "{fc.title && fc.title.length > 35 ? fc.title.substring(0, 35) + "\u2026" : fc.title || fc.session_id.substring(0, 12)}"
+                    </a>
+                    <div className="flex-1 h-px" style={{ background: "#a78bfa" }} />
+                  </div>
                 ))}
               </div>
             );
