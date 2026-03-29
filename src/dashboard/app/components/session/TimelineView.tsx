@@ -176,8 +176,11 @@ interface TimelineViewProps {
 
 export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: TimelineViewProps) {
   const [filter, setFilter] = useState<FilterType>("all");
+  const [showInherited, setShowInherited] = useState(false);
   const groups = session.activity_groups || [];
   const milestones = session.milestones || [];
+  const forkIdx = session.fork_exchange_index;
+  const inheritedGroupCount = forkIdx != null ? groups.filter(g => g.exchange_end < forkIdx).length : 0;
   const totalExchanges = session.exchange_count;
 
   const defaultOpen = (idx: number) => {
@@ -334,18 +337,35 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
         ))}
       </div>
 
+      {/* Collapsed inherited groups toggle (same pattern as Terminal view) */}
+      {forkIdx != null && inheritedGroupCount > 0 && (
+        <div className="mb-3 px-2">
+          <button
+            onClick={() => setShowInherited(!showInherited)}
+            className="text-[11px] font-medium px-3 py-1.5 rounded-md transition-colors"
+            style={{ color: "#a78bfa", background: "rgba(167, 139, 250, 0.08)", border: "1px solid rgba(167, 139, 250, 0.15)" }}
+          >
+            {showInherited ? "Hide" : "Show"} {inheritedGroupCount} inherited activity group{inheritedGroupCount > 1 ? "s" : ""}
+            {session.parent_title ? ` from "${trunc(session.parent_title, 30)}"` : ""}
+          </button>
+        </div>
+      )}
+
       {/* Timeline */}
       <div className="flex flex-col gap-2">
         {filteredItems.map((item, i) => {
           if (item.type === "group") {
             const group = groups[item.idx];
-            const forkIdx = session.fork_exchange_index;
             const isInherited = forkIdx != null && group.exchange_end < forkIdx;
             const isFirstNew = forkIdx != null && group.exchange_start >= forkIdx
               && (item.idx === 0 || groups[item.idx - 1].exchange_end < forkIdx);
             const trailingMs = milestones.filter(m =>
               m.exchange_index >= group.exchange_start && m.exchange_index <= group.exchange_end
             );
+
+            // Hide inherited groups when collapsed
+            if (isInherited && !showInherited) return null;
+
             return (
               <div key={`g-${i}`}>
                 {/* Fork divider — shown before the first post-fork group */}
@@ -407,51 +427,206 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
 }
 
 // ── Session Flow Diagram ──────────────────────────────────────
+
+interface FlowSource {
+  id: string;
+  label: string;
+  mermaid: string;
+  isAi: boolean;
+}
+
 export function SessionFlowDiagram({ sessionId }: { sessionId: string }) {
-  const [mermaid, setMermaid] = useState<string | null>(null);
-  const [isAiEnhanced, setIsAiEnhanced] = useState(false);
+  const [sources, setSources] = useState<FlowSource[]>([]);
+  const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [expandedMermaid, setExpandedMermaid] = useState<string | null>(null);
+
+  // Close expanded view on Escape
+  useEffect(() => {
+    if (!expanded) return;
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setExpanded(false); };
+    document.addEventListener("keydown", handleEsc);
+    return () => document.removeEventListener("keydown", handleEsc);
+  }, [expanded]);
+
+  // Fetch expanded mermaid when expanding (activity data only — AI diagrams use their own mermaid)
+  useEffect(() => {
+    if (!expanded) { setExpandedMermaid(null); return; }
+    const source = sources.find((s) => s.id === activeSourceId);
+    if (!source?.mermaid) return;
+    if (source.isAi) {
+      setExpandedMermaid(source.mermaid);
+      return;
+    }
+    getSessionMermaid(sessionId, "expanded")
+      .then((data) => setExpandedMermaid(data?.mermaid || source.mermaid))
+      .catch(() => setExpandedMermaid(source.mermaid));
+  }, [expanded, activeSourceId, sessionId, sources]);
 
   useEffect(() => {
-    // Fetch programmatic diagram immediately (instant, zero AI cost)
-    getSessionMermaid(sessionId)
+    let activitySource: FlowSource | null = null;
+    const aiSources: FlowSource[] = [];
+
+    const progPromise = getSessionMermaid(sessionId)
       .then((data) => {
-        if (data?.mermaid) {
-          setMermaid(data.mermaid);
-          setIsAiEnhanced(false);
+        activitySource = {
+          id: "activity",
+          label: "Activity data",
+          mermaid: data?.mermaid || "",
+          isAi: false,
+        };
+      })
+      .catch(() => {
+        activitySource = { id: "activity", label: "Activity data", mermaid: "", isAi: false };
+      });
+
+    const notesPromise = getSessionNotes(sessionId)
+      .then((notes: any[]) => {
+        if (!notes) return;
+        for (let i = 0; i < notes.length; i++) {
+          const n = notes[i];
+          if (!n.mermaid) continue;
+          const date = new Date(n.generated_at);
+          const timeStr = date.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+          const modelStr = n.model ? ` · ${n.model.replace(/^claude-/, "").split("-20")[0]}` : "";
+          aiSources.push({
+            id: `note-${n.id}`,
+            label: `AI · ${timeStr}${modelStr}${i === 0 ? " (latest)" : ""}`,
+            mermaid: n.mermaid,
+            isAi: true,
+          });
         }
       })
       .catch(() => {});
 
-    // Also check for AI-enhanced mermaid from notes (takes priority)
-    getSessionNotes(sessionId)
-      .then((notes: any[]) => {
-        if (notes?.[0]?.mermaid) {
-          setMermaid(notes[0].mermaid);
-          setIsAiEnhanced(true);
-        }
-      })
-      .catch(() => {});
+    Promise.all([progPromise, notesPromise]).then(() => {
+      const all: FlowSource[] = [];
+      if (activitySource) all.push(activitySource);
+      all.push(...aiSources);
+
+      if (all.length === 0) return;
+      setSources(all);
+
+      if (activitySource?.mermaid) {
+        setActiveSourceId("activity");
+      } else if (aiSources.length > 0) {
+        setActiveSourceId(aiSources[0].id);
+      } else {
+        setActiveSourceId(all[0].id);
+      }
+    });
   }, [sessionId]);
 
-  if (!mermaid) return null;
+  const activeSource = sources.find((s) => s.id === activeSourceId) || null;
+  const hasMultipleSources = sources.filter((s) => s.mermaid).length > 1 || (sources.some((s) => s.isAi) && sources.some((s) => !s.isAi));
 
-  return (
-    <div className="mb-2 pb-2">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-          Session Flow
-        </span>
+  if (!activeSource) return null;
+  if (!activeSource.mermaid && sources.every((s) => !s.mermaid)) return null;
+
+  const header = (
+    <div className="flex items-center gap-2 mb-2">
+      <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+        Session Flow
+      </span>
+      {hasMultipleSources ? (
+        <select
+          value={activeSourceId || ""}
+          onChange={(e) => setActiveSourceId(e.target.value)}
+          className="text-[10px] px-1.5 py-0.5 rounded bg-transparent outline-none"
+          style={{
+            color: activeSource.isAi ? "#a78bfa" : "var(--text-muted)",
+            border: `1px solid ${activeSource.isAi ? "#a78bfa33" : "var(--border)"}`,
+          }}
+        >
+          {sources.map((s) => (
+            <option
+              key={s.id}
+              value={s.id}
+              disabled={!s.mermaid}
+              style={{ background: "#18181b", color: s.mermaid ? "#fafafa" : "#52525b" }}
+            >
+              {s.label}{!s.mermaid ? " (no data)" : ""}
+            </option>
+          ))}
+        </select>
+      ) : (
         <span
           className="text-[10px] px-1.5 py-0.5 rounded"
           style={{
-            color: isAiEnhanced ? "#a78bfa" : "var(--text-muted)",
-            border: `1px solid ${isAiEnhanced ? "#a78bfa33" : "var(--border)"}`,
+            color: activeSource.isAi ? "#a78bfa" : "var(--text-muted)",
+            border: `1px solid ${activeSource.isAi ? "#a78bfa33" : "var(--border)"}`,
           }}
         >
-          {isAiEnhanced ? "AI-enhanced" : "from activity data"}
+          {activeSource.isAi ? "AI-enhanced" : "from activity data"}
         </span>
+      )}
+      {activeSource.mermaid && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="p-1 rounded hover:bg-[var(--bg-hover)] transition-colors"
+          style={{ color: "var(--text-muted)" }}
+          title={expanded ? "Collapse diagram" : "Expand diagram"}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            {expanded ? (
+              <><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></>
+            ) : (
+              <><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></>
+            )}
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+
+  // Expanded: fixed overlay, full viewport, blurred background, expanded labels
+  if (expanded && activeSource.mermaid) {
+    return (
+      <div className="mb-2 pb-2">
+        <div style={{ height: 60 }} />
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0" style={{ background: "rgba(0, 0, 0, 0.7)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)" }} onClick={() => setExpanded(false)} />
+          <div
+            className="relative rounded-xl overflow-y-auto"
+            style={{ width: "96vw", maxWidth: "1800px", maxHeight: "90vh", padding: "1.5rem 2rem", background: "var(--bg-root)", border: "1px solid rgba(63, 63, 70, 0.3)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setExpanded(false)}
+              className="absolute top-3 right-3 p-1.5 rounded-md hover:bg-[var(--bg-hover)] transition-colors"
+              style={{ color: "var(--text-muted)" }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" />
+              </svg>
+            </button>
+            {expandedMermaid ? (
+              <MermaidDiagram chart={expandedMermaid} />
+            ) : (
+              <div className="flex items-center justify-center py-8" style={{ color: "var(--text-muted)" }}>
+                <div className="animate-spin w-3 h-3 rounded-full mr-2" style={{ border: "2px solid var(--border)", borderTopColor: "var(--accent)" }} />
+                <span className="text-[11px]">Loading expanded view...</span>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
-      <MermaidDiagram chart={mermaid} />
+    );
+  }
+
+  return (
+    <div className="mb-2 pb-2">
+      {header}
+      {activeSource.mermaid ? (
+        <MermaidDiagram chart={activeSource.mermaid} />
+      ) : (
+        <div
+          className="rounded-lg p-4 text-center text-[12px]"
+          style={{ background: "var(--bg-root)", border: "1px solid var(--border)", color: "var(--text-muted)" }}
+        >
+          Not enough activity data for a flow diagram
+        </div>
+      )}
     </div>
   );
 }

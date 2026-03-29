@@ -318,15 +318,32 @@ async function handleStop(input: HookStdin): Promise<void> {
         const titleMatches = [...tailText.matchAll(/"customTitle"\s*:\s*"([^"]+)"/g)];
         if (titleMatches.length > 0) {
           customTitle = titleMatches[titleMatches.length - 1][1];
+          // Skip auto-generated fork/branch titles (truncated parent prompts ending with "(Branch)" etc.)
+          if (customTitle.length > 60 && /\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/.test(customTitle)) {
+            customTitle = null;
+          }
         }
       } catch { /* non-critical */ }
 
       if (customTitle) {
         // Custom title from Claude Code — always takes priority
         db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(customTitle, sessionRow.id);
-      } else if (!sessionRow.forked_from) {
-        // Fallback: derive title from first real user prompt if not already set
-        // Skip for forked sessions — let SessionEnd handle it with full fork context
+      } else if (sessionRow.forked_from) {
+        // Forked session: if current title is still the auto-generated fork/branch title, fix it
+        const currentTitle = db.prepare("SELECT title, fork_exchange_index FROM sessions WHERE id = ?").get(sessionRow.id) as { title: string | null; fork_exchange_index: number | null } | undefined;
+        if (currentTitle?.title && currentTitle.fork_exchange_index != null
+          && /\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/.test(currentTitle.title)) {
+          const allExchanges = getSessionExchanges(sessionRow.id);
+          const title = deriveTitle(
+            allExchanges.map(e => ({ user_prompt: e.user_prompt })),
+            { forkExchangeIndex: currentTitle.fork_exchange_index },
+          );
+          if (title) {
+            db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, sessionRow.id);
+          }
+        }
+      } else {
+        // Non-forked: derive title from first real user prompt if not already set
         const currentTitle = db.prepare("SELECT title FROM sessions WHERE id = ?").get(sessionRow.id) as { title: string | null } | undefined;
         if (!currentTitle?.title) {
           const allExchanges = getSessionExchanges(sessionRow.id);
@@ -363,18 +380,68 @@ async function handleStop(input: HookStdin): Promise<void> {
         db.prepare("UPDATE sessions SET git_branch = ? WHERE id = ?").run(latestBranch, sessionRow.id);
       }
 
-      // Read head for forkedFrom (only present in branched/forked sessions)
+      // Read first JSONL line for forkedFrom (only present in branched/forked sessions).
+      // The first line can be very large (100KB+) because branched sessions embed
+      // the parent's conversation context. Read up to 1MB to cover any parent size.
       if (!sessionRow.forked_from) {
-        const headSize = Math.min(stat.size, 2048);
-        const headBuf = Buffer.alloc(headSize);
+        const maxRead = Math.min(stat.size, 1_048_576);
+        const headBuf = Buffer.alloc(maxRead);
         const fd2 = fs.openSync(input.transcript_path, "r");
-        fs.readSync(fd2, headBuf, 0, headSize, 0);
+        fs.readSync(fd2, headBuf, 0, maxRead, 0);
         fs.closeSync(fd2);
         const head = headBuf.toString("utf8");
-        const forkMatch = head.match(/"forkedFrom"\s*:\s*(\{[^}]+\})/);
+        const firstLine = head.indexOf("\n") > 0 ? head.substring(0, head.indexOf("\n")) : head;
+        const forkMatch = firstLine.match(/"forkedFrom"\s*:\s*(\{[^}]+\})/);
         if (forkMatch) {
           const db = getDb();
           db.prepare("UPDATE sessions SET forked_from = ? WHERE id = ?").run(forkMatch[1], sessionRow.id);
+
+          // Detect fork_exchange_index + re-derive title + create session link
+          try {
+            const forkData = JSON.parse(forkMatch[1]);
+            if (forkData.sessionId) {
+              const parentSession = getSession(forkData.sessionId);
+              if (parentSession) {
+                // Find fork point: first exchange where child differs from parent
+                const divergence = db.prepare(`
+                  SELECT b.exchange_index
+                  FROM exchanges b
+                  LEFT JOIN exchanges p ON p.exchange_index = b.exchange_index AND p.session_id = ?
+                  WHERE b.session_id = ?
+                  AND (p.id IS NULL OR p.user_prompt != b.user_prompt)
+                  ORDER BY b.exchange_index LIMIT 1
+                `).get(parentSession.id, sessionRow.id) as { exchange_index: number } | undefined;
+
+                if (divergence) {
+                  db.prepare("UPDATE sessions SET fork_exchange_index = ? WHERE id = ?")
+                    .run(divergence.exchange_index, sessionRow.id);
+
+                  // Re-derive title with fork awareness
+                  const allExchanges = getSessionExchanges(sessionRow.id);
+                  const title = deriveTitle(
+                    allExchanges.map(e => ({ user_prompt: e.user_prompt })),
+                    { forkExchangeIndex: divergence.exchange_index },
+                  );
+                  if (title) {
+                    db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, sessionRow.id);
+                  }
+                }
+
+                // Create fork session link (bidirectional navigation)
+                const existingLink = db.prepare(
+                  "SELECT id FROM session_links WHERE source_session_id = ? AND target_session_id = ? AND link_type = 'fork'",
+                ).get(sessionRow.id, parentSession.id);
+                if (!existingLink) {
+                  insertSessionLink({
+                    source_session_id: sessionRow.id,
+                    target_session_id: parentSession.id,
+                    link_type: "fork",
+                    shared_files: "[]",
+                  });
+                }
+              }
+            }
+          } catch { /* non-critical — SessionEnd handles as fallback */ }
         }
       }
     } catch {

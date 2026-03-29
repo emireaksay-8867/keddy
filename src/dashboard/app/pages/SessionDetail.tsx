@@ -267,9 +267,14 @@ export function SessionDetail() {
         <div className="overflow-y-auto h-full" ref={contentRef}>
           {tab === "timeline" ? (
             <div>
-              {/* Plans at top — strategy overview */}
+              {/* Session Flow — top-level overview */}
+              <div className="px-6 pt-5">
+                <SessionFlowDiagram sessionId={session.session_id} />
+              </div>
+
+              {/* Plans */}
               {session.plans.length > 0 && (
-                <div className="px-6 pt-5 pb-3">
+                <div className="px-6 pb-3">
                   <div className="text-[12px] font-semibold mb-2" style={{ color: "var(--text-muted)" }}>Plans</div>
                   <PlanSection
                     plans={session.plans}
@@ -283,10 +288,6 @@ export function SessionDetail() {
                   />
                 </div>
               )}
-              {/* Session Flow — between plans and activity */}
-              <div className={`px-6 ${session.plans.length > 0 ? "" : "pt-4"}`}>
-                <SessionFlowDiagram sessionId={session.session_id} />
-              </div>
 
               {/* Activity heading */}
               <div className="mx-6 mb-1">

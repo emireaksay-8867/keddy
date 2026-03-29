@@ -7,9 +7,9 @@ import type { SessionNote } from "../../lib/types.js";
 // ── Mermaid Diagram Renderer ─────────────────────────────────
 
 let mermaidId = 0;
+let lastInitConfig = "";
 
 export function MermaidDiagram({ chart, compact }: { chart: string; compact?: boolean }) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const [svg, setSvg] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -17,30 +17,37 @@ export function MermaidDiagram({ chart, compact }: { chart: string; compact?: bo
     let cancelled = false;
     const id = `mermaid-${++mermaidId}`;
 
+    const fontSize = compact ? 11 : 13;
+    const padding = compact ? 8 : 12;
+
     import("mermaid").then(({ default: mermaid }) => {
       if (cancelled) return;
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: "dark",
-        themeVariables: {
-          primaryColor: "#6366f1",
-          primaryTextColor: "#fafafa",
-          primaryBorderColor: "#3f3f46",
-          lineColor: "#52525b",
-          secondaryColor: "#18181b",
-          tertiaryColor: "#27272a",
-          background: "#111113",
-          mainBkg: "#18181b",
-          nodeBorder: "#3f3f46",
-          clusterBkg: "#18181b",
-          titleColor: "#fafafa",
-          edgeLabelBackground: "#18181b",
-          nodeTextColor: "#fafafa",
-        },
-        flowchart: { htmlLabels: true, curve: "basis", padding: compact ? 8 : 12 },
-        fontFamily: "'Geist', system-ui, sans-serif",
-        fontSize: compact ? 11 : 13,
-      });
+      const configKey = `${fontSize}-${padding}`;
+      if (configKey !== lastInitConfig) {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: "dark",
+          themeVariables: {
+            primaryColor: "#6366f1",
+            primaryTextColor: "#fafafa",
+            primaryBorderColor: "#3f3f46",
+            lineColor: "#52525b",
+            secondaryColor: "#18181b",
+            tertiaryColor: "#27272a",
+            background: "#111113",
+            mainBkg: "#18181b",
+            nodeBorder: "#3f3f46",
+            clusterBkg: "#18181b",
+            titleColor: "#fafafa",
+            edgeLabelBackground: "#18181b",
+            nodeTextColor: "#fafafa",
+          },
+          flowchart: { htmlLabels: true, curve: "basis", padding },
+          fontFamily: "'Geist', system-ui, sans-serif",
+          fontSize,
+        });
+        lastInitConfig = configKey;
+      }
       mermaid.render(id, chart)
         .then(({ svg: rendered }) => { if (!cancelled) setSvg(rendered); })
         .catch((err) => { if (!cancelled) setError(err?.message || "Render failed"); });
@@ -68,9 +75,8 @@ export function MermaidDiagram({ chart, compact }: { chart: string; compact?: bo
 
   return (
     <div
-      ref={containerRef}
-      className={`my-3 flex justify-center overflow-x-auto rounded-lg p-3 ${compact ? "mermaid-compact" : ""}`}
-      style={{ background: "var(--bg-root)", border: "1px solid var(--border)", ...(compact ? { maxHeight: 240 } : {}) }}
+      className={`my-3 flex justify-center rounded-lg p-3 ${compact ? "mermaid-compact" : ""}`}
+      style={{ background: "var(--bg-root)", border: "1px solid rgba(63, 63, 70, 0.3)", ...(compact ? { maxHeight: 240 } : {}) }}
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );

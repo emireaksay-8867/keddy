@@ -386,14 +386,22 @@ sessionsRoutes.get("/", (c) => {
       } catch { /* invalid JSON */ }
     }
 
-    // Compute outcomes from milestones
-    const outcomes = computeOutcomes(milestones);
+    // For forked sessions, strip auto-generated "(Branch)"/"(Fork)" suffix
+    const forkIdx = (s as any).fork_exchange_index ?? null;
+    if (s.title && /\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/.test(s.title)) {
+      s.title = s.title.replace(/\s*\S?\s*\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/, "").trim();
+    }
+    const ownMilestones = forkIdx != null
+      ? milestones.filter((m: any) => m.exchange_index >= forkIdx)
+      : milestones;
+
+    // Compute outcomes from own milestones only
+    const outcomes = computeOutcomes(ownMilestones);
 
     // Find best plan: only show approved or implemented in the session list
     // For forked sessions, exclude inherited plans (from parent session)
-    const forkIdx = (s as any).fork_exchange_index ?? null;
     const ownPlans = forkIdx != null
-      ? plans.filter((p: any) => p.exchange_index_end >= forkIdx)
+      ? plans.filter((p: any) => p.exchange_index_start >= forkIdx)
       : plans;
     const acceptedPlan = ownPlans.find((p: any) => p.status === "implemented")
       ?? ownPlans.find((p: any) => p.status === "approved")
@@ -479,12 +487,12 @@ sessionsRoutes.get("/", (c) => {
         end: seg.exchange_index_end,
         has_summary: !!seg.summary,
       })),
-      milestone_count: milestones.length,
+      milestone_count: ownMilestones.length,
       outcomes,
       latest_plan: latestPlan ? {
         version: latestPlan.version,
         status: latestPlan.status,
-        total_versions: plans.length,
+        total_versions: ownPlans.length,
         plan_title: extractPlanTitle(latestPlan.plan_text),
       } : null,
       has_ai: hasAiSummaries,
@@ -495,7 +503,7 @@ sessionsRoutes.get("/", (c) => {
       parent_session_id: parentSessionId,
       // Facts-first additions
       activity_groups: activityGroups,
-      milestones: milestones.map((m) => ({
+      milestones: ownMilestones.map((m) => ({
         type: m.milestone_type,
         exchange_index: m.exchange_index,
         description: m.description,
@@ -650,11 +658,20 @@ sessionsRoutes.get("/:id", (c) => {
     FROM decisions WHERE session_id = ? ORDER BY exchange_index
   `).all(session.id);
 
-  // Outcomes (shared computation)
-  const outcomes = computeOutcomes(milestones);
+  // For forked sessions, strip auto-generated "(Branch)"/"(Fork)" suffix
+  const forkExIdx = (session as any).fork_exchange_index as number | null;
+  if (session.title && /\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/.test(session.title)) {
+    (session as any).title = session.title.replace(/\s*\S?\s*\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/, "").trim();
+  }
+  const ownMilestones = forkExIdx != null
+    ? milestones.filter((m: any) => m.exchange_index >= forkExIdx)
+    : milestones;
 
-  // Git details with file/stats/hash parsing
-  const gitDetails = extractGitDetails(db, session.id, milestones);
+  // Outcomes (shared computation) — from own milestones only
+  const outcomes = computeOutcomes(ownMilestones);
+
+  // Git details with file/stats/hash parsing — from own milestones only
+  const gitDetails = extractGitDetails(db, session.id, ownMilestones);
 
   // Resolve GitHub repo for URL construction
   try {
@@ -680,12 +697,14 @@ sessionsRoutes.get("/:id", (c) => {
     }
   } catch { /* no git remote or not a git repo — URLs just won't be added */ }
 
-  // Test status — final state only (last test milestone)
+  // Test status — final state only (last test milestone, fork-filtered)
   let testStatus: { passing: boolean; description: string; exchange_index: number } | null = null;
   try {
+    const forkTestFilter = forkExIdx != null ? `AND exchange_index >= ${forkExIdx}` : "";
     const lastTest = db.prepare(`
       SELECT milestone_type, description, exchange_index
       FROM milestones WHERE session_id = ? AND milestone_type IN ('test_pass', 'test_fail')
+      ${forkTestFilter}
       ORDER BY exchange_index DESC LIMIT 1
     `).get(session.id) as any;
     if (lastTest) {
@@ -698,6 +717,7 @@ sessionsRoutes.get("/:id", (c) => {
   } catch { /* non-critical */ }
 
   // Facts-first: build activity group details from segments with boundary_type
+  // Note: NOT fork-filtered here — frontend handles inherited vs new display (like Terminal view)
   const activityGroups = segments
     .filter((seg) => seg.boundary_type != null)
     .map((seg) => {
@@ -795,8 +815,7 @@ sessionsRoutes.get("/:id", (c) => {
     `).all(session.id) as any[];
   } catch { /* non-critical */ }
 
-  // Fork metadata for detail view (computed before file ops since they depend on it)
-  const forkExIdx = (session as any).fork_exchange_index as number | null;
+  // Fork metadata for detail view
   let detailParentTitle: string | null = null;
   let detailParentSessionId: string | null = null;
   if (session.forked_from) {
@@ -855,8 +874,8 @@ sessionsRoutes.get("/:id", (c) => {
     parent_session_id: detailParentSessionId,
     fork_children: forkChildren.length > 0 ? forkChildren : undefined,
     segments,
-    milestones,
-    plans: plans.map((p: any) => {
+    milestones: ownMilestones,
+    plans: (forkExIdx != null ? plans.filter((p: any) => p.exchange_index_start >= forkExIdx) : plans).map((p: any) => {
       // Enrich with real timestamps from exchanges (created_at is reimport time, not useful)
       try {
         const startRow = db.prepare("SELECT timestamp FROM exchanges WHERE session_id = ? AND exchange_index = ?").get(session.id, p.exchange_index_start) as any;
