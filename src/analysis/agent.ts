@@ -119,6 +119,11 @@ function buildLightweightContext(sessionId: string): {
         tool_counts: toolCounts,
         error_count: s.error_count,
         markers,
+        duration_ms: s.duration_ms || 0,
+        bash_descs: [],
+        plan_title: null,
+        started_at: s.started_at || null,
+        ended_at: s.ended_at || null,
       };
     });
 

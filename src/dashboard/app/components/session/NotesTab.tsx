@@ -405,6 +405,9 @@ export function NotesTab({ sessionId }: NotesTabProps) {
     );
   }
 
+  // Loading state
+  if (!notes) return null;
+
   // Empty state
   if (notes.length === 0) {
     return (
