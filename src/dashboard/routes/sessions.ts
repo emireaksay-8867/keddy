@@ -537,9 +537,15 @@ sessionsRoutes.get("/:id", (c) => {
   let plans = getSessionPlans(session.id);
   const compactions = getSessionCompactionEvents(session.id);
 
-  // If no segments but has exchanges, generate analysis on-the-fly
-  // This handles live sessions where SessionEnd hasn't run yet
-  if (segments.length === 0 && session.exchange_count > 0) {
+  // Generate analysis on-the-fly for live sessions or sessions without segments
+  // For active sessions: re-analyze when new exchanges arrive (keeps milestones/segments fresh)
+  // For ended sessions: only analyze once if segments are missing (SessionEnd is authoritative)
+  const isActive = !session.ended_at;
+  const maxSegmentIdx = segments.length > 0 ? Math.max(...segments.map((s: any) => s.exchange_index_end)) : -1;
+  const hasNewExchanges = session.exchange_count - 1 > maxSegmentIdx;
+  const needsAnalysis = (segments.length === 0 || (isActive && hasNewExchanges)) && session.exchange_count > 0;
+
+  if (needsAnalysis) {
     try {
       const exchanges = getSessionExchanges(session.id);
       const parsedExchanges = exchanges.map((e: any) => ({
@@ -566,6 +572,14 @@ sessionsRoutes.get("/:id", (c) => {
       const newGroups = extractActivityGroups(parsedExchanges, newMilestones);
       const db = getDb();
       const { insertSegment, insertMilestone, insertPlan } = require("../../db/queries.js");
+
+      // Clear stale data before re-inserting (prevents duplicates from Stop hook + on-the-fly overlap)
+      db.prepare("DELETE FROM segments WHERE session_id = ?").run(session.id);
+      db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
+      if (!isActive) {
+        // Only clear plans for ended sessions — Stop hook manages plans for active sessions
+        db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);
+      }
 
       for (const group of newGroups) {
         const { deriveDisplayType: ddt } = require("../../capture/activity-groups.js");
@@ -1092,6 +1106,137 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
     return c.json({ error: "Session not found" }, 404);
   }
 
+  // Live sync from JSONL — the Stop hook can miss exchanges, so the server
+  // checks the source-of-truth JSONL on every poll and syncs any missing data.
+  // Only runs for sessions with a recent JSONL file (active or recently ended).
+  try {
+    const { existsSync, statSync } = require("node:fs");
+    if (session.jsonl_path && existsSync(session.jsonl_path)) {
+      const mtime = statSync(session.jsonl_path).mtimeMs;
+      const RECENT_THRESHOLD = 30 * 60 * 1000; // 30 minutes
+      const now = Date.now();
+
+      if (now - mtime < RECENT_THRESHOLD) {
+        // Check if DB is stale: JSONL modified after last known exchange
+        const endedMs = session.ended_at ? new Date(session.ended_at).getTime() : 0;
+        if (mtime - endedMs > 2000) {
+          const existingExchanges = getSessionExchanges(session.id);
+          const sinceIndex = Math.max(0, existingExchanges.length - 1);
+
+          let latestExchanges;
+          try {
+            latestExchanges = parseLatestExchanges(session.jsonl_path, sinceIndex);
+          } catch { latestExchanges = null; }
+
+          if (latestExchanges && latestExchanges.length > 0) {
+            const db = getDb();
+
+            for (const exchange of latestExchanges) {
+              const existing = existingExchanges.find((e: any) => e.exchange_index === exchange.index);
+
+              if (existing) {
+                // UPDATE existing exchange — it might have been captured with incomplete response
+                db.prepare(`
+                  UPDATE exchanges SET
+                    assistant_response = ?,
+                    tool_call_count = ?,
+                    is_interrupt = ?,
+                    model = COALESCE(?, model),
+                    input_tokens = COALESCE(?, input_tokens),
+                    output_tokens = COALESCE(?, output_tokens),
+                    cache_read_tokens = COALESCE(?, cache_read_tokens),
+                    cache_write_tokens = COALESCE(?, cache_write_tokens),
+                    stop_reason = COALESCE(?, stop_reason),
+                    has_thinking = COALESCE(?, has_thinking),
+                    turn_duration_ms = COALESCE(?, turn_duration_ms)
+                  WHERE id = ?
+                `).run(
+                  exchange.assistant_response ?? "",
+                  exchange.tool_calls.length,
+                  exchange.is_interrupt ? 1 : 0,
+                  exchange.model ?? null,
+                  exchange.input_tokens ?? null,
+                  exchange.output_tokens ?? null,
+                  exchange.cache_read_tokens ?? null,
+                  exchange.cache_write_tokens ?? null,
+                  exchange.stop_reason ?? null,
+                  exchange.has_thinking ? 1 : null,
+                  exchange.turn_duration_ms ?? null,
+                  existing.id,
+                );
+
+                // Re-insert tool calls with enriched fields
+                db.prepare("DELETE FROM tool_calls WHERE exchange_id = ?").run(existing.id);
+                for (const tc of exchange.tool_calls) {
+                  const enriched = extractToolCallFields(tc.name, tc.input);
+                  insertToolCall({
+                    exchange_id: existing.id,
+                    session_id: session.id,
+                    tool_name: tc.name,
+                    tool_input: JSON.stringify(tc.input),
+                    tool_result: tc.result ?? null,
+                    tool_use_id: tc.id,
+                    is_error: tc.is_error ?? false,
+                    ...enriched,
+                  });
+                }
+              } else {
+                // INSERT new exchange
+                const exchangeId = insertExchange({
+                  session_id: session.id,
+                  exchange_index: exchange.index,
+                  user_prompt: exchange.user_prompt,
+                  assistant_response: exchange.assistant_response,
+                  tool_call_count: exchange.tool_calls.length,
+                  timestamp: exchange.timestamp,
+                  is_interrupt: exchange.is_interrupt,
+                  is_compact_summary: exchange.is_compact_summary,
+                  model: exchange.model,
+                  input_tokens: exchange.input_tokens,
+                  output_tokens: exchange.output_tokens,
+                  cache_read_tokens: exchange.cache_read_tokens,
+                  cache_write_tokens: exchange.cache_write_tokens,
+                  stop_reason: exchange.stop_reason,
+                  has_thinking: exchange.has_thinking,
+                  permission_mode: exchange.permission_mode,
+                  is_sidechain: exchange.is_sidechain,
+                  entrypoint: exchange.entrypoint,
+                  cwd: exchange.cwd,
+                  git_branch: exchange.git_branch,
+                  turn_duration_ms: exchange.turn_duration_ms,
+                });
+
+                for (const tc of exchange.tool_calls) {
+                  const enriched = extractToolCallFields(tc.name, tc.input);
+                  insertToolCall({
+                    exchange_id: exchangeId,
+                    session_id: session.id,
+                    tool_name: tc.name,
+                    tool_input: JSON.stringify(tc.input),
+                    tool_result: tc.result ?? null,
+                    tool_use_id: tc.id,
+                    is_error: tc.is_error ?? false,
+                    ...enriched,
+                  });
+                }
+              }
+            }
+
+            // Update session metadata
+            const lastEx = latestExchanges[latestExchanges.length - 1];
+            db.prepare(`
+              UPDATE sessions SET
+                ended_at = COALESCE(?, ended_at),
+                exchange_count = (SELECT COUNT(*) FROM exchanges WHERE session_id = ?)
+              WHERE id = ?
+            `).run(lastEx.timestamp || new Date().toISOString(), session.id, session.id);
+          }
+        }
+      }
+    }
+  } catch (e) { console.error("[keddy] Live sync error:", e); }
+
+  // Read fresh data after sync
   const exchanges = getSessionExchanges(session.id);
 
   // Optionally include tool calls
@@ -1166,8 +1311,10 @@ sessionsRoutes.post("/:id/sync", (c) => {
       session.id,
     );
 
-    // Insert any missing exchanges
+    // Clear and re-insert all exchanges — sync does a full re-parse from JSONL (source of truth)
     const { insertExchange, insertToolCall } = require("../../db/queries.js");
+    db.prepare("DELETE FROM tool_calls WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM exchanges WHERE session_id = ?").run(session.id);
     let added = 0;
     for (const exchange of transcript.exchanges) {
       const eid = insertExchange({
@@ -1180,9 +1327,9 @@ sessionsRoutes.post("/:id/sync", (c) => {
         is_interrupt: exchange.is_interrupt,
         is_compact_summary: exchange.is_compact_summary,
       });
-      // insertExchange returns existing ID if duplicate, but we don't know if it was new
       for (const tc of exchange.tool_calls) {
         try {
+          const enriched = extractToolCallFields(tc.name, tc.input);
           insertToolCall({
             exchange_id: eid,
             session_id: session.id,
@@ -1191,6 +1338,7 @@ sessionsRoutes.post("/:id/sync", (c) => {
             tool_result: tc.result ?? null,
             tool_use_id: tc.id,
             is_error: tc.is_error ?? false,
+            ...enriched,
           });
         } catch { /* duplicate tool call */ }
       }

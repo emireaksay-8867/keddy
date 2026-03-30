@@ -146,50 +146,104 @@ async function handleStop(input: HookStdin): Promise<void> {
     if (!sessionRow) return;
 
     const existingExchanges = getSessionExchanges(sessionRow.id);
-    const sinceIndex = existingExchanges.length;
+    // Re-process the last existing exchange to catch continuation text
+    // (Stop fires mid-exchange during tool use — first fire inserts partial response,
+    //  subsequent fires need to UPDATE with accumulated text from parser)
+    const sinceIndex = Math.max(0, existingExchanges.length - 1);
 
     const latestExchanges = parseLatestExchanges(
       input.transcript_path,
       sinceIndex,
     );
 
+    const db = getDb();
     for (const exchange of latestExchanges) {
-      const exchangeId = insertExchange({
-        session_id: sessionRow.id,
-        exchange_index: exchange.index,
-        user_prompt: exchange.user_prompt,
-        assistant_response: exchange.assistant_response,
-        tool_call_count: exchange.tool_calls.length,
-        timestamp: exchange.timestamp,
-        is_interrupt: exchange.is_interrupt,
-        is_compact_summary: exchange.is_compact_summary,
-        model: exchange.model,
-        input_tokens: exchange.input_tokens,
-        output_tokens: exchange.output_tokens,
-        cache_read_tokens: exchange.cache_read_tokens,
-        cache_write_tokens: exchange.cache_write_tokens,
-        stop_reason: exchange.stop_reason,
-        has_thinking: exchange.has_thinking,
-        permission_mode: exchange.permission_mode,
-        is_sidechain: exchange.is_sidechain,
-        entrypoint: exchange.entrypoint,
-        cwd: exchange.cwd,
-        git_branch: exchange.git_branch,
-        turn_duration_ms: exchange.turn_duration_ms,
-      });
+      // Check if this exchange already exists in DB
+      const existing = existingExchanges.find((e: any) => e.exchange_index === exchange.index);
 
-      for (const tc of exchange.tool_calls) {
-        const enriched = extractToolCallFields(tc.name, tc.input);
-        insertToolCall({
-          exchange_id: exchangeId,
+      if (existing) {
+        // UPDATE existing exchange with more complete data (continuation text after tool calls)
+        db.prepare(`
+          UPDATE exchanges SET
+            assistant_response = ?,
+            tool_call_count = ?,
+            model = COALESCE(?, model),
+            input_tokens = COALESCE(?, input_tokens),
+            output_tokens = COALESCE(?, output_tokens),
+            cache_read_tokens = COALESCE(?, cache_read_tokens),
+            cache_write_tokens = COALESCE(?, cache_write_tokens),
+            stop_reason = COALESCE(?, stop_reason),
+            has_thinking = COALESCE(?, has_thinking),
+            turn_duration_ms = COALESCE(?, turn_duration_ms)
+          WHERE id = ?
+        `).run(
+          exchange.assistant_response,
+          exchange.tool_calls.length,
+          exchange.model,
+          exchange.input_tokens,
+          exchange.output_tokens,
+          exchange.cache_read_tokens,
+          exchange.cache_write_tokens,
+          exchange.stop_reason,
+          exchange.has_thinking || null,
+          exchange.turn_duration_ms,
+          existing.id,
+        );
+
+        // Re-insert tool calls (parser has the complete set with results)
+        db.prepare("DELETE FROM tool_calls WHERE exchange_id = ?").run(existing.id);
+        for (const tc of exchange.tool_calls) {
+          const enriched = extractToolCallFields(tc.name, tc.input);
+          insertToolCall({
+            exchange_id: existing.id,
+            session_id: sessionRow.id,
+            tool_name: tc.name,
+            tool_input: JSON.stringify(tc.input),
+            tool_result: tc.result ?? null,
+            tool_use_id: tc.id,
+            is_error: tc.is_error ?? false,
+            ...enriched,
+          });
+        }
+      } else {
+        // INSERT new exchange
+        const exchangeId = insertExchange({
           session_id: sessionRow.id,
-          tool_name: tc.name,
-          tool_input: JSON.stringify(tc.input),
-          tool_result: tc.result ?? null,
-          tool_use_id: tc.id,
-          is_error: tc.is_error ?? false,
-          ...enriched,
+          exchange_index: exchange.index,
+          user_prompt: exchange.user_prompt,
+          assistant_response: exchange.assistant_response,
+          tool_call_count: exchange.tool_calls.length,
+          timestamp: exchange.timestamp,
+          is_interrupt: exchange.is_interrupt,
+          is_compact_summary: exchange.is_compact_summary,
+          model: exchange.model,
+          input_tokens: exchange.input_tokens,
+          output_tokens: exchange.output_tokens,
+          cache_read_tokens: exchange.cache_read_tokens,
+          cache_write_tokens: exchange.cache_write_tokens,
+          stop_reason: exchange.stop_reason,
+          has_thinking: exchange.has_thinking,
+          permission_mode: exchange.permission_mode,
+          is_sidechain: exchange.is_sidechain,
+          entrypoint: exchange.entrypoint,
+          cwd: exchange.cwd,
+          git_branch: exchange.git_branch,
+          turn_duration_ms: exchange.turn_duration_ms,
         });
+
+        for (const tc of exchange.tool_calls) {
+          const enriched = extractToolCallFields(tc.name, tc.input);
+          insertToolCall({
+            exchange_id: exchangeId,
+            session_id: sessionRow.id,
+            tool_name: tc.name,
+            tool_input: JSON.stringify(tc.input),
+            tool_result: tc.result ?? null,
+            tool_use_id: tc.id,
+            is_error: tc.is_error ?? false,
+            ...enriched,
+          });
+        }
       }
     }
 
@@ -515,6 +569,12 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
       });
     }
 
+    // Clear ALL previous data — SessionEnd does a full re-parse from JSONL (source of truth).
+    // Must replace whatever the Stop hook wrote, not skip it via idempotent insertExchange.
+    const db = getDb();
+    db.prepare("DELETE FROM tool_calls WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM exchanges WHERE session_id = ?").run(session.id);
+
     // Store all exchanges
     for (const exchange of transcript.exchanges) {
       const exchangeId = insertExchange({
@@ -560,7 +620,6 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
     updateSessionEnd(input.session_id, transcript.exchanges.length, transcript.ended_at ?? undefined);
 
     // Clear previous analysis (SessionEnd does a full re-parse, so old data should be replaced)
-    const db = getDb();
     db.prepare("DELETE FROM segments WHERE session_id = ?").run(session.id);
     db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
     db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);

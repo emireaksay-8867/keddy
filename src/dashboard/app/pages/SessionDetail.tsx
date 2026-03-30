@@ -91,9 +91,15 @@ export function SessionDetail() {
 
   useEffect(() => { fetchData(true); }, [fetchData]);
   useEffect(() => {
-    pollRef.current = setInterval(() => fetchData(false), 15000);
+    // Poll frequently for active sessions (JSONL still being written),
+    // stop polling for ended sessions older than 30 minutes
+    const isActive = !session?.ended_at ||
+      (Date.now() - new Date(session.ended_at).getTime() < 30 * 60 * 1000);
+    if (isActive) {
+      pollRef.current = setInterval(() => fetchData(false), 5000);
+    }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [fetchData]);
+  }, [fetchData, session?.ended_at]);
 
   // Detail panel helpers
   const openDetail = (title: string, subtitle: string, content: ReactNode, rawData: unknown) =>
