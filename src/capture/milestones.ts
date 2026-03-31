@@ -240,11 +240,15 @@ export function extractMilestones(exchanges: ParsedExchange[]): ExtractedMilesto
       // PR creation — skip failed attempts (command errored, no PR was created)
       if (!tc.is_error && PR_RE.test(cmd)) {
         const titleMatch = cmd.match(PR_TITLE_RE);
+        // Extract PR number from tool result (e.g., "https://github.com/owner/repo/pull/42")
+        const prNumMatch = tc.result?.match(/\/pull\/(\d+)/);
+        const prNum = prNumMatch ? parseInt(prNumMatch[1]) : null;
+        const title = titleMatch ? titleMatch[1] : "Created pull request";
         milestones.push({
           milestone_type: "pr",
           exchange_index: exchange.index,
-          description: titleMatch ? `PR: ${titleMatch[1]}` : "Created pull request",
-          metadata: titleMatch ? { title: titleMatch[1] } : null,
+          description: prNum ? `PR #${prNum}: ${title}` : `PR: ${title}`,
+          metadata: { title, ...(prNum ? { number: prNum } : {}) },
         });
         continue;
       }
