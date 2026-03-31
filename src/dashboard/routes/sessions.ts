@@ -1236,18 +1236,13 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
             });
             const allMilestones = extractMilestones(parsedForMilestones as any);
             for (const m of allMilestones) {
-              const exists = db.prepare(
-                "SELECT id FROM milestones WHERE session_id = ? AND milestone_type = ? AND exchange_index = ?",
-              ).get(session.id, m.milestone_type, m.exchange_index);
-              if (!exists) {
-                insertMilestone({
-                  session_id: session.id,
-                  milestone_type: m.milestone_type,
-                  exchange_index: m.exchange_index,
-                  description: m.description,
-                  metadata: m.metadata ? JSON.stringify(m.metadata) : null,
-                });
-              }
+              insertMilestone({
+                session_id: session.id,
+                milestone_type: m.milestone_type,
+                exchange_index: m.exchange_index,
+                description: m.description,
+                metadata: m.metadata ? JSON.stringify(m.metadata) : null,
+              });
             }
 
             // Update session metadata

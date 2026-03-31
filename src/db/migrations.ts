@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 
-const CURRENT_VERSION = 8;
+const CURRENT_VERSION = 9;
 
 interface Migration {
   version: number;
@@ -230,6 +230,24 @@ const migrations: Migration[] = [
       } catch {
         // Column might already exist
       }
+    },
+  },
+  {
+    version: 9,
+    description: "Add unique constraint on milestones to prevent duplicates",
+    up: (db) => {
+      // Remove any existing duplicates first (keep the first inserted)
+      db.exec(`
+        DELETE FROM milestones WHERE id NOT IN (
+          SELECT MIN(id) FROM milestones
+          GROUP BY session_id, milestone_type, exchange_index, description
+        )
+      `);
+      // Add unique index — database-level guarantee against duplicates
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_milestones_unique
+        ON milestones(session_id, milestone_type, exchange_index, description)
+      `);
     },
   },
 ];

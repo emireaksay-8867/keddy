@@ -492,7 +492,7 @@ export function insertMilestone(data: {
   const db = getDb();
   const id = randomUUID();
   db.prepare(`
-    INSERT INTO milestones (id, session_id, milestone_type, exchange_index, description, metadata)
+    INSERT OR IGNORE INTO milestones (id, session_id, milestone_type, exchange_index, description, metadata)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(
     id,
