@@ -193,6 +193,12 @@ export function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_plans_session ON plans(session_id);
     CREATE INDEX IF NOT EXISTS idx_segments_session ON segments(session_id);
     CREATE INDEX IF NOT EXISTS idx_milestones_session ON milestones(session_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_milestones_commit_unique
+      ON milestones(session_id, milestone_type, description)
+      WHERE milestone_type IN ('commit','branch');
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_milestones_exchange_unique
+      ON milestones(session_id, milestone_type, exchange_index, description)
+      WHERE milestone_type NOT IN ('commit','branch');
     CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id);
     CREATE INDEX IF NOT EXISTS idx_compaction_events_session ON compaction_events(session_id);
     CREATE INDEX IF NOT EXISTS idx_session_links_source ON session_links(source_session_id);

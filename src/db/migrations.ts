@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 
-const CURRENT_VERSION = 9;
+const CURRENT_VERSION = 10;
 
 interface Migration {
   version: number;
@@ -247,6 +247,59 @@ const migrations: Migration[] = [
       db.exec(`
         CREATE UNIQUE INDEX IF NOT EXISTS idx_milestones_unique
         ON milestones(session_id, milestone_type, exchange_index, description)
+      `);
+    },
+  },
+  {
+    version: 10,
+    description: "Fix milestone duplicates: cross-exchange dedup + garbage push cleanup + partial unique indexes",
+    up: (db) => {
+      // Step 1: Delete cross-exchange duplicates for git milestone types.
+      // For each (session_id, milestone_type, description) with multiple rows,
+      // keep only the one with the smallest id (earliest inserted).
+      db.exec(`
+        DELETE FROM milestones
+        WHERE milestone_type IN ('commit','push','pull','pr','branch')
+        AND id NOT IN (
+          SELECT MIN(id) FROM milestones
+          WHERE milestone_type IN ('commit','push','pull','pr','branch')
+          GROUP BY session_id, milestone_type, description
+        )
+      `);
+
+      // Step 2: Delete false positive push milestones with garbage descriptions
+      // (SQL fragments, shell metacharacters from non-git commands).
+      // Real push descriptions are "Pushed to <remote>" or "Pushed to <remote>/<branch>"
+      // and "Pushed (detected from git)" — never contain these patterns.
+      db.exec(`
+        DELETE FROM milestones
+        WHERE milestone_type = 'push'
+        AND (
+          description LIKE '%sqlite3%'
+          OR description LIKE '%/dev/null%'
+          OR description LIKE '%THEN%'
+          OR description LIKE '%contain?%'
+          OR description LIKE '%)%'
+        )
+      `);
+
+      // Step 3: Replace the v9 unique index with two partial indexes.
+      // Commit/branch: unique per (session, type, description) — a commit message
+      // is unique per session; you only create a branch name once.
+      // Everything else (push/pull/pr/test): unique per (session, type, exchange, description)
+      // — pushes to the same remote at different exchanges are separate events.
+      db.exec("DROP INDEX IF EXISTS idx_milestones_unique");
+
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_milestones_commit_unique
+        ON milestones(session_id, milestone_type, description)
+        WHERE milestone_type IN ('commit','branch')
+      `);
+
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_milestones_exchange_unique
+        ON milestones(session_id, milestone_type, exchange_index, description)
+        WHERE milestone_type NOT IN ('commit','branch')
       `);
     },
   },

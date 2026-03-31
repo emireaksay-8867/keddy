@@ -192,42 +192,53 @@ export function extractMilestones(exchanges: ParsedExchange[]): ExtractedMilesto
       }
 
       // Git push — always check even if commit was found (chained commands)
-      const pushMatch = cmd.match(PUSH_RE);
+      // Skip failed pushes — if the command errored, nothing was pushed
+      const pushMatch = !tc.is_error && cmd.match(PUSH_RE);
       if (pushMatch) {
         const cleanArgs = cleanPushDescription(pushMatch[1] || "");
-        const parts = cleanArgs.split(/\s+/).filter(Boolean);
-        const remote = parts[0] || "origin";
-        const branch = parts[1] || "";
-        milestones.push({
-          milestone_type: "push",
-          exchange_index: exchange.index,
-          description: branch ? `Pushed to ${remote}/${branch}` : `Pushed to ${remote}`,
-          metadata: { remote, branch: branch || null },
-        });
+        // Reject false positives: garbage chars indicate "git push" appeared
+        // inside a SQL query, string literal, or other non-git context
+        const isGarbage = /[;'"(){}|<>\\$~%^!?]/.test(cleanArgs)
+          || /\.(db|sqlite|sql)\b/.test(cleanArgs);
+        if (!isGarbage) {
+          const parts = cleanArgs.split(/\s+/).filter(Boolean);
+          const remote = parts[0] || "origin";
+          const branch = parts[1] || "";
+          milestones.push({
+            milestone_type: "push",
+            exchange_index: exchange.index,
+            description: branch ? `Pushed to ${remote}/${branch}` : `Pushed to ${remote}`,
+            metadata: { remote, branch: branch || null },
+          });
+        }
         if (foundCommit) continue; // both found, move on
         continue;
       }
 
       if (foundCommit) continue;
 
-      // Git pull
-      const pullMatch = cmd.match(PULL_RE);
+      // Git pull — skip failed pulls
+      const pullMatch = !tc.is_error && cmd.match(PULL_RE);
       if (pullMatch) {
         const cleanArgs = cleanPushDescription(pullMatch[1] || "");
-        const parts = cleanArgs.split(/\s+/).filter(Boolean);
-        const remote = parts[0] || "origin";
-        const branch = parts[1] || "";
-        milestones.push({
-          milestone_type: "pull",
-          exchange_index: exchange.index,
-          description: branch ? `Pulled from ${remote}/${branch}` : `Pulled from ${remote}`,
-          metadata: { remote, branch: branch || null },
-        });
+        const isGarbage = /[;'"(){}|<>\\$~%^!?]/.test(cleanArgs)
+          || /\.(db|sqlite|sql)\b/.test(cleanArgs);
+        if (!isGarbage) {
+          const parts = cleanArgs.split(/\s+/).filter(Boolean);
+          const remote = parts[0] || "origin";
+          const branch = parts[1] || "";
+          milestones.push({
+            milestone_type: "pull",
+            exchange_index: exchange.index,
+            description: branch ? `Pulled from ${remote}/${branch}` : `Pulled from ${remote}`,
+            metadata: { remote, branch: branch || null },
+          });
+        }
         continue;
       }
 
-      // PR creation
-      if (PR_RE.test(cmd)) {
+      // PR creation — skip failed attempts (command errored, no PR was created)
+      if (!tc.is_error && PR_RE.test(cmd)) {
         const titleMatch = cmd.match(PR_TITLE_RE);
         milestones.push({
           milestone_type: "pr",

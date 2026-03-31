@@ -104,4 +104,74 @@ describe("extractMilestones", () => {
     expect(pr).toBeDefined();
     expect(pr!.description).toContain("PR:");
   });
+
+  it("should reject false positive push from non-git commands", () => {
+    const milestones = extractMilestones([
+      {
+        index: 0,
+        user_prompt: "check db",
+        assistant_response: "checking",
+        tool_calls: [
+          {
+            name: "Bash",
+            input: {
+              command:
+                "sqlite3 ~/.keddy/keddy.db \"SELECT * FROM milestones WHERE description LIKE '%git push%'\"",
+            },
+            id: "t1",
+          },
+        ],
+        timestamp: "2024-01-01",
+        is_interrupt: false,
+        is_compact_summary: false,
+      },
+    ]);
+    const pushes = milestones.filter((m) => m.milestone_type === "push");
+    expect(pushes.length).toBe(0);
+  });
+
+  it("should detect git push with remote and branch", () => {
+    const milestones = extractMilestones([
+      {
+        index: 0,
+        user_prompt: "push",
+        assistant_response: "pushing",
+        tool_calls: [
+          {
+            name: "Bash",
+            input: { command: "git push origin feat/my-feature" },
+            id: "t1",
+          },
+        ],
+        timestamp: "2024-01-01",
+        is_interrupt: false,
+        is_compact_summary: false,
+      },
+    ]);
+    const pushes = milestones.filter((m) => m.milestone_type === "push");
+    expect(pushes.length).toBe(1);
+    expect(pushes[0].description).toBe("Pushed to origin/feat/my-feature");
+  });
+
+  it("should reject push with garbage args containing shell metacharacters", () => {
+    const milestones = extractMilestones([
+      {
+        index: 0,
+        user_prompt: "run command",
+        assistant_response: "running",
+        tool_calls: [
+          {
+            name: "Bash",
+            input: { command: "echo \"git push %');\\\"\" 2>/dev/null" },
+            id: "t1",
+          },
+        ],
+        timestamp: "2024-01-01",
+        is_interrupt: false,
+        is_compact_summary: false,
+      },
+    ]);
+    const pushes = milestones.filter((m) => m.milestone_type === "push");
+    expect(pushes.length).toBe(0);
+  });
 });

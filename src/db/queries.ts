@@ -497,17 +497,41 @@ export function insertMilestone(data: {
 }): string {
   const db = getDb();
   const id = randomUUID();
-  db.prepare(`
-    INSERT OR IGNORE INTO milestones (id, session_id, milestone_type, exchange_index, description, metadata)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(
-    id,
-    data.session_id,
-    data.milestone_type,
-    data.exchange_index,
-    data.description,
-    data.metadata ?? null,
-  );
+
+  if (data.milestone_type === "commit" || data.milestone_type === "branch") {
+    // Commits and branches are unique per session by description — a commit message
+    // only happens once. "Last wins": if the same commit exists at a different
+    // exchange_index, update to the new one (handles full-reparse correctness).
+    db.prepare(`
+      INSERT INTO milestones (id, session_id, milestone_type, exchange_index, description, metadata)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id, milestone_type, description)
+        WHERE milestone_type IN ('commit','branch')
+        DO UPDATE SET exchange_index = excluded.exchange_index,
+                      metadata = COALESCE(excluded.metadata, metadata)
+    `).run(
+      id,
+      data.session_id,
+      data.milestone_type,
+      data.exchange_index,
+      data.description,
+      data.metadata ?? null,
+    );
+  } else {
+    // Push/pull/pr/test: unique per (session, type, exchange, description).
+    // Multiple pushes to the same remote at different exchanges are separate events.
+    db.prepare(`
+      INSERT OR IGNORE INTO milestones (id, session_id, milestone_type, exchange_index, description, metadata)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      data.session_id,
+      data.milestone_type,
+      data.exchange_index,
+      data.description,
+      data.metadata ?? null,
+    );
+  }
   return id;
 }
 
