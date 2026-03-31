@@ -113,7 +113,7 @@ const PILL_CONFIG: Record<string, { label: (p: Pill) => string; bg: string; colo
   web: { label: (p) => `Web ${p.count}`, bg: "rgba(99,102,241,0.10)", color: "#818cf8" },
   commit: { label: (p) => p.gitDetail?.hash?.substring(0, 7) || "commit", bg: "rgba(99,102,241,0.10)", color: "#818cf8" },
   push: { label: () => "Pushed", bg: "rgba(99,102,241,0.10)", color: "#818cf8" },
-  pr: { label: (p) => `PR${p.gitDetail?.description?.match(/#(\d+)/)?.[0] || ""}`, bg: "rgba(99,102,241,0.10)", color: "#818cf8" },
+  pr: { label: () => "PR", bg: "rgba(99,102,241,0.10)", color: "#818cf8" },
   branch: { label: (p) => p.gitDetail?.description?.replace("Created branch ", "") || "branch", bg: "rgba(99,102,241,0.10)", color: "#818cf8" },
   test_pass: { label: (p) => { const m = p.milestone?.description?.match(/\((\d+\/\d+)\)/); return m ? `\u2713 ${m[1]}` : "\u2713 passed"; }, bg: "rgba(16,185,129,0.12)", color: "#10b981" },
   test_fail: { label: (p) => { const m = p.milestone?.description?.match(/\((\d+\/\d+)\)/); return m ? `\u2717 ${m[1]}` : "\u2717 failed"; }, bg: "rgba(239,68,68,0.12)", color: "#ef4444" },
