@@ -10,14 +10,14 @@ export interface ExtractedMilestone {
 }
 
 // Match: git commit -m "message" or git commit -m 'message'
-const COMMIT_SIMPLE_RE = /git commit\s+(?:.*\s)?-m\s+["']([^"']+)["']/;
+const COMMIT_SIMPLE_RE = /^git commit\s+(?:.*\s)?-m\s+["']([^"']+)["']/m;
 // Match: git commit -m "$(cat <<'EOF'\nmessage\nEOF\n)" — extract first meaningful line after EOF marker
-const COMMIT_HEREDOC_RE = /git commit\s+.*-m\s+['"]\$\(cat\s+<<[\s']*(\w+)/;
-const PUSH_RE = /git push\s*(.*)/;
-const PULL_RE = /git pull\s*(.*)/;
-const PR_RE = /gh pr create/;
+const COMMIT_HEREDOC_RE = /^git commit\s+.*-m\s+['"]\$\(cat\s+<<[\s']*(\w+)/m;
+const PUSH_RE = /^git push\s*(.*)/m;
+const PULL_RE = /^git pull\s*(.*)/m;
+const PR_RE = /^gh pr create/m;
 const PR_TITLE_RE = /--title\s+["']([^"']+)["']/;
-const BRANCH_RE = /git checkout -b\s+(\S+)/;
+const BRANCH_RE = /^git checkout -b\s+(\S+)/m;
 const BRANCH_SWITCH_RE = /git switch -c\s+(\S+)/;
 const TEST_COMMANDS = [/\bnpm test\b/, /\bnpx vitest\b/, /\bvitest run\b/, /\bjest\b/, /\bpytest\b/, /\bcargo test\b/, /\bgo test\b/, /\bmake test\b/];
 

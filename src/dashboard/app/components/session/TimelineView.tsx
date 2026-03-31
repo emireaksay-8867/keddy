@@ -280,14 +280,20 @@ function CommitCard({ gd }: { gd: GitDetail }) {
         onClick={hasExpandable ? () => setExpanded(!expanded) : undefined}
       >
         <Icon size={11} className="shrink-0" style={{ color: iconColor }} />
-        {shortHash && <span className="font-mono" style={{ color: "var(--text-muted)" }}>{shortHash}</span>}
-        <span className="flex-1 min-w-0 truncate">{gd.description}</span>
-        {gd.url && (
+        {shortHash && gd.url ? (
           <a href={gd.url} target="_blank" rel="noopener noreferrer"
-            className="shrink-0 w-5 h-5 flex items-center justify-center rounded hover:text-[var(--text-primary)] hover:bg-[rgba(255,255,255,0.08)] transition-all"
+            className="font-mono inline-flex items-center gap-1 cursor-pointer hover:brightness-150 transition-all"
             style={{ color: "var(--text-muted)" }} onClick={(e) => e.stopPropagation()}
-            title={isCommit ? "View commit on GitHub" : isPr ? "View PR on GitHub" : "View on GitHub"}
-          ><SquareArrowOutUpRight size={12} /></a>
+            title="View on GitHub">{shortHash}<SquareArrowOutUpRight size={9} /></a>
+        ) : shortHash ? (
+          <span className="font-mono" style={{ color: "var(--text-muted)" }}>{shortHash}</span>
+        ) : null}
+        <span className="flex-1 min-w-0 truncate">{gd.description}</span>
+        {!shortHash && gd.url && (
+          <a href={gd.url} target="_blank" rel="noopener noreferrer"
+            className="shrink-0 inline-flex items-center gap-1 cursor-pointer hover:brightness-150 transition-all"
+            style={{ color: "var(--text-muted)" }} onClick={(e) => e.stopPropagation()}
+            title="View on GitHub"><SquareArrowOutUpRight size={9} /></a>
         )}
       </div>
       {expanded && isCommit && (

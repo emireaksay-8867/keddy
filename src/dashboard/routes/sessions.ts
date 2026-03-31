@@ -1345,9 +1345,73 @@ sessionsRoutes.post("/:id/sync", (c) => {
       added++;
     }
 
+    // Clear and re-extract ALL derived data (milestones, segments, plans, tasks)
+    // Same as SessionEnd — sync is a full re-parse, derived data must match
+    db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM segments WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM tasks WHERE session_id = ?").run(session.id);
+
+    const { extractMilestones: extractMs } = require("../../capture/milestones.js");
+    const { extractPlans: extractPs } = require("../../capture/plans.js");
+    const { extractActivityGroups: extractAg, deriveDisplayType: ddt } = require("../../capture/activity-groups.js");
+    const { insertMilestone: insertMs, insertSegment: insertSeg, insertPlan: insertPl } = require("../../db/queries.js");
+
+    const milestones = extractMs(transcript.exchanges);
+    for (const m of milestones) {
+      insertMs({
+        session_id: session.id,
+        milestone_type: m.milestone_type,
+        exchange_index: m.exchange_index,
+        description: m.description,
+        metadata: m.metadata ? JSON.stringify(m.metadata) : null,
+      });
+    }
+
+    const plans = extractPs(transcript.exchanges);
+    for (const p of plans) {
+      insertPl({
+        session_id: session.id,
+        version: p.version,
+        plan_text: p.plan_text,
+        status: p.status,
+        user_feedback: p.user_feedback,
+        exchange_index_start: p.exchange_index_start,
+        exchange_index_end: p.exchange_index_end,
+      });
+    }
+
+    const groups = extractAg(transcript.exchanges, milestones);
+    for (const group of groups) {
+      const allFiles = [...new Set([...group.files_read, ...group.files_written])];
+      insertSeg({
+        session_id: session.id,
+        segment_type: ddt(group),
+        exchange_index_start: group.exchange_index_start,
+        exchange_index_end: group.exchange_index_end,
+        files_touched: JSON.stringify(allFiles),
+        tool_counts: JSON.stringify(group.tool_counts),
+        boundary_type: group.boundary,
+        files_read: JSON.stringify(group.files_read),
+        files_written: JSON.stringify(group.files_written),
+        error_count: group.error_count,
+        total_input_tokens: group.total_input_tokens,
+        total_output_tokens: group.total_output_tokens,
+        total_cache_read_tokens: group.total_cache_read_tokens,
+        total_cache_write_tokens: group.total_cache_write_tokens,
+        duration_ms: group.duration_ms,
+        models: JSON.stringify(group.models),
+        markers: JSON.stringify(group.markers),
+        exchange_count: group.exchange_count,
+        started_at: group.started_at,
+        ended_at: group.ended_at,
+      });
+    }
+
     return c.json({
       ok: true,
       exchanges: transcript.exchanges.length,
+      milestones: milestones.length,
       branch: transcript.git_branch,
       ended_at: transcript.ended_at,
     });
