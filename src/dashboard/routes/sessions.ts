@@ -1222,10 +1222,20 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
               }
             }
 
-            // Extract milestones + plans for new/updated exchanges
-            const newMilestones = extractMilestones(latestExchanges);
-            for (const m of newMilestones) {
-              // Avoid duplicates: check if milestone already exists at this exchange
+            // Extract milestones from ALL exchanges in DB (not just tail) —
+            // catches commits/pushes from any exchange, even if older than sinceIndex
+            const allDbExchanges = getSessionExchanges(session.id);
+            const parsedForMilestones = allDbExchanges.map((e: any) => {
+              const tcs = db.prepare(
+                "SELECT tool_name as name, tool_input as input FROM tool_calls WHERE exchange_id = ?",
+              ).all(e.id).map((tc: any) => ({
+                ...tc,
+                input: tc.input ? (() => { try { return JSON.parse(tc.input); } catch { return {}; } })() : {},
+              }));
+              return { index: e.exchange_index, tool_calls: tcs };
+            });
+            const allMilestones = extractMilestones(parsedForMilestones as any);
+            for (const m of allMilestones) {
               const exists = db.prepare(
                 "SELECT id FROM milestones WHERE session_id = ? AND milestone_type = ? AND exchange_index = ?",
               ).get(session.id, m.milestone_type, m.exchange_index);

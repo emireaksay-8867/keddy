@@ -10,14 +10,14 @@ export interface ExtractedMilestone {
 }
 
 // Match: git commit -m "message" or git commit -m 'message'
-const COMMIT_SIMPLE_RE = /^git commit\s+(?:.*\s)?-m\s+["']([^"']+)["']/m;
+const COMMIT_SIMPLE_RE = /(?:^|&&\s*|;\s*)git commit\s+(?:.*\s)?-m\s+["']([^"']+)["']/m;
 // Match: git commit -m "$(cat <<'EOF'\nmessage\nEOF\n)" — extract first meaningful line after EOF marker
-const COMMIT_HEREDOC_RE = /^git commit\s+.*-m\s+['"]\$\(cat\s+<<[\s']*(\w+)/m;
-const PUSH_RE = /^git push\s*(.*)/m;
-const PULL_RE = /^git pull\s*(.*)/m;
-const PR_RE = /^gh pr create/m;
+const COMMIT_HEREDOC_RE = /(?:^|&&\s*|;\s*)git commit\s+.*-m\s+['"]\$\(cat\s+<<[\s']*(\w+)/m;
+const PUSH_RE = /(?:^|&&\s*|;\s*)git push\s*(.*)/m;
+const PULL_RE = /(?:^|&&\s*|;\s*)git pull\s*(.*)/m;
+const PR_RE = /(?:^|&&\s*|;\s*)gh pr create/m;
 const PR_TITLE_RE = /--title\s+["']([^"']+)["']/;
-const BRANCH_RE = /^git checkout -b\s+(\S+)/m;
+const BRANCH_RE = /(?:^|&&\s*|;\s*)git checkout -b\s+(\S+)/m;
 const BRANCH_SWITCH_RE = /git switch -c\s+(\S+)/;
 const TEST_COMMANDS = [/\bnpm test\b/, /\bnpx vitest\b/, /\bvitest run\b/, /\bjest\b/, /\bpytest\b/, /\bcargo test\b/, /\bgo test\b/, /\bmake test\b/];
 
@@ -165,39 +165,33 @@ export function extractMilestones(exchanges: ParsedExchange[]): ExtractedMilesto
       if (!cmd) continue;
 
       // Git commit — try heredoc format first (more specific), then simple
+      // No `continue` — chained commands (git commit && git push) need both detected
+      let foundCommit = false;
       if (COMMIT_HEREDOC_RE.test(cmd)) {
         const msg = extractHeredocMessage(cmd);
-        if (msg) {
-          milestones.push({
-            milestone_type: "commit",
-            exchange_index: exchange.index,
-            description: msg,
-            metadata: { message: msg },
-          });
-        } else {
-          milestones.push({
-            milestone_type: "commit",
-            exchange_index: exchange.index,
-            description: "Committed changes",
-            metadata: null,
-          });
-        }
-        continue;
-      }
-
-      // Git commit — simple format: git commit -m "message"
-      const commitSimple = cmd.match(COMMIT_SIMPLE_RE);
-      if (commitSimple) {
         milestones.push({
           milestone_type: "commit",
           exchange_index: exchange.index,
-          description: commitSimple[1],
-          metadata: { message: commitSimple[1] },
+          description: msg || "Committed changes",
+          metadata: msg ? { message: msg } : null,
         });
-        continue;
+        foundCommit = true;
       }
 
-      // Git push
+      if (!foundCommit) {
+        const commitSimple = cmd.match(COMMIT_SIMPLE_RE);
+        if (commitSimple) {
+          milestones.push({
+            milestone_type: "commit",
+            exchange_index: exchange.index,
+            description: commitSimple[1],
+            metadata: { message: commitSimple[1] },
+          });
+          foundCommit = true;
+        }
+      }
+
+      // Git push — always check even if commit was found (chained commands)
       const pushMatch = cmd.match(PUSH_RE);
       if (pushMatch) {
         const cleanArgs = cleanPushDescription(pushMatch[1] || "");
@@ -210,8 +204,11 @@ export function extractMilestones(exchanges: ParsedExchange[]): ExtractedMilesto
           description: branch ? `Pushed to ${remote}/${branch}` : `Pushed to ${remote}`,
           metadata: { remote, branch: branch || null },
         });
+        if (foundCommit) continue; // both found, move on
         continue;
       }
+
+      if (foundCommit) continue;
 
       // Git pull
       const pullMatch = cmd.match(PULL_RE);
