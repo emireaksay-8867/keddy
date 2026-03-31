@@ -146,50 +146,112 @@ async function handleStop(input: HookStdin): Promise<void> {
     if (!sessionRow) return;
 
     const existingExchanges = getSessionExchanges(sessionRow.id);
-    const sinceIndex = existingExchanges.length;
+    // Re-process the last existing exchange to catch continuation text
+    // (Stop fires mid-exchange during tool use — first fire inserts partial response,
+    //  subsequent fires need to UPDATE with accumulated text from parser)
+    const sinceIndex = Math.max(0, existingExchanges.length - 1);
 
     const latestExchanges = parseLatestExchanges(
       input.transcript_path,
       sinceIndex,
     );
 
+    const db = getDb();
     for (const exchange of latestExchanges) {
-      const exchangeId = insertExchange({
-        session_id: sessionRow.id,
-        exchange_index: exchange.index,
-        user_prompt: exchange.user_prompt,
-        assistant_response: exchange.assistant_response,
-        tool_call_count: exchange.tool_calls.length,
-        timestamp: exchange.timestamp,
-        is_interrupt: exchange.is_interrupt,
-        is_compact_summary: exchange.is_compact_summary,
-        model: exchange.model,
-        input_tokens: exchange.input_tokens,
-        output_tokens: exchange.output_tokens,
-        cache_read_tokens: exchange.cache_read_tokens,
-        cache_write_tokens: exchange.cache_write_tokens,
-        stop_reason: exchange.stop_reason,
-        has_thinking: exchange.has_thinking,
-        permission_mode: exchange.permission_mode,
-        is_sidechain: exchange.is_sidechain,
-        entrypoint: exchange.entrypoint,
-        cwd: exchange.cwd,
-        git_branch: exchange.git_branch,
-        turn_duration_ms: exchange.turn_duration_ms,
-      });
+      // Check if this exchange already exists in DB
+      const existing = existingExchanges.find((e: any) => e.exchange_index === exchange.index);
 
-      for (const tc of exchange.tool_calls) {
-        const enriched = extractToolCallFields(tc.name, tc.input);
-        insertToolCall({
-          exchange_id: exchangeId,
+      if (existing) {
+        // UPDATE existing exchange with more complete data (continuation text after tool calls)
+        // Never overwrite a non-empty response with an empty one (race condition protection:
+        // live sync can INSERT an exchange with empty response before the assistant finishes,
+        // and if the Stop hook fails to update, the response is permanently lost)
+        const safeResponse = exchange.assistant_response || (existing as any).assistant_response || "";
+        const safeToolCount = exchange.tool_calls.length || (existing as any).tool_call_count || 0;
+        db.prepare(`
+          UPDATE exchanges SET
+            assistant_response = ?,
+            tool_call_count = ?,
+            model = COALESCE(?, model),
+            input_tokens = COALESCE(?, input_tokens),
+            output_tokens = COALESCE(?, output_tokens),
+            cache_read_tokens = COALESCE(?, cache_read_tokens),
+            cache_write_tokens = COALESCE(?, cache_write_tokens),
+            stop_reason = COALESCE(?, stop_reason),
+            has_thinking = COALESCE(?, has_thinking),
+            turn_duration_ms = COALESCE(?, turn_duration_ms)
+          WHERE id = ?
+        `).run(
+          safeResponse,
+          safeToolCount,
+          exchange.model,
+          exchange.input_tokens,
+          exchange.output_tokens,
+          exchange.cache_read_tokens,
+          exchange.cache_write_tokens,
+          exchange.stop_reason,
+          exchange.has_thinking || null,
+          exchange.turn_duration_ms,
+          existing.id,
+        );
+
+        // Re-insert tool calls (parser has the complete set with results)
+        // Only delete+re-insert if parser found tool calls — don't wipe existing data
+        if (exchange.tool_calls.length > 0) {
+        db.prepare("DELETE FROM tool_calls WHERE exchange_id = ?").run(existing.id);
+        }
+        for (const tc of exchange.tool_calls) {
+          const enriched = extractToolCallFields(tc.name, tc.input);
+          insertToolCall({
+            exchange_id: existing.id,
+            session_id: sessionRow.id,
+            tool_name: tc.name,
+            tool_input: JSON.stringify(tc.input),
+            tool_result: tc.result ?? null,
+            tool_use_id: tc.id,
+            is_error: tc.is_error ?? false,
+            ...enriched,
+          });
+        }
+      } else {
+        // INSERT new exchange
+        const exchangeId = insertExchange({
           session_id: sessionRow.id,
-          tool_name: tc.name,
-          tool_input: JSON.stringify(tc.input),
-          tool_result: tc.result ?? null,
-          tool_use_id: tc.id,
-          is_error: tc.is_error ?? false,
-          ...enriched,
+          exchange_index: exchange.index,
+          user_prompt: exchange.user_prompt,
+          assistant_response: exchange.assistant_response,
+          tool_call_count: exchange.tool_calls.length,
+          timestamp: exchange.timestamp,
+          is_interrupt: exchange.is_interrupt,
+          is_compact_summary: exchange.is_compact_summary,
+          model: exchange.model,
+          input_tokens: exchange.input_tokens,
+          output_tokens: exchange.output_tokens,
+          cache_read_tokens: exchange.cache_read_tokens,
+          cache_write_tokens: exchange.cache_write_tokens,
+          stop_reason: exchange.stop_reason,
+          has_thinking: exchange.has_thinking,
+          permission_mode: exchange.permission_mode,
+          is_sidechain: exchange.is_sidechain,
+          entrypoint: exchange.entrypoint,
+          cwd: exchange.cwd,
+          git_branch: exchange.git_branch,
+          turn_duration_ms: exchange.turn_duration_ms,
         });
+
+        for (const tc of exchange.tool_calls) {
+          const enriched = extractToolCallFields(tc.name, tc.input);
+          insertToolCall({
+            exchange_id: exchangeId,
+            session_id: sessionRow.id,
+            tool_name: tc.name,
+            tool_input: JSON.stringify(tc.input),
+            tool_result: tc.result ?? null,
+            tool_use_id: tc.id,
+            is_error: tc.is_error ?? false,
+            ...enriched,
+          });
+        }
       }
     }
 
@@ -318,15 +380,32 @@ async function handleStop(input: HookStdin): Promise<void> {
         const titleMatches = [...tailText.matchAll(/"customTitle"\s*:\s*"([^"]+)"/g)];
         if (titleMatches.length > 0) {
           customTitle = titleMatches[titleMatches.length - 1][1];
+          // Skip auto-generated fork/branch titles (truncated parent prompts ending with "(Branch)" etc.)
+          if (customTitle.length > 60 && /\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/.test(customTitle)) {
+            customTitle = null;
+          }
         }
       } catch { /* non-critical */ }
 
       if (customTitle) {
         // Custom title from Claude Code — always takes priority
         db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(customTitle, sessionRow.id);
-      } else if (!sessionRow.forked_from) {
-        // Fallback: derive title from first real user prompt if not already set
-        // Skip for forked sessions — let SessionEnd handle it with full fork context
+      } else if (sessionRow.forked_from) {
+        // Forked session: if current title is still the auto-generated fork/branch title, fix it
+        const currentTitle = db.prepare("SELECT title, fork_exchange_index FROM sessions WHERE id = ?").get(sessionRow.id) as { title: string | null; fork_exchange_index: number | null } | undefined;
+        if (currentTitle?.title && currentTitle.fork_exchange_index != null
+          && /\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/.test(currentTitle.title)) {
+          const allExchanges = getSessionExchanges(sessionRow.id);
+          const title = deriveTitle(
+            allExchanges.map(e => ({ user_prompt: e.user_prompt })),
+            { forkExchangeIndex: currentTitle.fork_exchange_index },
+          );
+          if (title) {
+            db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, sessionRow.id);
+          }
+        }
+      } else {
+        // Non-forked: derive title from first real user prompt if not already set
         const currentTitle = db.prepare("SELECT title FROM sessions WHERE id = ?").get(sessionRow.id) as { title: string | null } | undefined;
         if (!currentTitle?.title) {
           const allExchanges = getSessionExchanges(sessionRow.id);
@@ -363,18 +442,68 @@ async function handleStop(input: HookStdin): Promise<void> {
         db.prepare("UPDATE sessions SET git_branch = ? WHERE id = ?").run(latestBranch, sessionRow.id);
       }
 
-      // Read head for forkedFrom (only present in branched/forked sessions)
+      // Read first JSONL line for forkedFrom (only present in branched/forked sessions).
+      // The first line can be very large (100KB+) because branched sessions embed
+      // the parent's conversation context. Read up to 1MB to cover any parent size.
       if (!sessionRow.forked_from) {
-        const headSize = Math.min(stat.size, 2048);
-        const headBuf = Buffer.alloc(headSize);
+        const maxRead = Math.min(stat.size, 1_048_576);
+        const headBuf = Buffer.alloc(maxRead);
         const fd2 = fs.openSync(input.transcript_path, "r");
-        fs.readSync(fd2, headBuf, 0, headSize, 0);
+        fs.readSync(fd2, headBuf, 0, maxRead, 0);
         fs.closeSync(fd2);
         const head = headBuf.toString("utf8");
-        const forkMatch = head.match(/"forkedFrom"\s*:\s*(\{[^}]+\})/);
+        const firstLine = head.indexOf("\n") > 0 ? head.substring(0, head.indexOf("\n")) : head;
+        const forkMatch = firstLine.match(/"forkedFrom"\s*:\s*(\{[^}]+\})/);
         if (forkMatch) {
           const db = getDb();
           db.prepare("UPDATE sessions SET forked_from = ? WHERE id = ?").run(forkMatch[1], sessionRow.id);
+
+          // Detect fork_exchange_index + re-derive title + create session link
+          try {
+            const forkData = JSON.parse(forkMatch[1]);
+            if (forkData.sessionId) {
+              const parentSession = getSession(forkData.sessionId);
+              if (parentSession) {
+                // Find fork point: first exchange where child differs from parent
+                const divergence = db.prepare(`
+                  SELECT b.exchange_index
+                  FROM exchanges b
+                  LEFT JOIN exchanges p ON p.exchange_index = b.exchange_index AND p.session_id = ?
+                  WHERE b.session_id = ?
+                  AND (p.id IS NULL OR p.user_prompt != b.user_prompt)
+                  ORDER BY b.exchange_index LIMIT 1
+                `).get(parentSession.id, sessionRow.id) as { exchange_index: number } | undefined;
+
+                if (divergence) {
+                  db.prepare("UPDATE sessions SET fork_exchange_index = ? WHERE id = ?")
+                    .run(divergence.exchange_index, sessionRow.id);
+
+                  // Re-derive title with fork awareness
+                  const allExchanges = getSessionExchanges(sessionRow.id);
+                  const title = deriveTitle(
+                    allExchanges.map(e => ({ user_prompt: e.user_prompt })),
+                    { forkExchangeIndex: divergence.exchange_index },
+                  );
+                  if (title) {
+                    db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, sessionRow.id);
+                  }
+                }
+
+                // Create fork session link (bidirectional navigation)
+                const existingLink = db.prepare(
+                  "SELECT id FROM session_links WHERE source_session_id = ? AND target_session_id = ? AND link_type = 'fork'",
+                ).get(sessionRow.id, parentSession.id);
+                if (!existingLink) {
+                  insertSessionLink({
+                    source_session_id: sessionRow.id,
+                    target_session_id: parentSession.id,
+                    link_type: "fork",
+                    shared_files: "[]",
+                  });
+                }
+              }
+            }
+          } catch { /* non-critical — SessionEnd handles as fallback */ }
         }
       }
     } catch {
@@ -448,6 +577,12 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
       });
     }
 
+    // Clear ALL previous data — SessionEnd does a full re-parse from JSONL (source of truth).
+    // Must replace whatever the Stop hook wrote, not skip it via idempotent insertExchange.
+    const db = getDb();
+    db.prepare("DELETE FROM tool_calls WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM exchanges WHERE session_id = ?").run(session.id);
+
     // Store all exchanges
     for (const exchange of transcript.exchanges) {
       const exchangeId = insertExchange({
@@ -493,7 +628,6 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
     updateSessionEnd(input.session_id, transcript.exchanges.length, transcript.ended_at ?? undefined);
 
     // Clear previous analysis (SessionEnd does a full re-parse, so old data should be replaced)
-    const db = getDb();
     db.prepare("DELETE FROM segments WHERE session_id = ?").run(session.id);
     db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
     db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);

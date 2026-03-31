@@ -291,3 +291,41 @@ describe("system-injected message filtering", () => {
     expect(result.exchanges[1].user_prompt).toBe("Looks good, now add a chart");
   });
 });
+
+describe("split content blocks (real Claude Code format)", () => {
+  it("should handle text and tool_use as separate JSONL entries", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-split-blocks.jsonl"));
+    expect(result.exchanges.length).toBe(2);
+    // Exchange 0: text + 2 Read tools + final summary — all in ONE exchange
+    expect(result.exchanges[0].tool_calls.length).toBe(2);
+    expect(result.exchanges[0].tool_calls[0].name).toBe("Read");
+    expect(result.exchanges[0].tool_calls[1].name).toBe("Read");
+    expect(result.exchanges[0].assistant_response).toContain("I'll read the file");
+    expect(result.exchanges[0].assistant_response).toContain("The project has two files");
+  });
+
+  it("should not bleed tools from one exchange into the next", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-split-blocks.jsonl"));
+    // Exchange 1 should only have its own Edit tool, not exchange 0's Reads
+    expect(result.exchanges[1].tool_calls.length).toBe(1);
+    expect(result.exchanges[1].tool_calls[0].name).toBe("Edit");
+    expect(result.exchanges[1].user_prompt).toContain("edit the index.ts");
+  });
+
+  it("should accumulate all text across split assistant entries", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-split-blocks.jsonl"));
+    // Exchange 0 has text from TWO separate assistant entries (line 4 + line 9)
+    const resp = result.exchanges[0].assistant_response;
+    expect(resp).toContain("I'll read the file");
+    expect(resp).toContain("index.ts");
+    expect(resp).toContain("utils.ts");
+  });
+
+  it("should match tool results to split tool_use entries", () => {
+    const result = parseTranscript(join(FIXTURES, "sample-split-blocks.jsonl"));
+    // Tool results should be matched back to their tool_use
+    const readTools = result.exchanges[0].tool_calls.filter(t => t.name === "Read");
+    expect(readTools[0].result).toContain("main");
+    expect(readTools[1].result).toContain("add");
+  });
+});

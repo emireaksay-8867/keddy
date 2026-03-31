@@ -5,22 +5,14 @@ import { getSessions } from "../lib/api.js";
 import type { SessionListItem } from "../lib/types.js";
 import {
   FileText,
-  ChevronUp,
-  ChevronDown,
+  ArrowUp,
+  ArrowDown,
   GitPullRequest,
+  GitCommitHorizontal,
+  GitBranch,
   Split,
+  Search,
 } from "lucide-react";
-
-function formatDuration(start: string, end: string | null): string {
-  if (!end) return "";
-  const ms = new Date(end).getTime() - new Date(start).getTime();
-  if (ms < 60000) return "<1m";
-  const mins = Math.floor(ms / 60000);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  const rem = mins % 60;
-  return rem > 0 ? `${hours}h ${rem}m` : `${hours}h`;
-}
 
 function formatRelative(dateStr: string): string {
   const d = new Date(dateStr);
@@ -40,33 +32,34 @@ function formatRelative(dateStr: string): string {
   });
 }
 
+
+function resolveRepoName(
+  projectPath: string,
+  projects: Array<{ project_path: string; repo: string }>,
+): string {
+  const direct = projects.find((p) => p.project_path === projectPath);
+  if (direct) return direct.repo;
+
+  const parts = projectPath.split("/");
+  const wtIdx = parts.indexOf("worktrees");
+  if (wtIdx >= 0 && wtIdx + 1 < parts.length) return parts[wtIdx + 1];
+
+  return parts[parts.length - 1] || projectPath;
+}
+
 /** Factual session chips — shows what actually happened based on observable data */
 function SessionChips({ session }: { session: SessionListItem }) {
-  const pills: Array<{ icon: typeof ChevronUp; label: string; iconColor: string }> = [];
+  const pills: Array<{ icon: typeof ArrowUp; label: string; iconColor: string }> = [];
   const outcomes = session.outcomes;
 
-  // Plan title — rendered as [icon Title], color by status
-  let planText: { label: string; color: string } | null = null;
+  // Branch — always first chip
+  if (session.git_branch) {
+    pills.push({ icon: GitBranch, label: session.git_branch, iconColor: "#71717a" });
+  }
+
+  // Plan — simple indicator
   if (session.latest_plan) {
-    const plan = session.latest_plan;
-    const title = plan.plan_title;
-    const shortTitle = title && title.length > 40 ? title.substring(0, 40) + "…" : title;
-    const v = plan.total_versions;
-
-    // Status → color + suffix
-    const statusMap: Record<string, { color: string; suffix: string }> = {
-      implemented: { color: "#10b981", suffix: v > 1 ? ` (v${v}, implemented)` : " (implemented)" },
-      approved:    { color: "#10b981", suffix: v > 1 ? ` (v${v}, approved)` : " (approved)" },
-      drafted:     { color: "#f59e0b", suffix: v > 1 ? ` (v${v}, drafting)` : " (drafting)" },
-      revised:     { color: "#f59e0b", suffix: ` (v${v}, revising)` },
-      rejected:    { color: "#ef4444", suffix: ` (v${v}, rejected)` },
-    };
-    const s = statusMap[plan.status] || { color: "#71717a", suffix: ` (v${v})` };
-
-    planText = {
-      label: shortTitle ? `${shortTitle}${s.suffix}` : `plan${s.suffix}`,
-      color: s.color,
-    };
+    pills.push({ icon: FileText, label: "plan", iconColor: "#6dab7a" });
   }
 
   // Committed (only if no push/pull) — uses custom dot, not an icon
@@ -76,9 +69,9 @@ function SessionChips({ session }: { session: SessionListItem }) {
   if (outcomes?.git_ops) {
     for (const op of outcomes.git_ops) {
       if (op === "push") {
-        pills.push({ icon: ChevronUp, label: "pushed", iconColor: "#60a5fa" });
+        pills.push({ icon: ArrowUp, label: "pushed", iconColor: "#60a5fa" });
       } else {
-        pills.push({ icon: ChevronDown, label: "pulled", iconColor: "#a78bfa" });
+        pills.push({ icon: ArrowDown, label: "pulled", iconColor: "#a78bfa" });
       }
     }
   }
@@ -94,26 +87,30 @@ function SessionChips({ session }: { session: SessionListItem }) {
     pills.push({ icon: Split, label: `forked: ${short}`, iconColor: "#a78bfa" });
   }
 
-  if (!planText && !hasCommitOnly && pills.length === 0) return null;
+  if (!hasCommitOnly && pills.length === 0) return null;
+
+  // Branch pill is always first in pills array — render it separately with mono font
+  const branchPill = session.git_branch ? pills.shift() : null;
 
   return (
     <span className="inline-flex items-center gap-x-2 gap-y-1 min-w-0 flex-wrap">
-      {/* Plan title — [icon + title] */}
-      {planText && (
-        <span className="inline-flex items-center text-[12px] min-w-0 shrink font-medium" style={{ color: "var(--text-tertiary)" }}>
-          <span className="mr-1" style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: 1 }}>[</span>
-          <FileText size={11} className="shrink-0 mr-1" style={{ color: planText.color }} />
-          <span className="truncate">{planText.label}</span>
-          <span className="ml-1" style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: 1, position: "relative", top: "-0.5px" }}>]</span>
+      {/* Branch pill — monospace, first position */}
+      {branchPill && (
+        <span
+          className="inline-flex items-center justify-center gap-1 text-[12px] px-2.5 py-1 rounded-full shrink-0 leading-none font-mono"
+          style={{ background: "rgba(255,255,255,0.06)", color: "var(--text-tertiary)", fontWeight: 500 }}
+        >
+          <GitBranch size={11} className="shrink-0" style={{ color: branchPill.iconColor }} />
+          <span style={{ lineHeight: 1 }}>{branchPill.label}</span>
         </span>
       )}
-      {/* Committed pill with custom dot */}
+      {/* Committed pill */}
       {hasCommitOnly && (
         <span
-          className="inline-flex items-center justify-center gap-1.5 text-[12px] px-2.5 py-1 rounded-full shrink-0 leading-none"
-          style={{ border: "1px solid var(--border)", color: "var(--text-tertiary)" }}
+          className="inline-flex items-center justify-center gap-1 text-[12px] px-2.5 py-1 rounded-full shrink-0 leading-none"
+          style={{ background: "rgba(255,255,255,0.06)", color: "var(--text-tertiary)", fontWeight: 500 }}
         >
-          <span className="shrink-0 rounded-full" style={{ width: 4, height: 4, background: "#818cf8" }} />
+          <GitCommitHorizontal size={11} className="shrink-0" style={{ color: "#818cf8" }} />
           <span style={{ lineHeight: 1 }}>committed</span>
         </span>
       )}
@@ -124,9 +121,9 @@ function SessionChips({ session }: { session: SessionListItem }) {
           <span
             key={i}
             className="inline-flex items-center justify-center gap-1 text-[12px] px-2.5 py-1 rounded-full shrink-0 leading-none"
-            style={{ border: "1px solid var(--border)", color: "var(--text-tertiary)" }}
+            style={{ background: "rgba(255,255,255,0.06)", color: "var(--text-tertiary)", fontWeight: 500 }}
           >
-            <Icon size={12} className="shrink-0" style={{ color: pill.iconColor }} />
+            <Icon size={11} className="shrink-0" style={{ color: pill.iconColor }} />
             <span style={{ lineHeight: 1 }}>{pill.label}</span>
           </span>
         );
@@ -139,35 +136,29 @@ function SessionChips({ session }: { session: SessionListItem }) {
 function SessionRow({
   session,
   showProject,
+  repoName,
   isLast,
 }: {
   session: SessionListItem;
   showProject: boolean;
+  repoName: string;
   isLast: boolean;
 }) {
   const title = session.title || session.session_id.substring(0, 20);
   const lastActivity = session.ended_at || session.started_at;
-  const duration = formatDuration(session.started_at, session.ended_at);
-  const project = session.project_path.split("/").slice(-2).join("/");
-
-  // Build metadata items
-  const meta: Array<{ text: string; mono?: boolean }> = [];
-  if (showProject) meta.push({ text: project });
-  if (session.git_branch) meta.push({ text: session.git_branch, mono: true });
-  if (duration) meta.push({ text: duration });
 
   return (
     <Link
       to={`/sessions/${session.session_id}`}
-      className={`block px-5 py-2 transition-colors hover:bg-[var(--bg-hover)]${isLast ? "" : " border-b"}`}
-      style={isLast ? undefined : { borderColor: "var(--border)" }}
+      className={`block px-5 py-2 transition-colors hover:bg-[var(--bg-hover)]`}
+      style={{ borderBottom: isLast ? "1px solid transparent" : "1px solid rgba(255,255,255,0.06)" }}
     >
       <div className="flex gap-2">
         {/* Left: Title + Factual chips */}
         <div className="flex-1 min-w-0">
           <p
-            className="text-[13px] truncate"
-            style={{ color: "var(--text-primary)", fontFamily: "'Geist Mono', 'JetBrains Mono', 'SF Mono', monospace" }}
+            className="text-[13px] font-medium truncate"
+            style={{ color: "var(--text-primary)" }}
           >
             {title}
           </p>
@@ -176,22 +167,18 @@ function SessionRow({
           </div>
         </div>
 
-        {/* Right: Meta + Time */}
+        {/* Right: Repo + Time */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {meta.map((item, i) => (
-            <span
-              key={i}
-              className={`text-[11px] px-2 py-0.5 rounded${item.mono ? " font-mono" : ""}`}
-              style={{
-                border: "1px solid var(--border-bright)",
-                color: "var(--text-secondary)",
-              }}
-            >
-              {item.text}
-            </span>
-          ))}
+          {showProject && (
+            <>
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                {repoName}
+              </span>
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>·</span>
+            </>
+          )}
           <span
-            className="text-[11px] tabular-nums ml-1"
+            className="text-[11px] tabular-nums"
             style={{ color: "var(--text-muted)" }}
           >
             {formatRelative(lastActivity)}
@@ -208,6 +195,7 @@ export function Sessions() {
   const [loading, setLoading] = useState(true);
   const [visibleCount, setVisibleCount] = useState(50);
   const [localSearch, setLocalSearch] = useState("");
+  const [dateRange, setDateRange] = useState<"today" | "7d" | "30d" | "all">("all");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [updateAgo, setUpdateAgo] = useState("");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -263,15 +251,34 @@ export function Sessions() {
   }, [lastUpdated]);
 
   const filtered = useMemo(() => {
-    if (!localSearch) return sessions;
-    const q = localSearch.toLowerCase();
-    return sessions.filter(
-      (s) =>
-        (s.title || "").toLowerCase().includes(q) ||
-        s.project_path.toLowerCase().includes(q) ||
-        (s.git_branch || "").toLowerCase().includes(q),
-    );
-  }, [sessions, localSearch]);
+    let result = sessions;
+
+    if (localSearch) {
+      const words = localSearch.toLowerCase().split(/\s+/).filter(Boolean);
+      result = result.filter((s) => {
+        const text = `${s.title || ""} ${s.project_path} ${s.git_branch || ""}`.toLowerCase();
+        return words.every((w) => text.includes(w));
+      });
+    }
+
+    if (dateRange !== "all") {
+      const now = new Date();
+      const cutoff = new Date();
+      if (dateRange === "today") {
+        cutoff.setHours(0, 0, 0, 0);
+      } else if (dateRange === "7d") {
+        cutoff.setDate(now.getDate() - 7);
+      } else if (dateRange === "30d") {
+        cutoff.setDate(now.getDate() - 30);
+      }
+      result = result.filter((s) => {
+        const d = new Date(s.ended_at || s.started_at);
+        return d >= cutoff;
+      });
+    }
+
+    return result;
+  }, [sessions, localSearch, dateRange]);
 
   const visible = filtered.slice(0, visibleCount);
   const showProject = !selectedProject;
@@ -336,7 +343,7 @@ export function Sessions() {
         </h1>
         <span
           className="text-[11px] tabular-nums px-2.5 py-0.5 rounded-full"
-          style={{ border: "1px solid var(--border-bright)", color: "var(--text-secondary)" }}
+          style={{ border: "1px solid rgba(255,255,255,0.12)", color: "var(--text-secondary)" }}
         >
           {filtered.length} sessions
         </span>
@@ -349,22 +356,42 @@ export function Sessions() {
           </span>
         )}
         <div className="flex-1" />
-        <input
-          type="text"
-          value={localSearch}
-          onChange={(e) => setLocalSearch(e.target.value)}
-          placeholder="Filter sessions..."
-          className="px-3 py-1.5 rounded text-xs w-52 outline-none transition-colors"
-          style={{
-            background: "var(--bg-elevated)",
-            border: "1px solid var(--border)",
-            color: "var(--text-primary)",
-          }}
-        />
+        <div
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-shadow focus-within:shadow-[0_0_0_2px_rgba(56,139,253,0.75)]"
+          style={{ background: "rgba(255,255,255,0.09)" }}
+        >
+          <Search size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+          <input
+            type="text"
+            value={localSearch}
+            onChange={(e) => setLocalSearch(e.target.value)}
+            placeholder="Search sessions..."
+            className="text-xs w-32 outline-none bg-transparent"
+            style={{ color: "var(--text-primary)" }}
+          />
+        </div>
+      </div>
+
+      {/* Date range filter */}
+      <div className="px-5 pb-2 flex gap-1" style={{ background: "var(--bg-root)" }}>
+        {(["all", "today", "7d", "30d"] as const).map((range) => (
+          <button
+            key={range}
+            onClick={() => { setDateRange(range); setVisibleCount(50); }}
+            className="text-[11px] px-2.5 py-1 rounded-md transition-colors"
+            style={{
+              background: dateRange === range ? "rgba(255,255,255,0.1)" : "transparent",
+              color: dateRange === range ? "var(--text-primary)" : "var(--text-muted)",
+              border: "none",
+            }}
+          >
+            {range === "all" ? "All" : range === "today" ? "Today" : range === "7d" ? "7 days" : "30 days"}
+          </button>
+        ))}
       </div>
 
       {/* Session list */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto pb-4">
         {loading ? (
           <div
             className="p-8 text-center"
@@ -411,6 +438,7 @@ export function Sessions() {
                         key={session.id}
                         session={session}
                         showProject={showProject}
+                        repoName={resolveRepoName(session.project_path, projects)}
                         isLast={idx === dateSessions.length - 1}
                       />
                     ))}
@@ -419,14 +447,14 @@ export function Sessions() {
               ),
             )}
             {visibleCount < filtered.length && (
-              <div className="p-4 text-center">
+              <div className="py-4 text-center">
                 <button
                   onClick={() => setVisibleCount((c) => c + 50)}
-                  className="text-xs px-4 py-2 rounded transition-colors"
+                  className="text-xs px-4 py-2 rounded-md transition-colors hover:brightness-125"
                   style={{
-                    background: "var(--bg-elevated)",
+                    background: "rgba(255,255,255,0.06)",
                     color: "var(--text-secondary)",
-                    border: "1px solid var(--border)",
+                    border: "none",
                   }}
                 >
                   load more ({filtered.length - visibleCount} remaining)

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SquareArrowOutUpRight, FileText, GitCommitHorizontal, GitPullRequest } from "lucide-react";
 import type { Plan, Task, Milestone, GitDetail } from "../../lib/types.js";
 
 interface PlanSectionProps {
@@ -54,7 +55,7 @@ function getGitDetailsForPlan(plan: Plan, allPlans: Plan[], gitDetails: GitDetai
   const nextPlanStart = nextPlan?.exchange_index_start ?? Infinity;
   return gitDetails.filter(gd =>
     gd.exchange_index >= planEnd && gd.exchange_index < nextPlanStart &&
-    (gd.type === "commit" || gd.type === "push" || gd.type === "pr")
+    (gd.type === "commit" || gd.type === "pr")
   );
 }
 
@@ -155,74 +156,47 @@ function ExpandableText({ text }: { text: string }) {
   const display = expanded || !isLong ? text : text.substring(0, FEEDBACK_PREVIEW_LEN);
 
   return (
-    <div
-      className={`text-[11.5px] leading-[1.6] ${isLong ? "cursor-pointer" : ""}`}
-      style={{ color: "var(--text-secondary)" }}
-      onClick={isLong ? () => setExpanded(!expanded) : undefined}
-    >
+    <div className="text-[11.5px] leading-[1.6]" style={{ color: "var(--text-secondary)" }}>
       {display}
-      {isLong && !expanded && <span style={{ color: "var(--text-muted)" }}> ...</span>}
+      {isLong && (
+        <button
+          className="ml-1 hover:underline"
+          style={{ color: "var(--text-muted)" }}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "show less" : "show more"}
+        </button>
+      )}
     </div>
   );
 }
 
 // ── Git Detail Item ────────────────────────────────────────
 
-function GitItem({ gd, expanded, onToggle }: { gd: GitDetail; expanded: boolean; onToggle: () => void }) {
+function GitItem({ gd }: { gd: GitDetail }) {
   const isCommit = gd.type === "commit";
-  const isPush = gd.type === "push";
   const isPr = gd.type === "pr";
 
-  const symbol = isCommit ? "\u25CF" : isPush ? "\u2191" : isPr ? "\u2442" : "\u00B7";
-  const symbolColor = isCommit ? "#818cf8" : isPush ? "#60a5fa" : isPr ? "#34d399" : "var(--text-tertiary)";
-
+  const Icon = isCommit ? GitCommitHorizontal : GitPullRequest;
+  const iconColor = isCommit ? "#818cf8" : "#34d399";
   const shortHash = isCommit && gd.hash ? gd.hash.substring(0, 7) : null;
-  const hasExpandable = isCommit && (gd.files?.length || gd.stats);
 
   return (
-    <div>
-      <div
-        className={`text-[11px] flex items-center gap-1.5 ${hasExpandable ? "cursor-pointer hover:bg-[var(--bg-hover)] -mx-1 px-1 rounded" : ""}`}
-        style={{ color: "var(--text-tertiary)" }}
-        onClick={hasExpandable ? onToggle : undefined}
-      >
-        <span style={{ color: symbolColor }}>{symbol}</span>
-        {shortHash && (
-          <span className="font-mono" style={{ color: "var(--text-muted)" }}>{shortHash}</span>
-        )}
-        <span className="flex-1 min-w-0 truncate">{gd.description}</span>
-        {gd.url && (
-          <a
-            href={gd.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="shrink-0 hover:text-[var(--text-secondary)] transition-colors"
-            style={{ color: "var(--text-muted)" }}
-            onClick={(e) => e.stopPropagation()}
-            title="Open on GitHub"
-          >{"\u2197"}</a>
-        )}
-      </div>
-      {expanded && isCommit && (
-        <div className="ml-5 mt-0.5 mb-1">
-          {gd.stats && (
-            <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              {gd.stats.files_changed} file{gd.stats.files_changed !== 1 ? "s" : ""} changed
-              {gd.stats.insertions > 0 && <span style={{ color: "#10b981" }}> +{gd.stats.insertions}</span>}
-              {gd.stats.deletions > 0 && <span style={{ color: "#ef4444" }}> &minus;{gd.stats.deletions}</span>}
-            </div>
-          )}
-          {gd.files && gd.files.length > 0 && (
-            <div className="flex flex-col mt-0.5">
-              {gd.files.map((f, i) => (
-                <div key={i} className="text-[11px] font-mono" style={{ color: "var(--text-tertiary)", letterSpacing: "-0.02em" }}>
-                  <span style={{ color: "var(--text-muted)" }}>{i < gd.files!.length - 1 ? "\u251C\u2500 " : "\u2514\u2500 "}</span>
-                  {f.split("/").pop()}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+    <div className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--text-tertiary)" }}>
+      <Icon size={11} className="shrink-0" style={{ color: iconColor }} />
+      {shortHash && (
+        <span className="font-mono" style={{ color: "var(--text-muted)" }}>{shortHash}</span>
+      )}
+      <span className="flex-1 min-w-0 truncate">{gd.description}</span>
+      {gd.url && (
+        <a
+          href={gd.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 w-5 h-5 flex items-center justify-center rounded hover:text-[var(--text-primary)] hover:bg-[rgba(255,255,255,0.08)] transition-all"
+          style={{ color: "var(--text-muted)" }}
+          title={isCommit ? "View commit on GitHub" : "View PR on GitHub"}
+        ><SquareArrowOutUpRight size={12} /></a>
       )}
     </div>
   );
@@ -242,7 +216,6 @@ function PlanGroupCard({
 }) {
   const [tasksOpen, setTasksOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [expandedCommits, setExpandedCommits] = useState<Set<number>>(new Set());
 
   const { final, entries } = group;
   const title = extractTitle(final.plan_text, final.status);
@@ -252,58 +225,50 @@ function PlanGroupCard({
   const planGitDetails = getGitDetailsForPlan(final, allPlans, gitDetails);
   const time = fmtTime(final.ended_at || final.started_at || final.created_at);
 
-  const toggleCommit = (idx: number) => {
-    setExpandedCommits(prev => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
-      return next;
-    });
-  };
-
   const hasEntries = entries.length > 0;
 
   return (
-    <div className="rounded-lg mb-3" style={{ border: "1px solid rgba(255,255,255,0.06)", background: "var(--bg-surface)" }}>
+    <div className="rounded-lg mb-3" style={{ border: "1px solid rgba(255,255,255,0.03)", borderLeft: "3px solid rgba(167,139,250,0.4)", background: "var(--bg-surface)" }}>
       {/* ── Main plan ── */}
       <div className="px-4 py-3">
         <div className="flex gap-3">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Plan</span>
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Plan</span>
               {statusLabel && (
                 <>
-                  <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{"\u00B7"}</span>
-                  <span className="text-[10px] font-medium" style={{ color: "var(--text-tertiary)" }}>{statusLabel}</span>
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{"\u00B7"}</span>
+                  <span className="text-[11px] font-medium" style={{ color: "var(--text-tertiary)" }}>{statusLabel}</span>
                 </>
               )}
-              <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{"\u00B7"}</span>
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{"\u00B7"}</span>
               <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{time}</span>
             </div>
-            <p className="text-[13px] font-medium font-mono" style={{ color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
+            <p className="text-[13px] font-medium flex items-center gap-1.5" style={{ color: "var(--text-primary)" }}>
+              <FileText size={13} className="shrink-0" style={{ color: "#6dab7a", position: "relative", top: "-0.5px" }} />
               {title}
             </p>
           </div>
-          <div className="flex items-start shrink-0 pt-0.5 gap-2">
+          <div className="flex items-center shrink-0 gap-3">
             {final.plan_text && (
               <button
-                className="text-[12px] px-3 py-1.5 rounded-md hover:bg-[var(--bg-hover)] transition-colors"
-                style={{ color: "var(--text-secondary)", border: "1px solid var(--border)" }}
+                className="text-[11px] font-medium hover:underline transition-colors"
+                style={{ color: "var(--text-secondary)" }}
                 onClick={() => onViewPlan(final)}
               >View plan</button>
             )}
             <button
-              className="text-[11px] py-1.5 hover:underline"
+              className="w-5 h-5 flex items-center justify-center rounded hover:text-[var(--text-primary)] hover:bg-[rgba(255,255,255,0.08)] transition-all"
               style={{ color: "var(--text-muted)" }}
               onClick={() => onViewInTerminal(final.plan_text ? final.exchange_index_end : final.exchange_index_start)}
-            >View in terminal</button>
+            ><SquareArrowOutUpRight size={13} /></button>
           </div>
         </div>
       </div>
 
       {/* Tasks */}
       {planTasks.length > 0 && (
-        <div className="px-4 pb-3">
+        <div className="px-4 pb-2 -mt-1">
           <button
             className="text-[11px] font-medium mb-1 hover:underline"
             style={{ color: "var(--text-muted)" }}
@@ -331,21 +296,16 @@ function PlanGroupCard({
 
       {/* Git details */}
       {planGitDetails.length > 0 && (
-        <div className="px-4 pb-3 flex flex-col gap-0.5">
+        <div className="px-4 pb-2 -mt-1 flex flex-col gap-1">
           {planGitDetails.map((gd, i) => (
-            <GitItem
-              key={i}
-              gd={gd}
-              expanded={expandedCommits.has(i)}
-              onToggle={() => toggleCommit(i)}
-            />
+            <GitItem key={i} gd={gd} />
           ))}
         </div>
       )}
 
       {/* ── Iteration thread ── */}
       {hasEntries && (
-        <div className="px-4 pb-3">
+        <div className="px-4 pb-2 -mt-0.5">
           <button
             className="text-[11px] font-medium mb-1 hover:underline"
             style={{ color: "var(--text-muted)" }}
@@ -362,7 +322,7 @@ function PlanGroupCard({
 
                 return (
                   <div key={idx} className="rounded-md px-3 py-2"
-                    style={{ background: "var(--bg-elevated)", border: "1px solid rgba(255,255,255,0.04)" }}>
+                    style={{ background: "var(--bg-elevated)", border: "1px solid rgba(255,255,255,0.03)" }}>
 
                     {hasFeedback ? (
                       // User spoke — show feedback + result
@@ -373,21 +333,21 @@ function PlanGroupCard({
                         <ExpandableText text={plan.user_feedback!} />
                         <div className="flex items-center justify-between mt-1.5">
                           <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                            {"\u2192"} {planChanged ? "Plan updated" : "Plan unchanged"}
+                            {planChanged ? "\u2193 Plan updated" : "Plan unchanged"}
                           </span>
                           <div className="flex items-center gap-2">
                             {planChanged && plan.plan_text && (
                               <button
-                                className="text-[11px] px-2 py-0.5 rounded hover:bg-[var(--bg-hover)] transition-colors"
-                                style={{ color: "var(--text-tertiary)", border: "1px solid var(--border)" }}
+                                className="text-[11px] hover:underline transition-colors"
+                                style={{ color: "var(--text-tertiary)" }}
                                 onClick={() => onViewPlan(plan, entry.nextPlanText)}
-                              >View</button>
+                              >View before</button>
                             )}
                             <button
-                              className="text-[10px] hover:underline"
+                              className="w-5 h-5 flex items-center justify-center rounded hover:text-[var(--text-primary)] hover:bg-[rgba(255,255,255,0.08)] transition-all"
                               style={{ color: "var(--text-muted)" }}
                               onClick={() => onViewInTerminal(plan.exchange_index_end)}
-                            >{"\u2197"}</button>
+                            ><SquareArrowOutUpRight size={12} /></button>
                           </div>
                         </div>
                       </>
@@ -396,10 +356,10 @@ function PlanGroupCard({
                       <div className="flex items-center justify-between">
                         <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Plan rejected</span>
                         <button
-                          className="text-[10px] hover:underline"
+                          className="hover:text-[var(--text-secondary)] transition-colors"
                           style={{ color: "var(--text-muted)" }}
                           onClick={() => onViewInTerminal(plan.exchange_index_end)}
-                        >{"\u2197"}</button>
+                        ><SquareArrowOutUpRight size={12} /></button>
                       </div>
                     ) : (
                       // No feedback, different exchange — something caused a revision
@@ -408,16 +368,16 @@ function PlanGroupCard({
                         <div className="flex items-center gap-2">
                           {planChanged && plan.plan_text && (
                             <button
-                              className="text-[11px] px-2 py-0.5 rounded hover:bg-[var(--bg-hover)] transition-colors"
-                              style={{ color: "var(--text-tertiary)", border: "1px solid var(--border)" }}
+                              className="text-[11px] hover:underline transition-colors"
+                              style={{ color: "var(--text-tertiary)" }}
                               onClick={() => onViewPlan(plan, entry.nextPlanText)}
-                            >View</button>
+                            >View before</button>
                           )}
                           <button
-                            className="text-[10px] hover:underline"
+                            className="hover:text-[var(--text-secondary)] transition-colors"
                             style={{ color: "var(--text-muted)" }}
                             onClick={() => onViewInTerminal(plan.exchange_index_end)}
-                          >{"\u2197"}</button>
+                          ><SquareArrowOutUpRight size={12} /></button>
                         </div>
                       </div>
                     )}

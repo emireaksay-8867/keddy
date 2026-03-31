@@ -514,24 +514,10 @@ export function parseTranscript(filePath: string): ParsedTranscript {
         continue;
       }
 
-      // If there are no tool uses, this is the final response — finalize exchange
-      if (inExchange && toolUses.length === 0) {
-        exchanges.push({
-          index: exchangeIndex,
-          user_prompt: currentUserPrompt,
-          assistant_response: currentAssistantText,
-          tool_calls: [...pendingToolCalls],
-          timestamp: currentTimestamp,
-          is_interrupt: interrupt,
-          is_compact_summary: currentIsCompactSummary,
-          ...factsFields(),
-        });
-        exchangeIndex++;
-        pendingToolCalls = [];
-        currentAssistantText = "";
-        resetAssistantAccumulators();
-        inExchange = false;
-      } else if (inExchange && interrupt) {
+      // Don't finalize on text-only assistant messages — Claude Code logs text and
+      // tool_use as SEPARATE JSONL entries. Exchanges are finalized by the next user
+      // message (line 436), interrupt detection, or end-of-file (line 558).
+      if (inExchange && interrupt) {
         // Interrupted — finalize
         exchanges.push({
           index: exchangeIndex,

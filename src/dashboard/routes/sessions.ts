@@ -386,14 +386,22 @@ sessionsRoutes.get("/", (c) => {
       } catch { /* invalid JSON */ }
     }
 
-    // Compute outcomes from milestones
-    const outcomes = computeOutcomes(milestones);
+    // For forked sessions, strip auto-generated "(Branch)"/"(Fork)" suffix
+    const forkIdx = (s as any).fork_exchange_index ?? null;
+    if (s.title && /\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/.test(s.title)) {
+      s.title = s.title.replace(/\s*\S?\s*\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/, "").trim();
+    }
+    const ownMilestones = forkIdx != null
+      ? milestones.filter((m: any) => m.exchange_index >= forkIdx)
+      : milestones;
+
+    // Compute outcomes from own milestones only
+    const outcomes = computeOutcomes(ownMilestones);
 
     // Find best plan: only show approved or implemented in the session list
     // For forked sessions, exclude inherited plans (from parent session)
-    const forkIdx = (s as any).fork_exchange_index ?? null;
     const ownPlans = forkIdx != null
-      ? plans.filter((p: any) => p.exchange_index_end >= forkIdx)
+      ? plans.filter((p: any) => p.exchange_index_start >= forkIdx)
       : plans;
     const acceptedPlan = ownPlans.find((p: any) => p.status === "implemented")
       ?? ownPlans.find((p: any) => p.status === "approved")
@@ -479,12 +487,12 @@ sessionsRoutes.get("/", (c) => {
         end: seg.exchange_index_end,
         has_summary: !!seg.summary,
       })),
-      milestone_count: milestones.length,
+      milestone_count: ownMilestones.length,
       outcomes,
       latest_plan: latestPlan ? {
         version: latestPlan.version,
         status: latestPlan.status,
-        total_versions: plans.length,
+        total_versions: ownPlans.length,
         plan_title: extractPlanTitle(latestPlan.plan_text),
       } : null,
       has_ai: hasAiSummaries,
@@ -495,7 +503,7 @@ sessionsRoutes.get("/", (c) => {
       parent_session_id: parentSessionId,
       // Facts-first additions
       activity_groups: activityGroups,
-      milestones: milestones.map((m) => ({
+      milestones: ownMilestones.map((m) => ({
         type: m.milestone_type,
         exchange_index: m.exchange_index,
         description: m.description,
@@ -529,9 +537,13 @@ sessionsRoutes.get("/:id", (c) => {
   let plans = getSessionPlans(session.id);
   const compactions = getSessionCompactionEvents(session.id);
 
-  // If no segments but has exchanges, generate analysis on-the-fly
-  // This handles live sessions where SessionEnd hasn't run yet
-  if (segments.length === 0 && session.exchange_count > 0) {
+  // Re-analyze when segments don't cover all exchanges — handles active sessions,
+  // sessions where SessionEnd hook failed, and sessions with prematurely set ended_at
+  const maxSegmentIdx = segments.length > 0 ? Math.max(...segments.map((s: any) => s.exchange_index_end)) : -1;
+  const hasNewExchanges = session.exchange_count - 1 > maxSegmentIdx;
+  const needsAnalysis = (segments.length === 0 || hasNewExchanges) && session.exchange_count > 0;
+
+  if (needsAnalysis) {
     try {
       const exchanges = getSessionExchanges(session.id);
       const parsedExchanges = exchanges.map((e: any) => ({
@@ -558,6 +570,15 @@ sessionsRoutes.get("/:id", (c) => {
       const newGroups = extractActivityGroups(parsedExchanges, newMilestones);
       const db = getDb();
       const { insertSegment, insertMilestone, insertPlan } = require("../../db/queries.js");
+
+      // Clear stale data before re-inserting (prevents duplicates from Stop hook + on-the-fly overlap)
+      const isEnded = !!session.ended_at;
+      db.prepare("DELETE FROM segments WHERE session_id = ?").run(session.id);
+      db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
+      if (isEnded) {
+        // Only clear plans for ended sessions — Stop hook manages plans for active sessions
+        db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);
+      }
 
       for (const group of newGroups) {
         const { deriveDisplayType: ddt } = require("../../capture/activity-groups.js");
@@ -650,11 +671,20 @@ sessionsRoutes.get("/:id", (c) => {
     FROM decisions WHERE session_id = ? ORDER BY exchange_index
   `).all(session.id);
 
-  // Outcomes (shared computation)
-  const outcomes = computeOutcomes(milestones);
+  // For forked sessions, strip auto-generated "(Branch)"/"(Fork)" suffix
+  const forkExIdx = (session as any).fork_exchange_index as number | null;
+  if (session.title && /\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/.test(session.title)) {
+    (session as any).title = session.title.replace(/\s*\S?\s*\((?:Fork|Branch)(?:\s*\d*)?\)\s*$/, "").trim();
+  }
+  const ownMilestones = forkExIdx != null
+    ? milestones.filter((m: any) => m.exchange_index >= forkExIdx)
+    : milestones;
 
-  // Git details with file/stats/hash parsing
-  const gitDetails = extractGitDetails(db, session.id, milestones);
+  // Outcomes (shared computation) — from own milestones only
+  const outcomes = computeOutcomes(ownMilestones);
+
+  // Git details with file/stats/hash parsing — from own milestones only
+  const gitDetails = extractGitDetails(db, session.id, ownMilestones);
 
   // Resolve GitHub repo for URL construction
   try {
@@ -680,12 +710,14 @@ sessionsRoutes.get("/:id", (c) => {
     }
   } catch { /* no git remote or not a git repo — URLs just won't be added */ }
 
-  // Test status — final state only (last test milestone)
+  // Test status — final state only (last test milestone, fork-filtered)
   let testStatus: { passing: boolean; description: string; exchange_index: number } | null = null;
   try {
+    const forkTestFilter = forkExIdx != null ? `AND exchange_index >= ${forkExIdx}` : "";
     const lastTest = db.prepare(`
       SELECT milestone_type, description, exchange_index
       FROM milestones WHERE session_id = ? AND milestone_type IN ('test_pass', 'test_fail')
+      ${forkTestFilter}
       ORDER BY exchange_index DESC LIMIT 1
     `).get(session.id) as any;
     if (lastTest) {
@@ -698,6 +730,7 @@ sessionsRoutes.get("/:id", (c) => {
   } catch { /* non-critical */ }
 
   // Facts-first: build activity group details from segments with boundary_type
+  // Note: NOT fork-filtered here — frontend handles inherited vs new display (like Terminal view)
   const activityGroups = segments
     .filter((seg) => seg.boundary_type != null)
     .map((seg) => {
@@ -795,8 +828,7 @@ sessionsRoutes.get("/:id", (c) => {
     `).all(session.id) as any[];
   } catch { /* non-critical */ }
 
-  // Fork metadata for detail view (computed before file ops since they depend on it)
-  const forkExIdx = (session as any).fork_exchange_index as number | null;
+  // Fork metadata for detail view
   let detailParentTitle: string | null = null;
   let detailParentSessionId: string | null = null;
   if (session.forked_from) {
@@ -855,8 +887,8 @@ sessionsRoutes.get("/:id", (c) => {
     parent_session_id: detailParentSessionId,
     fork_children: forkChildren.length > 0 ? forkChildren : undefined,
     segments,
-    milestones,
-    plans: plans.map((p: any) => {
+    milestones: ownMilestones,
+    plans: (forkExIdx != null ? plans.filter((p: any) => p.exchange_index_start >= forkExIdx) : plans).map((p: any) => {
       // Enrich with real timestamps from exchanges (created_at is reimport time, not useful)
       try {
         const startRow = db.prepare("SELECT timestamp FROM exchanges WHERE session_id = ? AND exchange_index = ?").get(session.id, p.exchange_index_start) as any;
@@ -1073,6 +1105,166 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
     return c.json({ error: "Session not found" }, 404);
   }
 
+  // Live sync from JSONL — the Stop hook can miss exchanges, so the server
+  // checks the source-of-truth JSONL on every poll and syncs any missing data.
+  // Only runs for sessions with a recent JSONL file (active or recently ended).
+  try {
+    const { existsSync, statSync } = require("node:fs");
+    if (session.jsonl_path && existsSync(session.jsonl_path)) {
+      const mtime = statSync(session.jsonl_path).mtimeMs;
+      const RECENT_THRESHOLD = 30 * 60 * 1000; // 30 minutes
+      const now = Date.now();
+
+      if (now - mtime < RECENT_THRESHOLD) {
+        // Check if DB is stale: JSONL modified after last known exchange
+        const endedMs = session.ended_at ? new Date(session.ended_at).getTime() : 0;
+        if (mtime - endedMs > 2000) {
+          const existingExchanges = getSessionExchanges(session.id);
+          const sinceIndex = Math.max(0, existingExchanges.length - 1);
+
+          let latestExchanges;
+          try {
+            latestExchanges = parseLatestExchanges(session.jsonl_path, sinceIndex);
+          } catch { latestExchanges = null; }
+
+          if (latestExchanges && latestExchanges.length > 0) {
+            const db = getDb();
+
+            for (const exchange of latestExchanges) {
+              const existing = existingExchanges.find((e: any) => e.exchange_index === exchange.index);
+
+              if (existing) {
+                // UPDATE existing exchange — it might have been captured with incomplete response
+                // Never overwrite a non-empty response with an empty one (race condition protection)
+                const safeResponse = (exchange.assistant_response ?? "") || (existing as any).assistant_response || "";
+                const safeToolCount = exchange.tool_calls.length || (existing as any).tool_call_count || 0;
+                db.prepare(`
+                  UPDATE exchanges SET
+                    assistant_response = ?,
+                    tool_call_count = ?,
+                    is_interrupt = ?,
+                    model = COALESCE(?, model),
+                    input_tokens = COALESCE(?, input_tokens),
+                    output_tokens = COALESCE(?, output_tokens),
+                    cache_read_tokens = COALESCE(?, cache_read_tokens),
+                    cache_write_tokens = COALESCE(?, cache_write_tokens),
+                    stop_reason = COALESCE(?, stop_reason),
+                    has_thinking = COALESCE(?, has_thinking),
+                    turn_duration_ms = COALESCE(?, turn_duration_ms)
+                  WHERE id = ?
+                `).run(
+                  safeResponse,
+                  safeToolCount,
+                  exchange.is_interrupt ? 1 : 0,
+                  exchange.model ?? null,
+                  exchange.input_tokens ?? null,
+                  exchange.output_tokens ?? null,
+                  exchange.cache_read_tokens ?? null,
+                  exchange.cache_write_tokens ?? null,
+                  exchange.stop_reason ?? null,
+                  exchange.has_thinking ? 1 : null,
+                  exchange.turn_duration_ms ?? null,
+                  existing.id,
+                );
+
+                // Re-insert tool calls with enriched fields (only if parser found any —
+                // don't delete existing tool calls when re-parse produces none)
+                if (exchange.tool_calls.length > 0) {
+                db.prepare("DELETE FROM tool_calls WHERE exchange_id = ?").run(existing.id);
+                }
+                for (const tc of exchange.tool_calls) {
+                  const enriched = extractToolCallFields(tc.name, tc.input);
+                  insertToolCall({
+                    exchange_id: existing.id,
+                    session_id: session.id,
+                    tool_name: tc.name,
+                    tool_input: JSON.stringify(tc.input),
+                    tool_result: tc.result ?? null,
+                    tool_use_id: tc.id,
+                    is_error: tc.is_error ?? false,
+                    ...enriched,
+                  });
+                }
+              } else {
+                // INSERT new exchange
+                const exchangeId = insertExchange({
+                  session_id: session.id,
+                  exchange_index: exchange.index,
+                  user_prompt: exchange.user_prompt,
+                  assistant_response: exchange.assistant_response,
+                  tool_call_count: exchange.tool_calls.length,
+                  timestamp: exchange.timestamp,
+                  is_interrupt: exchange.is_interrupt,
+                  is_compact_summary: exchange.is_compact_summary,
+                  model: exchange.model,
+                  input_tokens: exchange.input_tokens,
+                  output_tokens: exchange.output_tokens,
+                  cache_read_tokens: exchange.cache_read_tokens,
+                  cache_write_tokens: exchange.cache_write_tokens,
+                  stop_reason: exchange.stop_reason,
+                  has_thinking: exchange.has_thinking,
+                  permission_mode: exchange.permission_mode,
+                  is_sidechain: exchange.is_sidechain,
+                  entrypoint: exchange.entrypoint,
+                  cwd: exchange.cwd,
+                  git_branch: exchange.git_branch,
+                  turn_duration_ms: exchange.turn_duration_ms,
+                });
+
+                for (const tc of exchange.tool_calls) {
+                  const enriched = extractToolCallFields(tc.name, tc.input);
+                  insertToolCall({
+                    exchange_id: exchangeId,
+                    session_id: session.id,
+                    tool_name: tc.name,
+                    tool_input: JSON.stringify(tc.input),
+                    tool_result: tc.result ?? null,
+                    tool_use_id: tc.id,
+                    is_error: tc.is_error ?? false,
+                    ...enriched,
+                  });
+                }
+              }
+            }
+
+            // Extract milestones from ALL exchanges in DB (not just tail) —
+            // catches commits/pushes from any exchange, even if older than sinceIndex
+            const allDbExchanges = getSessionExchanges(session.id);
+            const parsedForMilestones = allDbExchanges.map((e: any) => {
+              const tcs = db.prepare(
+                "SELECT tool_name as name, tool_input as input FROM tool_calls WHERE exchange_id = ?",
+              ).all(e.id).map((tc: any) => ({
+                ...tc,
+                input: tc.input ? (() => { try { return JSON.parse(tc.input); } catch { return {}; } })() : {},
+              }));
+              return { index: e.exchange_index, tool_calls: tcs };
+            });
+            const allMilestones = extractMilestones(parsedForMilestones as any);
+            for (const m of allMilestones) {
+              insertMilestone({
+                session_id: session.id,
+                milestone_type: m.milestone_type,
+                exchange_index: m.exchange_index,
+                description: m.description,
+                metadata: m.metadata ? JSON.stringify(m.metadata) : null,
+              });
+            }
+
+            // Update session metadata
+            const lastEx = latestExchanges[latestExchanges.length - 1];
+            db.prepare(`
+              UPDATE sessions SET
+                ended_at = COALESCE(?, ended_at),
+                exchange_count = (SELECT COUNT(*) FROM exchanges WHERE session_id = ?)
+              WHERE id = ?
+            `).run(lastEx.timestamp || new Date().toISOString(), session.id, session.id);
+          }
+        }
+      }
+    }
+  } catch (e) { console.error("[keddy] Live sync error:", e); }
+
+  // Read fresh data after sync
   const exchanges = getSessionExchanges(session.id);
 
   // Optionally include tool calls
@@ -1147,8 +1339,10 @@ sessionsRoutes.post("/:id/sync", (c) => {
       session.id,
     );
 
-    // Insert any missing exchanges
+    // Clear and re-insert all exchanges — sync does a full re-parse from JSONL (source of truth)
     const { insertExchange, insertToolCall } = require("../../db/queries.js");
+    db.prepare("DELETE FROM tool_calls WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM exchanges WHERE session_id = ?").run(session.id);
     let added = 0;
     for (const exchange of transcript.exchanges) {
       const eid = insertExchange({
@@ -1161,9 +1355,9 @@ sessionsRoutes.post("/:id/sync", (c) => {
         is_interrupt: exchange.is_interrupt,
         is_compact_summary: exchange.is_compact_summary,
       });
-      // insertExchange returns existing ID if duplicate, but we don't know if it was new
       for (const tc of exchange.tool_calls) {
         try {
+          const enriched = extractToolCallFields(tc.name, tc.input);
           insertToolCall({
             exchange_id: eid,
             session_id: session.id,
@@ -1172,15 +1366,80 @@ sessionsRoutes.post("/:id/sync", (c) => {
             tool_result: tc.result ?? null,
             tool_use_id: tc.id,
             is_error: tc.is_error ?? false,
+            ...enriched,
           });
         } catch { /* duplicate tool call */ }
       }
       added++;
     }
 
+    // Clear and re-extract ALL derived data (milestones, segments, plans, tasks)
+    // Same as SessionEnd — sync is a full re-parse, derived data must match
+    db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM segments WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);
+    db.prepare("DELETE FROM tasks WHERE session_id = ?").run(session.id);
+
+    const { extractMilestones: extractMs } = require("../../capture/milestones.js");
+    const { extractPlans: extractPs } = require("../../capture/plans.js");
+    const { extractActivityGroups: extractAg, deriveDisplayType: ddt } = require("../../capture/activity-groups.js");
+    const { insertMilestone: insertMs, insertSegment: insertSeg, insertPlan: insertPl } = require("../../db/queries.js");
+
+    const milestones = extractMs(transcript.exchanges);
+    for (const m of milestones) {
+      insertMs({
+        session_id: session.id,
+        milestone_type: m.milestone_type,
+        exchange_index: m.exchange_index,
+        description: m.description,
+        metadata: m.metadata ? JSON.stringify(m.metadata) : null,
+      });
+    }
+
+    const plans = extractPs(transcript.exchanges);
+    for (const p of plans) {
+      insertPl({
+        session_id: session.id,
+        version: p.version,
+        plan_text: p.plan_text,
+        status: p.status,
+        user_feedback: p.user_feedback,
+        exchange_index_start: p.exchange_index_start,
+        exchange_index_end: p.exchange_index_end,
+      });
+    }
+
+    const groups = extractAg(transcript.exchanges, milestones);
+    for (const group of groups) {
+      const allFiles = [...new Set([...group.files_read, ...group.files_written])];
+      insertSeg({
+        session_id: session.id,
+        segment_type: ddt(group),
+        exchange_index_start: group.exchange_index_start,
+        exchange_index_end: group.exchange_index_end,
+        files_touched: JSON.stringify(allFiles),
+        tool_counts: JSON.stringify(group.tool_counts),
+        boundary_type: group.boundary,
+        files_read: JSON.stringify(group.files_read),
+        files_written: JSON.stringify(group.files_written),
+        error_count: group.error_count,
+        total_input_tokens: group.total_input_tokens,
+        total_output_tokens: group.total_output_tokens,
+        total_cache_read_tokens: group.total_cache_read_tokens,
+        total_cache_write_tokens: group.total_cache_write_tokens,
+        duration_ms: group.duration_ms,
+        models: JSON.stringify(group.models),
+        markers: JSON.stringify(group.markers),
+        exchange_count: group.exchange_count,
+        started_at: group.started_at,
+        ended_at: group.ended_at,
+      });
+    }
+
     return c.json({
       ok: true,
       exchanges: transcript.exchanges.length,
+      milestones: milestones.length,
       branch: transcript.git_branch,
       ended_at: transcript.ended_at,
     });

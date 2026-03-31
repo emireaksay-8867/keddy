@@ -213,9 +213,12 @@ export function extractActivityGroups(
     let boundaryType: BoundaryType | null = null;
 
     // Boundaries based on observable pivots in what you're doing.
-    // Milestones (commits, pushes, tests) are NOT boundaries — they're
-    // events that happen within a work block. A commit doesn't mean
-    // you switched to different work.
+
+    // Milestone — previous exchange completed a commit or PR (phase done)
+    const prevMilestones = milestoneMap.get(prev.index) || [];
+    if (prevMilestones.some(m => m.milestone_type === "commit" || m.milestone_type === "pr")) {
+      boundaryType = "milestone";
+    }
 
     // Plan mode — strategic pivot
     if (curr.tool_calls.some(tc => tc.name === "EnterPlanMode" || tc.name === "ExitPlanMode")) {

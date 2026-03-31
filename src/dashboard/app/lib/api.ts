@@ -124,8 +124,9 @@ export async function getSessionNotes(sessionId: string) {
   return fetchJson<import("./types.js").SessionNote[]>(`/sessions/${sessionId}/notes`);
 }
 
-export async function getSessionMermaid(sessionId: string) {
-  return fetchJson<{ mermaid: string }>(`/sessions/${sessionId}/mermaid`);
+export async function getSessionMermaid(sessionId: string, mode?: "compact" | "expanded") {
+  const qs = mode === "expanded" ? "?mode=expanded" : "";
+  return fetchJson<{ mermaid: string }>(`/sessions/${sessionId}/mermaid${qs}`);
 }
 
 export async function deleteSessionNotes(sessionId: string) {
