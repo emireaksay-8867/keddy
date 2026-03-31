@@ -16,7 +16,6 @@ const MS_CONFIG: Record<string, { symbol: string; color: string }> = {
   test_fail: { symbol: "\u2717", color: "#ef4444" },
 };
 
-type FilterType = "all" | "conversation" | "git" | "tests" | "errors";
 
 // ── Markdown stripping (for card previews — always clean text) ─
 function stripMarkdown(md: string): string {
@@ -56,16 +55,17 @@ function extractSubtitle(response: string | null): string | null {
 
 // ── Pill types ────────────────────────────────────────────────
 interface Pill {
-  type: "edit" | "bash" | "agent" | "mcp" | "web" | "commit" | "push" | "pr" | "branch" | "test_pass" | "test_fail" | "error";
+  type: "edit" | "bash" | "agent" | "mcp" | "web" | "commit" | "push" | "pr" | "branch" | "test_pass" | "test_fail" | "error" | "plan";
   count?: number;
   gitDetail?: GitDetail;
   milestone?: Milestone;
   hasErrors?: boolean;
+  plan?: Plan;
 }
 
 const SYSTEM_TOOLS = new Set(["EnterPlanMode", "ExitPlanMode", "TaskCreate", "TaskUpdate", "TaskStop", "TaskGet", "TaskList", "TaskOutput", "ToolSearch", "ExitWorktree", "EnterWorktree", "ExitPlanMode"]);
 
-function computePills(exchange: Exchange, gitDetails: GitDetail[], testMilestones: Milestone[]): Pill[] {
+function computePills(exchange: Exchange, gitDetails: GitDetail[], testMilestones: Milestone[], plans: Plan[] = []): Pill[] {
   const tools = exchange.tool_calls || [];
   const actionTools = tools.filter(t => !SYSTEM_TOOLS.has(t.tool_name));
   const pills: Pill[] = [];
@@ -97,6 +97,10 @@ function computePills(exchange: Exchange, gitDetails: GitDetail[], testMilestone
 
   if (errorCount > 0) pills.push({ type: "error", count: errorCount });
 
+  for (const plan of plans) {
+    pills.push({ type: "plan", plan });
+  }
+
   return pills;
 }
 
@@ -114,13 +118,14 @@ const PILL_CONFIG: Record<string, { label: (p: Pill) => string; bg: string; colo
   test_pass: { label: (p) => { const m = p.milestone?.description?.match(/\((\d+\/\d+)\)/); return m ? `\u2713 ${m[1]}` : "\u2713 passed"; }, bg: "rgba(16,185,129,0.12)", color: "#10b981" },
   test_fail: { label: (p) => { const m = p.milestone?.description?.match(/\((\d+\/\d+)\)/); return m ? `\u2717 ${m[1]}` : "\u2717 failed"; }, bg: "rgba(239,68,68,0.12)", color: "#ef4444" },
   error: { label: (p) => `${p.count} error${(p.count || 0) > 1 ? "s" : ""}`, bg: "rgba(239,68,68,0.12)", color: "#ef4444" },
+  plan: { label: () => "Plan", bg: "rgba(167,139,250,0.15)", color: "#a78bfa" },
 };
 
 // ── Outcome Pills ─────────────────────────────────────────────
-function OutcomePills({ pills, expandedSections, onToggle }: {
-  pills: Pill[]; expandedSections: Set<string>; onToggle: (type: string) => void;
+function OutcomePills({ pills, expandedSections, onToggle, isInterrupt }: {
+  pills: Pill[]; expandedSections: Set<string>; onToggle: (type: string) => void; isInterrupt?: boolean;
 }) {
-  if (pills.length === 0) return null;
+  if (pills.length === 0 && !isInterrupt) return null;
   return (
     <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
       {pills.map((pill, i) => {
@@ -138,6 +143,9 @@ function OutcomePills({ pills, expandedSections, onToggle }: {
           </button>
         );
       })}
+      {isInterrupt && (
+        <span className="text-[10px] px-1.5 py-0.5 rounded ml-auto" style={{ color: "#f59e0b", background: "rgba(245,158,11,0.1)" }}>interrupted</span>
+      )}
     </div>
   );
 }
@@ -390,13 +398,13 @@ function CompactionMarker({ event }: { event: CompactionEvent }) {
 }
 
 // ── Prompt Card — the primary timeline unit ───────────────────
-function PromptCard({ exchange, gitDetails, testMilestones, filter, autoExpand, onViewDetail }: {
-  exchange: Exchange; gitDetails: GitDetail[]; testMilestones: Milestone[];
-  filter: FilterType; autoExpand?: string; onViewDetail: (exchange: Exchange) => void;
+function PromptCard({ exchange, gitDetails, testMilestones, plans, onViewDetail, onViewPlan }: {
+  exchange: Exchange; gitDetails: GitDetail[]; testMilestones: Milestone[]; plans: Plan[];
+  onViewDetail: (exchange: Exchange) => void; onViewPlan?: (plan: Plan) => void;
 }) {
   const [showFullPrompt, setShowFullPrompt] = useState(false);
   const [showFullResponse, setShowFullResponse] = useState(false);
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => autoExpand ? new Set([autoExpand]) : new Set());
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const { cleaned: prompt, wasInterrupted } = cleanText(exchange.user_prompt || "");
   const isInterrupt = !!exchange.is_interrupt || wasInterrupted;
   const isCompaction = !!exchange.is_compact_summary;
@@ -405,12 +413,17 @@ function PromptCard({ exchange, gitDetails, testMilestones, filter, autoExpand, 
   const subtitle = extractSubtitle(exchange.assistant_response);
   const { cleaned: fullResponse } = cleanText(exchange.assistant_response || "");
   const strippedResponse = useMemo(() => stripMarkdown(fullResponse), [fullResponse]);
-  const pills = useMemo(() => computePills(exchange, gitDetails, testMilestones), [exchange, gitDetails, testMilestones]);
+  const pills = useMemo(() => computePills(exchange, gitDetails, testMilestones, plans), [exchange, gitDetails, testMilestones, plans]);
   const isLongPrompt = prompt.length > 180;
   const isLongResponse = strippedResponse.length > 150;
-  const showPills = filter === "all" || filter === "errors";
+  const showPills = true;
 
   const toggleSection = (type: string) => {
+    if (type === "plan") {
+      const planPill = pills.find(p => p.type === "plan");
+      if (planPill?.plan && onViewPlan) onViewPlan(planPill.plan);
+      return;
+    }
     setExpandedSections(prev => {
       const next = new Set(prev);
       if (next.has(type)) next.delete(type); else next.add(type);
@@ -426,7 +439,7 @@ function PromptCard({ exchange, gitDetails, testMilestones, filter, autoExpand, 
       <div className="px-4 py-3">
         {/* Timestamp + detail link */}
         <div className="flex items-center justify-between mb-1">
-          <span className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>{time}</span>
+          <span className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }}>{time}</span>
           <button onClick={() => onViewDetail(exchange)}
             className="w-5 h-5 flex items-center justify-center rounded hover:text-[var(--text-primary)] hover:bg-[rgba(255,255,255,0.08)] transition-all"
             style={{ color: "var(--text-muted)" }} title="View in terminal">
@@ -435,7 +448,7 @@ function PromptCard({ exchange, gitDetails, testMilestones, filter, autoExpand, 
         </div>
 
         {/* Prompt text */}
-        <div className="text-[12px] leading-[1.5]" style={{ color: "var(--text-primary)" }}>
+        <div className="text-[13px] leading-[1.6]" style={{ color: "#cccccc" }}>
           {showFullPrompt ? prompt : trunc(prompt, 180)}
           {isLongPrompt && (
             <button className="ml-1 text-[11px] hover:underline" style={{ color: "var(--text-muted)" }}
@@ -443,31 +456,31 @@ function PromptCard({ exchange, gitDetails, testMilestones, filter, autoExpand, 
           )}
         </div>
 
-        {/* Interrupt badge */}
-        {isInterrupt && (
-          <span className="inline-block mt-1 text-[9px] px-1.5 py-0.5 rounded" style={{ color: "#f59e0b", background: "rgba(245,158,11,0.1)" }}>interrupted</span>
-        )}
-
         {/* Claude response — capped preview on card, full in detail panel */}
-        {subtitle && (
-          <div className="mt-1.5 flex items-start gap-1.5">
-            <ClaudeIcon size={13} />
-            <div className="text-[11px] italic leading-[1.6] min-w-0" style={{ color: "var(--text-tertiary)" }}>
-              {showFullResponse ? trunc(strippedResponse, 500) : subtitle}
-              {isLongResponse && (
-                <button className="ml-1 not-italic text-[10px] hover:underline" style={{ color: "var(--text-muted)" }}
-                  onClick={() => setShowFullResponse(!showFullResponse)}>{showFullResponse ? "show less" : "show more"}</button>
-              )}
-              {showFullResponse && fullResponse.length > 500 && (
-                <button className="ml-1 not-italic text-[10px] hover:underline" style={{ color: "var(--text-muted)" }}
-                  onClick={() => onViewDetail(exchange)}>full response</button>
-              )}
+        {(subtitle || strippedResponse) && (
+          <div className="mt-1.5">
+            <div className="flex items-start gap-1.5">
+              <ClaudeIcon size={13} />
+              <div className="text-[12px] italic leading-[1.6] min-w-0" style={{ color: "var(--text-tertiary)" }}>
+                {showFullResponse ? trunc(strippedResponse, 500) : (subtitle || strippedResponse)}
+              </div>
             </div>
+            {/* Response actions — separated below text */}
+            {isLongResponse && (
+              <div className="mt-1 pl-[19px] flex items-center justify-between">
+                <button className="text-[10px] hover:underline" style={{ color: "var(--text-muted)" }}
+                  onClick={() => setShowFullResponse(!showFullResponse)}>{showFullResponse ? "show less" : "show more"}</button>
+                {showFullResponse && fullResponse.length > 500 && (
+                  <button className="text-[10px] hover:underline flex items-center gap-1" style={{ color: "var(--text-muted)" }}
+                    onClick={() => onViewDetail(exchange)}>full response <SquareArrowOutUpRight size={9} /></button>
+                )}
+              </div>
+            )}
           </div>
         )}
 
-        {/* Outcome pills */}
-        {showPills && <OutcomePills pills={pills} expandedSections={expandedSections} onToggle={toggleSection} />}
+        {/* Outcome pills (with interrupt badge on the right if applicable) */}
+        {(showPills || isInterrupt) && <OutcomePills pills={showPills ? pills : []} expandedSections={expandedSections} onToggle={toggleSection} isInterrupt={isInterrupt} />}
 
         {/* Expanded sections (below pills, on click) */}
         {showPills && Array.from(expandedSections).map(type => (
@@ -484,10 +497,10 @@ interface TimelineViewProps {
   exchanges: Exchange[];
   onViewPlan: (plan: Plan) => void;
   onViewGroup: (title: string, subtitle: string, content: ReactNode, rawData: unknown) => void;
+  sortOrder?: "oldest" | "newest";
 }
 
-export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: TimelineViewProps) {
-  const [filter, setFilter] = useState<FilterType>("all");
+export function TimelineView({ session, exchanges, onViewPlan, onViewGroup, sortOrder = "oldest" }: TimelineViewProps) {
   const [showInherited, setShowInherited] = useState(false);
   const milestones = session.milestones || [];
   const gitDetails = session.git_details || [];
@@ -522,19 +535,20 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
     return map;
   }, [compactionEvents]);
 
-  // ── Filtered exchanges ─────────────────────────────────────
-  const filteredExchanges = useMemo(() => {
-    if (filter === "all" || filter === "conversation") return exchanges;
-    if (filter === "git") return exchanges.filter(e => gitDetailsByIdx.has(e.exchange_index));
-    if (filter === "tests") return exchanges.filter(e => testsByIdx.has(e.exchange_index));
-    if (filter === "errors") return exchanges.filter(e => (e.tool_calls || []).some(t => t.is_error));
-    return exchanges;
-  }, [filter, exchanges, gitDetailsByIdx, testsByIdx]);
+  const plansByIdx = useMemo(() => {
+    const map = new Map<number, Plan[]>();
+    for (const p of session.plans || []) {
+      const arr = map.get(p.exchange_index_end);
+      if (arr) arr.push(p); else map.set(p.exchange_index_end, [p]);
+    }
+    return map;
+  }, [session.plans]);
 
-  // ── Counts for filter chips ────────────────────────────────
-  const errorCount = exchanges.reduce((sum, e) => sum + (e.tool_calls || []).filter(t => t.is_error).length, 0);
-  const gitCount = gitDetails.length;
-  const testCount = milestones.filter(m => m.milestone_type === "test_pass" || m.milestone_type === "test_fail").length;
+  // ── Sort ───────────────────────────────────────────────────
+  const displayExchanges = useMemo(() =>
+    sortOrder === "newest" ? [...exchanges].reverse() : exchanges,
+    [exchanges, sortOrder],
+  );
 
   // ── Detail panel for single exchange ───────────────────────
   const handleViewDetail = (exchange: Exchange) => {
@@ -552,7 +566,7 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
         {/* User prompt */}
         <div className="rounded-md px-3 py-2.5" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
           <div className="text-[10px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: "var(--text-muted)" }}>You</div>
-          <div className="text-[12px] whitespace-pre-wrap leading-[1.6]" style={{ color: "var(--text-primary)" }}>{prompt}</div>
+          <div className="text-[13px] whitespace-pre-wrap leading-[1.6]" style={{ color: "#cccccc" }}>{prompt}</div>
         </div>
 
         {/* Claude response — full markdown rendering */}
@@ -599,26 +613,8 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
     return <div className="px-6 py-8 text-[13px]" style={{ color: "var(--text-muted)" }}>No activity data available. Try the Terminal tab for the full conversation.</div>;
   }
 
-  // Auto-expand hint for filtered views
-  const autoExpandType = filter === "git" ? "commit" : filter === "tests" ? "test_pass" : filter === "errors" ? "error" : undefined;
-
   return (
     <div className="px-6 pb-4 pt-1">
-      {/* Filter chips */}
-      <div className="flex items-center gap-1.5 mb-4 flex-wrap">
-        {([
-          { key: "all" as FilterType, label: "All" },
-          { key: "conversation" as FilterType, label: "Conversation" },
-          { key: "git" as FilterType, label: `Git${gitCount ? ` (${gitCount})` : ""}` },
-          { key: "tests" as FilterType, label: `Tests${testCount ? ` (${testCount})` : ""}` },
-          { key: "errors" as FilterType, label: `Errors${errorCount ? ` (${errorCount})` : ""}` },
-        ]).map(f => (
-          <button key={f.key} className="px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors"
-            style={{ background: filter === f.key ? "var(--bg-elevated)" : "transparent", color: filter === f.key ? "var(--text-primary)" : "var(--text-muted)", border: `1px solid ${filter === f.key ? "var(--border-bright)" : "transparent"}` }}
-            onClick={() => setFilter(f.key)}>{f.label}</button>
-        ))}
-      </div>
-
       {/* Inherited exchanges toggle */}
       {forkIdx != null && inheritedCount > 0 && (
         <div className="mb-3 px-2">
@@ -633,7 +629,7 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
 
       {/* Flat exchange list */}
       <div className="flex flex-col gap-2">
-        {filteredExchanges.map((ex) => {
+        {displayExchanges.map((ex) => {
           const isInherited = forkIdx != null && ex.exchange_index < forkIdx;
           const isFirstNew = forkIdx != null && ex.exchange_index >= forkIdx && (ex.exchange_index === 0 || exchanges[ex.exchange_index - 1]?.exchange_index < forkIdx);
           if (isInherited && !showInherited) return null;
@@ -641,6 +637,7 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
           const compaction = compactionsByIdx.get(ex.exchange_index);
           const exGitDetails = gitDetailsByIdx.get(ex.exchange_index) || [];
           const exTests = testsByIdx.get(ex.exchange_index) || [];
+          const exPlans = plansByIdx.get(ex.exchange_index) || [];
 
           return (
             <div key={ex.exchange_index}>
@@ -652,7 +649,7 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
                 <div className="flex items-center gap-3 my-3 px-2">
                   <div className="flex-1 h-px" style={{ background: "#a78bfa" }} />
                   <span className="text-[11px] font-medium shrink-0" style={{ color: "#a78bfa" }}>
-                    {session.parent_title ? `Forked from "${trunc(session.parent_title, 40)}"` : "Fork point \u2014 new content below"}
+                    {session.parent_title ? `Forked from "${trunc(session.parent_title, 40)}"` : "Fork point"}
                   </span>
                   <div className="flex-1 h-px" style={{ background: "#a78bfa" }} />
                 </div>
@@ -660,8 +657,8 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
 
               {/* The card */}
               <div style={{ opacity: isInherited ? 0.4 : 1 }}>
-                <PromptCard exchange={ex} gitDetails={exGitDetails} testMilestones={exTests}
-                  filter={filter} autoExpand={autoExpandType} onViewDetail={handleViewDetail} />
+                <PromptCard exchange={ex} gitDetails={exGitDetails} testMilestones={exTests} plans={exPlans}
+                  onViewDetail={handleViewDetail} onViewPlan={onViewPlan} />
               </div>
 
               {/* Fork-out markers */}
@@ -677,9 +674,6 @@ export function TimelineView({ session, exchanges, onViewPlan, onViewGroup }: Ti
             </div>
           );
         })}
-        {filteredExchanges.length === 0 && (
-          <div className="text-[12px] py-4 text-center" style={{ color: "var(--text-muted)" }}>No {filter} found in this session.</div>
-        )}
       </div>
     </div>
   );
@@ -711,7 +705,7 @@ export function SessionFlowDiagram({ sessionId }: { sessionId: string }) {
     if (!expanded) { setExpandedMermaid(null); return; }
     const source = sources.find((s) => s.id === activeSourceId);
     if (!source?.mermaid) return;
-    if (source.isAi) { setExpandedMermaid(source.mermaid); return; }
+    if (source.isAi) { setExpandedMermaid(source.mermaid.replace(/^graph\s+LR/m, "graph TD")); return; }
     getSessionMermaid(sessionId, "expanded")
       .then((data) => setExpandedMermaid(data?.mermaid || source.mermaid))
       .catch(() => setExpandedMermaid(source.mermaid));
@@ -756,7 +750,7 @@ export function SessionFlowDiagram({ sessionId }: { sessionId: string }) {
 
   const header = (
     <div className="flex items-center gap-2 mb-2">
-      <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Session Flow</span>
+      <span className="text-[12px] font-semibold" style={{ color: "var(--text-muted)" }}>Session Flow</span>
       {hasMultipleSources ? (
         <select value={activeSourceId || ""} onChange={(e) => setActiveSourceId(e.target.value)}
           className="text-[10px] px-1.5 py-0.5 rounded bg-transparent outline-none"

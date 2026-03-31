@@ -71,7 +71,12 @@ export function SessionDetail() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [newExchangeCount, setNewExchangeCount] = useState(0);
-  const [lastSeenCount, setLastSeenCount] = useState(0);
+  const lastSeenCountRef = useRef(0);
+  const isAtBottomRef = useRef(false);
+  const [timelineSortOrder, setTimelineSortOrder] = useState<"oldest" | "newest">(() => {
+    try { return (localStorage.getItem("keddy-activity-sort") as "oldest" | "newest") || "oldest"; }
+    catch { return "oldest"; }
+  });
 
   const fetchData = useCallback(async (initial: boolean) => {
     if (!id) return;
@@ -82,12 +87,17 @@ export function SessionDetail() {
       setExchanges(exs);
       if (initial) {
         setLoading(false);
-        setLastSeenCount(exs.length);
-      } else if (exs.length > lastSeenCount) {
-        setNewExchangeCount(exs.length - lastSeenCount);
+        lastSeenCountRef.current = exs.length;
+      } else if (exs.length > lastSeenCountRef.current) {
+        if (isAtBottomRef.current) {
+          // User is already at bottom — auto-follow, don't show button
+          lastSeenCountRef.current = exs.length;
+        } else {
+          setNewExchangeCount(exs.length - lastSeenCountRef.current);
+        }
       }
     } catch { if (initial) setLoading(false); }
-  }, [id, lastSeenCount]);
+  }, [id]);
 
   useEffect(() => { fetchData(true); }, [fetchData]);
   useEffect(() => {
@@ -100,6 +110,23 @@ export function SessionDetail() {
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [fetchData, session?.ended_at]);
+
+  // Auto-hide new exchanges button when user scrolls to bottom
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const checkBottom = () => {
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+      isAtBottomRef.current = atBottom;
+      if (atBottom && newExchangeCount > 0) {
+        lastSeenCountRef.current = exchanges.length;
+        setNewExchangeCount(0);
+      }
+    };
+    checkBottom(); // Check position immediately (covers initial render + tab switches)
+    el.addEventListener("scroll", checkBottom, { passive: true });
+    return () => el.removeEventListener("scroll", checkBottom);
+  }, [newExchangeCount, exchanges.length]);
 
   // Detail panel helpers
   const openDetail = (title: string, subtitle: string, content: ReactNode, rawData: unknown) =>
@@ -268,7 +295,7 @@ export function SessionDetail() {
       </div>
 
       {/* Content area — splits 50/50 when detail is open */}
-      <div className={`flex-1 overflow-hidden ${detail.open ? "grid grid-cols-2" : ""}`} style={{ minHeight: 0 }}>
+      <div className={`relative flex-1 overflow-hidden ${detail.open ? "grid grid-cols-2" : ""}`} style={{ minHeight: 0 }}>
         {/* Left: main content */}
         <div className="overflow-y-auto h-full" ref={contentRef}>
           {tab === "timeline" ? (
@@ -295,9 +322,19 @@ export function SessionDetail() {
                 </div>
               )}
 
-              {/* Activity heading */}
-              <div className="mx-6 mb-1">
-                <div className="text-[11px] font-semibold uppercase tracking-wider pb-1" style={{ color: "var(--text-muted)" }}>Activity</div>
+              {/* Activity heading + sort toggle */}
+              <div className="mx-6 mb-3 flex items-center gap-2">
+                <div className="text-[12px] font-semibold" style={{ color: "var(--text-muted)" }}>Activity</div>
+                <button
+                  onClick={() => {
+                    const next = timelineSortOrder === "oldest" ? "newest" : "oldest";
+                    setTimelineSortOrder(next);
+                    try { localStorage.setItem("keddy-activity-sort", next); } catch {}
+                  }}
+                  className="text-[10px] font-medium px-1.5 py-0.5 rounded transition-colors"
+                  style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+                  {timelineSortOrder === "oldest" ? "\u2193 Oldest" : "\u2191 Newest"}
+                </button>
               </div>
               {/* Activity timeline — git events appear as milestones inline here */}
               <TimelineView
@@ -305,6 +342,7 @@ export function SessionDetail() {
                 exchanges={exchanges}
                 onViewPlan={handleViewPlan}
                 onViewGroup={(title, subtitle, content, rawData) => openDetail(title, subtitle, content, rawData)}
+                sortOrder={timelineSortOrder}
               />
             </div>
           ) : tab === "terminal" ? (
@@ -338,23 +376,29 @@ export function SessionDetail() {
             onClose={closeDetail}
           />
         )}
-      </div>
 
-      {/* New exchanges notification */}
-      {newExchangeCount > 0 && (
-        <div className="sticky bottom-4 flex justify-center pointer-events-none">
-          <button
-            onClick={() => {
-              setLastSeenCount(exchanges.length);
-              setNewExchangeCount(0);
-            }}
-            className="pointer-events-auto text-[13px] font-medium px-5 py-2.5 rounded-full shadow-lg"
-            style={{ background: "var(--accent)", color: "white" }}
+        {/* New exchanges notification — floating over scroll area */}
+        {newExchangeCount > 0 && tab === "timeline" && timelineSortOrder === "oldest" && (
+          <div
+            className="absolute bottom-4 flex justify-center pointer-events-none z-10"
+            style={{ left: 0, right: detail.open ? "50%" : 0 }}
           >
-            {newExchangeCount} new exchange{newExchangeCount !== 1 ? "s" : ""}
-          </button>
-        </div>
-      )}
+            <button
+              onClick={() => {
+                lastSeenCountRef.current = exchanges.length;
+                setNewExchangeCount(0);
+                if (contentRef.current) {
+                  contentRef.current.scrollTo({ top: contentRef.current.scrollHeight, behavior: "smooth" });
+                }
+              }}
+              className="pointer-events-auto text-[13px] font-medium px-5 py-2.5 rounded-full shadow-lg transition-transform hover:scale-105"
+              style={{ background: "var(--accent)", color: "white" }}
+            >
+              {newExchangeCount} new exchange{newExchangeCount !== 1 ? "s" : ""} &darr;
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* AI Setup Modal (preserved) */}
       {showAiSetup && (

@@ -48,7 +48,12 @@ export function MermaidDiagram({ chart, compact }: { chart: string; compact?: bo
         });
         lastInitConfig = configKey;
       }
-      mermaid.render(id, chart)
+      // Strip # from quoted labels — bare # confuses Mermaid's HTML entity
+      // parser. classDef hex colors (fill:#1a1a0a) are unquoted, unaffected.
+      const sanitized = chart.replace(/"([^"]*)"/g, (_, label) =>
+        `"${label.replace(/#/g, "")}"`,
+      );
+      mermaid.render(id, sanitized)
         .then(({ svg: rendered }) => { if (!cancelled) setSvg(rendered); })
         .catch((err) => { if (!cancelled) setError(err?.message || "Render failed"); });
     }).catch(() => { if (!cancelled) setError("Mermaid library not available"); });

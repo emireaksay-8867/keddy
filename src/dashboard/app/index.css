@@ -83,6 +83,10 @@ code, pre {
 }
 .animate-spin { animation: spin 0.7s linear infinite; }
 
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
 /* Section collapse transition */
 .section-collapse {
   display: grid;
