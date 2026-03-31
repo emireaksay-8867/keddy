@@ -378,6 +378,12 @@ export function insertPlan(data: {
   db.prepare(`
     INSERT INTO plans (id, session_id, version, plan_text, status, user_feedback, exchange_index_start, exchange_index_end)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_id, version) DO UPDATE SET
+      plan_text = CASE WHEN length(excluded.plan_text) > length(plan_text) THEN excluded.plan_text ELSE plan_text END,
+      status = excluded.status,
+      user_feedback = COALESCE(excluded.user_feedback, user_feedback),
+      exchange_index_start = excluded.exchange_index_start,
+      exchange_index_end = excluded.exchange_index_end
   `).run(
     id,
     data.session_id,

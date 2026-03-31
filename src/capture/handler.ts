@@ -163,6 +163,11 @@ async function handleStop(input: HookStdin): Promise<void> {
 
       if (existing) {
         // UPDATE existing exchange with more complete data (continuation text after tool calls)
+        // Never overwrite a non-empty response with an empty one (race condition protection:
+        // live sync can INSERT an exchange with empty response before the assistant finishes,
+        // and if the Stop hook fails to update, the response is permanently lost)
+        const safeResponse = exchange.assistant_response || (existing as any).assistant_response || "";
+        const safeToolCount = exchange.tool_calls.length || (existing as any).tool_call_count || 0;
         db.prepare(`
           UPDATE exchanges SET
             assistant_response = ?,
@@ -177,8 +182,8 @@ async function handleStop(input: HookStdin): Promise<void> {
             turn_duration_ms = COALESCE(?, turn_duration_ms)
           WHERE id = ?
         `).run(
-          exchange.assistant_response,
-          exchange.tool_calls.length,
+          safeResponse,
+          safeToolCount,
           exchange.model,
           exchange.input_tokens,
           exchange.output_tokens,
@@ -191,7 +196,10 @@ async function handleStop(input: HookStdin): Promise<void> {
         );
 
         // Re-insert tool calls (parser has the complete set with results)
+        // Only delete+re-insert if parser found tool calls — don't wipe existing data
+        if (exchange.tool_calls.length > 0) {
         db.prepare("DELETE FROM tool_calls WHERE exchange_id = ?").run(existing.id);
+        }
         for (const tc of exchange.tool_calls) {
           const enriched = extractToolCallFields(tc.name, tc.input);
           insertToolCall({

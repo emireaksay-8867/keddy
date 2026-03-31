@@ -537,13 +537,11 @@ sessionsRoutes.get("/:id", (c) => {
   let plans = getSessionPlans(session.id);
   const compactions = getSessionCompactionEvents(session.id);
 
-  // Generate analysis on-the-fly for live sessions or sessions without segments
-  // For active sessions: re-analyze when new exchanges arrive (keeps milestones/segments fresh)
-  // For ended sessions: only analyze once if segments are missing (SessionEnd is authoritative)
-  const isActive = !session.ended_at;
+  // Re-analyze when segments don't cover all exchanges — handles active sessions,
+  // sessions where SessionEnd hook failed, and sessions with prematurely set ended_at
   const maxSegmentIdx = segments.length > 0 ? Math.max(...segments.map((s: any) => s.exchange_index_end)) : -1;
   const hasNewExchanges = session.exchange_count - 1 > maxSegmentIdx;
-  const needsAnalysis = (segments.length === 0 || (isActive && hasNewExchanges)) && session.exchange_count > 0;
+  const needsAnalysis = (segments.length === 0 || hasNewExchanges) && session.exchange_count > 0;
 
   if (needsAnalysis) {
     try {
@@ -574,9 +572,10 @@ sessionsRoutes.get("/:id", (c) => {
       const { insertSegment, insertMilestone, insertPlan } = require("../../db/queries.js");
 
       // Clear stale data before re-inserting (prevents duplicates from Stop hook + on-the-fly overlap)
+      const isEnded = !!session.ended_at;
       db.prepare("DELETE FROM segments WHERE session_id = ?").run(session.id);
       db.prepare("DELETE FROM milestones WHERE session_id = ?").run(session.id);
-      if (!isActive) {
+      if (isEnded) {
         // Only clear plans for ended sessions — Stop hook manages plans for active sessions
         db.prepare("DELETE FROM plans WHERE session_id = ?").run(session.id);
       }
@@ -1136,6 +1135,9 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
 
               if (existing) {
                 // UPDATE existing exchange — it might have been captured with incomplete response
+                // Never overwrite a non-empty response with an empty one (race condition protection)
+                const safeResponse = (exchange.assistant_response ?? "") || (existing as any).assistant_response || "";
+                const safeToolCount = exchange.tool_calls.length || (existing as any).tool_call_count || 0;
                 db.prepare(`
                   UPDATE exchanges SET
                     assistant_response = ?,
@@ -1151,8 +1153,8 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
                     turn_duration_ms = COALESCE(?, turn_duration_ms)
                   WHERE id = ?
                 `).run(
-                  exchange.assistant_response ?? "",
-                  exchange.tool_calls.length,
+                  safeResponse,
+                  safeToolCount,
                   exchange.is_interrupt ? 1 : 0,
                   exchange.model ?? null,
                   exchange.input_tokens ?? null,
@@ -1165,8 +1167,11 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
                   existing.id,
                 );
 
-                // Re-insert tool calls with enriched fields
+                // Re-insert tool calls with enriched fields (only if parser found any —
+                // don't delete existing tool calls when re-parse produces none)
+                if (exchange.tool_calls.length > 0) {
                 db.prepare("DELETE FROM tool_calls WHERE exchange_id = ?").run(existing.id);
+                }
                 for (const tc of exchange.tool_calls) {
                   const enriched = extractToolCallFields(tc.name, tc.input);
                   insertToolCall({
