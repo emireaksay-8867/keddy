@@ -8,7 +8,7 @@ import type { AnalysisConfig, ParsedExchange } from "../src/types.js";
 config();
 
 const apiKey = process.env.ANTHROPIC_API_KEY;
-const hasApiKey = !!apiKey && apiKey.startsWith("sk-ant-");
+const hasApiKey = !!apiKey && apiKey.startsWith("sk-ant-") && process.env.KEDDY_LIVE_TESTS === "1";
 
 describe.skipIf(!hasApiKey)("AI Analysis — live API tests", () => {
   it("should generate a session title via Anthropic API", async () => {

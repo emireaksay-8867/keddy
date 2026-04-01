@@ -246,15 +246,16 @@ describe("database — plans", () => {
       exchange_index_end: 1,
     });
 
-    expect(() =>
-      insertPlan({
-        session_id: sessionId,
-        version: 1,
-        plan_text: "Plan v1 duplicate",
-        exchange_index_start: 0,
-        exchange_index_end: 1,
-      }),
-    ).toThrow();
+    // INSERT OR IGNORE silently skips duplicates — verify count stays at 1
+    insertPlan({
+      session_id: sessionId,
+      version: 1,
+      plan_text: "Plan v1 duplicate",
+      exchange_index_start: 0,
+      exchange_index_end: 1,
+    });
+    const plans = getSessionPlans(sessionId);
+    expect(plans.length).toBe(1); // unique constraint keeps only one row per version
   });
 
   it("should get recent plans across sessions", () => {
