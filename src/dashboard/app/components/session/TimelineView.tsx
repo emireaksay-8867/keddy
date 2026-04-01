@@ -113,7 +113,7 @@ const PILL_CONFIG: Record<string, { label: (p: Pill) => string; bg: string; colo
   web: { label: (p) => `Web ${p.count}`, bg: "rgba(99,102,241,0.10)", color: "#818cf8" },
   commit: { label: (p) => p.gitDetail?.hash?.substring(0, 7) || "commit", bg: "rgba(99,102,241,0.10)", color: "#818cf8" },
   push: { label: () => "Pushed", bg: "rgba(99,102,241,0.10)", color: "#818cf8" },
-  pr: { label: (p) => `PR${p.gitDetail?.description?.match(/#(\d+)/)?.[0] || ""}`, bg: "rgba(99,102,241,0.10)", color: "#818cf8" },
+  pr: { label: () => "PR", bg: "rgba(99,102,241,0.10)", color: "#818cf8" },
   branch: { label: (p) => p.gitDetail?.description?.replace("Created branch ", "") || "branch", bg: "rgba(99,102,241,0.10)", color: "#818cf8" },
   test_pass: { label: (p) => { const m = p.milestone?.description?.match(/\((\d+\/\d+)\)/); return m ? `\u2713 ${m[1]}` : "\u2713 passed"; }, bg: "rgba(16,185,129,0.12)", color: "#10b981" },
   test_fail: { label: (p) => { const m = p.milestone?.description?.match(/\((\d+\/\d+)\)/); return m ? `\u2717 ${m[1]}` : "\u2717 failed"; }, bg: "rgba(239,68,68,0.12)", color: "#ef4444" },
@@ -267,9 +267,8 @@ function ExpandedToolSection({ type, tools, gitDetails, testMilestones, onClose 
   );
 }
 
-// ── Commit Card (matches PlanSection GitItem) ─────────────────
+// ── Commit Card (exchange-level git detail) ─────────────────
 function CommitCard({ gd }: { gd: GitDetail }) {
-  const [expanded, setExpanded] = useState(false);
   const isCommit = gd.type === "commit";
   const isPr = gd.type === "pr";
   const isPush = gd.type === "push";
@@ -278,55 +277,26 @@ function CommitCard({ gd }: { gd: GitDetail }) {
   const Icon = isCommit ? GitCommitHorizontal : isPr ? GitPullRequest : isPush ? ArrowUp : GitBranch;
   const iconColor = isCommit ? "#818cf8" : isPr ? "#34d399" : isPush ? "#60a5fa" : isBranch ? "#fbbf24" : "var(--text-tertiary)";
   const shortHash = isCommit && gd.hash ? gd.hash.substring(0, 7) : null;
-  const hasExpandable = isCommit && (gd.files?.length || gd.stats);
 
-  return (
-    <div>
-      <div
-        className={`text-[11px] flex items-center gap-1.5 ${hasExpandable ? "cursor-pointer hover:bg-[var(--bg-hover)] -mx-1 px-1 rounded" : ""}`}
-        style={{ color: "var(--text-tertiary)" }}
-        onClick={hasExpandable ? () => setExpanded(!expanded) : undefined}
-      >
-        <Icon size={11} className="shrink-0" style={{ color: iconColor }} />
-        {shortHash && gd.url ? (
-          <a href={gd.url} target="_blank" rel="noopener noreferrer"
-            className="font-mono inline-flex items-center gap-1 cursor-pointer hover:brightness-150 transition-all"
-            style={{ color: "var(--text-muted)" }} onClick={(e) => e.stopPropagation()}
-            title="View on GitHub">{shortHash}<SquareArrowOutUpRight size={9} /></a>
-        ) : shortHash ? (
-          <span className="font-mono" style={{ color: "var(--text-muted)" }}>{shortHash}</span>
-        ) : null}
-        <span className="flex-1 min-w-0 truncate">{gd.description}</span>
-        {!shortHash && gd.url && (
-          <a href={gd.url} target="_blank" rel="noopener noreferrer"
-            className="shrink-0 inline-flex items-center gap-1 cursor-pointer hover:brightness-150 transition-all"
-            style={{ color: "var(--text-muted)" }} onClick={(e) => e.stopPropagation()}
-            title="View on GitHub"><SquareArrowOutUpRight size={9} /></a>
-        )}
-      </div>
-      {expanded && isCommit && (
-        <div className="ml-5 mt-0.5 mb-1">
-          {gd.stats && (
-            <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              {gd.stats.files_changed} file{gd.stats.files_changed !== 1 ? "s" : ""} changed
-              {gd.stats.insertions > 0 && <span style={{ color: "#10b981" }}> +{gd.stats.insertions}</span>}
-              {gd.stats.deletions > 0 && <span style={{ color: "#ef4444" }}> &minus;{gd.stats.deletions}</span>}
-            </div>
-          )}
-          {gd.files && gd.files.length > 0 && (
-            <div className="flex flex-col mt-0.5">
-              {gd.files.map((f, i) => (
-                <div key={i} className="text-[11px] font-mono" style={{ color: "var(--text-tertiary)", letterSpacing: "-0.02em" }}>
-                  <span style={{ color: "var(--text-muted)" }}>{i < gd.files!.length - 1 ? "\u251C\u2500 " : "\u2514\u2500 "}</span>
-                  {f.split("/").pop()}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+  const inner = (
+    <div className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--text-tertiary)" }}>
+      <Icon size={11} className="shrink-0" style={{ color: iconColor }} />
+      {shortHash && <span className="font-mono" style={{ color: "var(--text-muted)" }}>{shortHash}</span>}
+      <span className="flex-1 min-w-0 truncate">{gd.description}</span>
+      {gd.url && <SquareArrowOutUpRight size={10} className="shrink-0" style={{ color: "var(--text-muted)" }} />}
     </div>
   );
+
+  if (gd.url) {
+    return (
+      <a href={gd.url} target="_blank" rel="noopener noreferrer"
+        className="block -mx-1 px-1 rounded hover:bg-[rgba(255,255,255,0.04)] transition-colors"
+        title={isCommit ? "View commit on GitHub" : isPr ? "View PR on GitHub" : "View on GitHub"}>
+        {inner}
+      </a>
+    );
+  }
+  return <div>{inner}</div>;
 }
 
 // ── Detail Panel Tools Section (same pills + expand as cards) ─

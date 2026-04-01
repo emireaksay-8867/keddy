@@ -541,7 +541,23 @@ sessionsRoutes.get("/:id", (c) => {
   // sessions where SessionEnd hook failed, and sessions with prematurely set ended_at
   const maxSegmentIdx = segments.length > 0 ? Math.max(...segments.map((s: any) => s.exchange_index_end)) : -1;
   const hasNewExchanges = session.exchange_count - 1 > maxSegmentIdx;
-  const needsAnalysis = (segments.length === 0 || hasNewExchanges) && session.exchange_count > 0;
+
+  // Detect stale milestone data: cross-exchange duplicates for git events
+  // (ghost milestones from past race conditions that weren't cleaned up)
+  const hasStaleMilestones = (() => {
+    const gitTypes = new Set(["commit", "push", "pull", "pr", "branch"]);
+    const seen = new Set<string>();
+    for (const m of milestones as any[]) {
+      if (!gitTypes.has(m.milestone_type)) continue;
+      const key = `${m.milestone_type}::${m.description}`;
+      if (seen.has(key)) return true;
+      seen.add(key);
+    }
+    return false;
+  })();
+
+  const needsAnalysis = ((segments.length === 0 || hasNewExchanges) && session.exchange_count > 0)
+    || hasStaleMilestones;
 
   if (needsAnalysis) {
     try {
@@ -1354,6 +1370,19 @@ sessionsRoutes.post("/:id/sync", (c) => {
         timestamp: exchange.timestamp,
         is_interrupt: exchange.is_interrupt,
         is_compact_summary: exchange.is_compact_summary,
+        model: exchange.model,
+        input_tokens: exchange.input_tokens,
+        output_tokens: exchange.output_tokens,
+        cache_read_tokens: exchange.cache_read_tokens,
+        cache_write_tokens: exchange.cache_write_tokens,
+        stop_reason: exchange.stop_reason,
+        has_thinking: exchange.has_thinking,
+        permission_mode: exchange.permission_mode,
+        is_sidechain: exchange.is_sidechain,
+        entrypoint: exchange.entrypoint,
+        cwd: exchange.cwd,
+        git_branch: exchange.git_branch,
+        turn_duration_ms: exchange.turn_duration_ms,
       });
       for (const tc of exchange.tool_calls) {
         try {
