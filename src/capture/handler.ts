@@ -167,10 +167,12 @@ async function handleStop(input: HookStdin): Promise<void> {
         // live sync can INSERT an exchange with empty response before the assistant finishes,
         // and if the Stop hook fails to update, the response is permanently lost)
         const safeResponse = exchange.assistant_response || (existing as any).assistant_response || "";
+        const safeResponsePre = exchange.assistant_response_pre || (existing as any).assistant_response_pre || "";
         const safeToolCount = exchange.tool_calls.length || (existing as any).tool_call_count || 0;
         db.prepare(`
           UPDATE exchanges SET
             assistant_response = ?,
+            assistant_response_pre = ?,
             tool_call_count = ?,
             model = COALESCE(?, model),
             input_tokens = COALESCE(?, input_tokens),
@@ -183,6 +185,7 @@ async function handleStop(input: HookStdin): Promise<void> {
           WHERE id = ?
         `).run(
           safeResponse,
+          safeResponsePre,
           safeToolCount,
           exchange.model,
           exchange.input_tokens,
@@ -220,6 +223,7 @@ async function handleStop(input: HookStdin): Promise<void> {
           exchange_index: exchange.index,
           user_prompt: exchange.user_prompt,
           assistant_response: exchange.assistant_response,
+          assistant_response_pre: exchange.assistant_response_pre,
           tool_call_count: exchange.tool_calls.length,
           timestamp: exchange.timestamp,
           is_interrupt: exchange.is_interrupt,

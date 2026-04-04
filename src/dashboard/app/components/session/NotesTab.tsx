@@ -153,7 +153,6 @@ interface NoteSection {
   hasMermaid: boolean;
 }
 
-export { type NoteSection };
 export function parseNoteSections(content: string): NoteSection[] {
   const sections: NoteSection[] = [];
   const lines = content.split("\n");
@@ -201,7 +200,7 @@ export function parseNoteSections(content: string): NoteSection[] {
 // ── Live Activity Feed ───────────────────────────────────────
 
 interface AgentEvent {
-  type: string;
+  type: "status" | "tool_call" | "mcp_connect" | "thinking" | "result" | "error" | "text_delta";
   message: string;
   detail?: string;
   timestamp: number;
@@ -304,17 +303,20 @@ export function SectionCard({ section, expanded, onToggle }: { section: NoteSect
 
 interface NotesTabProps {
   sessionId: string;
+  exchanges?: Array<{ timestamp: string }>;
 }
 
-export function NotesTab({ sessionId }: NotesTabProps) {
+export function NotesTab({ sessionId, exchanges }: NotesTabProps) {
   const [notes, setNotes] = useState<SessionNote[] | undefined>(undefined);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [generating, setGenerating] = useState(false);
   const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [streamingText, setStreamingText] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"sections" | "full" | "raw">("sections");
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const [model, setModel] = useState<"haiku" | "sonnet" | "opus">("sonnet");
   const cancelRef = useRef<(() => void) | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const fetchNotes = useCallback(async () => {
     try {
@@ -329,42 +331,41 @@ export function NotesTab({ sessionId }: NotesTabProps) {
   useEffect(() => { fetchNotes(); }, [fetchNotes]);
   useEffect(() => () => { cancelRef.current?.(); }, []);
 
-  // When note changes, expand all sections by default
-  const note = notes?.[selectedIdx] || null;
-  const sections = note ? parseNoteSections(note.content) : [];
-
+  // Auto-scroll during streaming
   useEffect(() => {
-    if (sections.length > 0) {
-      setExpandedSections(new Set(sections.map((s) => s.id)));
+    if (isStreaming && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [note?.id]);
+  }, [streamingText, isStreaming]);
 
-  const toggleSection = (id: string) => {
-    setExpandedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
+  const note = notes?.[selectedIdx] || null;
 
   const handleGenerate = () => {
     setGenerating(true);
     setError(null);
     setEvents([]);
+    setStreamingText("");
+    setIsStreaming(false);
 
     cancelRef.current = generateSessionNotesSSE(sessionId, {
       onEvent: (ev) => setEvents((prev) => [...prev, ev]),
+      onTextDelta: (text) => {
+        setIsStreaming(true);
+        setStreamingText((prev) => prev + text);
+      },
       onDone: (newNote) => {
         setNotes((prev) => [newNote, ...(prev || [])]);
         setSelectedIdx(0);
         setGenerating(false);
-        setViewMode("sections");
+        setIsStreaming(false);
+        setStreamingText("");
       },
       onError: (err) => {
         setError(err);
         setGenerating(false);
+        setIsStreaming(false);
       },
-    });
+    }, { model });
   };
 
   const handleDelete = async (noteId: string) => {
@@ -379,29 +380,27 @@ export function NotesTab({ sessionId }: NotesTabProps) {
     return <div className="p-6 text-[13px]" style={{ color: "var(--text-muted)" }}>Loading...</div>;
   }
 
-  // Generating — live activity feed
+  // Generating — two phases: activity feed → streaming response
   if (generating) {
     return (
       <div className="flex flex-col h-full">
-        <div className="flex items-center gap-3 px-6 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        <div className="flex items-center gap-2.5 px-6 pt-4 pb-2">
           <div className="animate-spin w-4 h-4 rounded-full shrink-0" style={{ border: "2px solid var(--border)", borderTopColor: "var(--accent)" }} />
           <div className="text-[13px] font-medium" style={{ color: "var(--text-secondary)" }}>
-            Generating session notes...
+            {isStreaming ? "Writing..." : "Reading session..."}
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-4">
-          <div className="rounded-lg p-4" style={{ background: "var(--bg-root)", border: "1px solid var(--border)" }}>
-            <div className="text-[10px] uppercase tracking-wider mb-2 font-semibold" style={{ color: "var(--text-muted)" }}>
-              Agent Activity
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 pt-2 pb-4">
+          {isStreaming ? (
+            <MarkdownWithMermaid content={streamingText} />
+          ) : (
+            <div className="rounded-lg p-4" style={{ background: "var(--bg-root)", border: "1px solid var(--border)" }}>
+              <ActivityFeed events={events} />
+              {events.length === 0 && (
+                <div className="text-[11px] py-2" style={{ color: "var(--text-muted)" }}>Waiting for agent to start...</div>
+              )}
             </div>
-            <ActivityFeed events={events} />
-            {events.length === 0 && (
-              <div className="text-[11px] py-2" style={{ color: "var(--text-muted)" }}>Waiting for agent to start...</div>
-            )}
-          </div>
-          <div className="text-[11px] mt-3" style={{ color: "var(--text-muted)" }}>
-            The agent uses Keddy MCP tools to inspect this session. Each tool call appears above in real time.
-          </div>
+          )}
         </div>
         {error && (
           <div className="px-6 py-2 text-[12px]" style={{ color: "#ef4444", borderTop: "1px solid var(--border)" }}>{error}</div>
@@ -410,14 +409,13 @@ export function NotesTab({ sessionId }: NotesTabProps) {
     );
   }
 
-  // Loading state
   if (!notes) return null;
 
   // Empty state
   if (notes.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 py-20">
-        <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: "var(--accent-dim)", border: "1px solid var(--border)" }}>
+      <div className="flex flex-col items-center h-full gap-4" style={{ paddingTop: "20%" }}>
+        <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: "var(--accent-dim)", border: "1px solid rgba(63, 63, 70, 0.4)" }}>
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--accent)" }}>
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
             <path d="M14 2v6h6" />
@@ -428,42 +426,33 @@ export function NotesTab({ sessionId }: NotesTabProps) {
         <div className="text-center">
           <div className="text-[14px] font-medium mb-1" style={{ color: "var(--text-secondary)" }}>No session notes yet</div>
           <p className="text-[12px] max-w-md" style={{ color: "var(--text-muted)" }}>
-            An AI agent will inspect this session via Keddy MCP tools and produce a detailed analysis with a visual flow diagram. You'll see every step live.
+            Generate a detailed analysis of what happened in this session.
           </p>
         </div>
         <button onClick={handleGenerate} className="px-5 py-2.5 rounded-lg text-[13px] font-medium hover:opacity-90" style={{ background: "var(--accent)", color: "white" }}>
           Generate Session Notes
         </button>
+        <select
+          value={model}
+          onChange={(e) => setModel(e.target.value as "haiku" | "sonnet" | "opus")}
+          className="text-[12px] px-2 py-1.5 rounded-lg"
+          style={{ background: "var(--bg-elevated)", color: "var(--text-muted)", border: "1px solid var(--border)" }}
+        >
+          <option value="opus">Opus</option>
+          <option value="sonnet">Sonnet</option>
+          <option value="haiku">Haiku</option>
+        </select>
         {error && <div className="text-[12px] max-w-sm text-center px-4 py-2 rounded-lg" style={{ color: "#ef4444", background: "#ef444410" }}>{error}</div>}
       </div>
     );
   }
 
-  // Notes exist
+  // Notes exist — render as flowing markdown
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-6 py-2.5 gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
+      <div className="flex items-center justify-between px-6 py-2.5 gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          {/* View mode */}
-          <div className="flex text-[11px] shrink-0" style={{ border: "1px solid var(--border)", borderRadius: 4 }}>
-            {(["sections", "full", "raw"] as const).map((mode, i) => (
-              <button
-                key={mode}
-                className="px-2.5 py-1"
-                style={{
-                  background: viewMode === mode ? "var(--bg-elevated)" : "transparent",
-                  color: viewMode === mode ? "var(--text-primary)" : "var(--text-muted)",
-                  borderRadius: i === 0 ? "3px 0 0 3px" : i === 2 ? "0 3px 3px 0" : "0",
-                  borderLeft: i > 0 ? "1px solid var(--border)" : "none",
-                }}
-                onClick={() => setViewMode(mode)}
-              >
-                {mode === "sections" ? "Sections" : mode === "full" ? "Full" : "Raw"}
-              </button>
-            ))}
-          </div>
-
           {/* Note version selector */}
           {notes.length > 1 && (
             <select
@@ -487,11 +476,32 @@ export function NotesTab({ sessionId }: NotesTabProps) {
               {note.agent_turns != null && <span>{note.agent_turns} turns</span>}
               {note.cost_usd != null && <span>&middot; ${note.cost_usd.toFixed(3)}</span>}
               {note.model && <span>&middot; {note.model.replace("claude-", "").replace(/-\d{8}$/, "")}</span>}
+              {(() => {
+                if (!exchanges || exchanges.length === 0) return null;
+                const newCount = exchanges.filter((e) => new Date(e.timestamp) > new Date(note.generated_at)).length;
+                if (newCount === 0) return null;
+                return (
+                  <span className="ml-1 px-2 py-0.5 rounded-full text-[10px]"
+                    style={{ background: "rgba(234,179,8,0.15)", color: "#eab308" }}>
+                    {newCount} new exchange{newCount !== 1 ? "s" : ""} since this note
+                  </span>
+                );
+              })()}
             </div>
           )}
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value as "haiku" | "sonnet" | "opus")}
+            className="text-[11px] px-1.5 py-1 rounded"
+            style={{ background: "var(--bg-elevated)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}
+          >
+            <option value="opus">Opus</option>
+            <option value="sonnet">Sonnet</option>
+            <option value="haiku">Haiku</option>
+          </select>
           <button onClick={handleGenerate} className="text-[11px] px-2.5 py-1 rounded hover:opacity-90" style={{ background: "var(--accent)", color: "white" }}>
             + New Note
           </button>
@@ -503,27 +513,12 @@ export function NotesTab({ sessionId }: NotesTabProps) {
         </div>
       </div>
 
-      {/* Content */}
+      {/* Content — flowing markdown, no sections */}
       <div className="flex-1 overflow-y-auto px-6 py-4">
-        {!note ? (
-          <div className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>No note selected</div>
-        ) : viewMode === "sections" ? (
-          <div className="space-y-2">
-            {sections.map((section) => (
-              <SectionCard
-                key={section.id}
-                section={section}
-                expanded={expandedSections.has(section.id)}
-                onToggle={() => toggleSection(section.id)}
-              />
-            ))}
-          </div>
-        ) : viewMode === "full" ? (
+        {note ? (
           <MarkdownWithMermaid content={note.content} />
         ) : (
-          <pre className="text-[12px] whitespace-pre-wrap break-words leading-relaxed" style={{ color: "var(--text-secondary)", fontFamily: "'Geist Mono', 'JetBrains Mono', monospace" }}>
-            {note.content}
-          </pre>
+          <div className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>No note selected</div>
         )}
       </div>
 

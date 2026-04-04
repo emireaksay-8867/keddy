@@ -264,7 +264,7 @@ export function SessionDetail() {
             {analyzing ? (
               <span className="text-[11px]" style={{ color: "var(--accent)" }}>{analyzeStep}</span>
             ) : (
-              <button onClick={runAnalysis} className="text-[11px] px-2.5 py-1 rounded-md hover:brightness-125 transition-colors font-medium" style={{ background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none" }}>
+              <button onClick={runAnalysis} className="text-[11px] px-2.5 py-1 rounded hover:opacity-90 transition-colors font-medium" style={{ background: "var(--accent)", color: "white", border: "none" }}>
                 Keddy Analyze
               </button>
             )}
@@ -298,7 +298,8 @@ export function SessionDetail() {
       <div className={`relative flex-1 overflow-hidden ${detail.open ? "grid grid-cols-2" : ""}`} style={{ minHeight: 0 }}>
         {/* Left: main content */}
         <div className="overflow-y-auto h-full" ref={contentRef}>
-          {tab === "timeline" ? (
+          {/* All tabs rendered but hidden via display:none — preserves scroll position + expand state */}
+          <div style={{ display: tab === "timeline" ? undefined : "none" }}>
             <div>
               {/* Session Flow — top-level overview */}
               <div className="px-6 pt-5">
@@ -345,7 +346,8 @@ export function SessionDetail() {
                 sortOrder={timelineSortOrder}
               />
             </div>
-          ) : tab === "terminal" ? (
+          </div>
+          <div style={{ display: tab === "terminal" ? undefined : "none" }}>
             <TerminalView
               exchanges={exchanges}
               milestones={session.milestones}
@@ -353,17 +355,21 @@ export function SessionDetail() {
               forkExchangeIndex={session.fork_exchange_index}
               parentTitle={session.parent_title}
               forkChildren={session.fork_children}
+              gitDetails={session.git_details || []}
+              plans={session.plans || []}
             />
-          ) : tab === "files" ? (
+          </div>
+          <div style={{ display: tab === "files" ? undefined : "none" }}>
             <div className="px-6 py-5">
               <FilesSection
                 fileOps={session.file_operations || []}
                 onViewFile={handleViewFile}
               />
             </div>
-          ) : (
-            <NotesTab sessionId={id!} />
-          )}
+          </div>
+          <div style={{ display: tab === "notes" ? undefined : "none", height: "100%" }}>
+            <NotesTab sessionId={id!} exchanges={exchanges} />
+          </div>
         </div>
 
         {/* Right: detail split */}

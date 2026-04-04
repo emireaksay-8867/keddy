@@ -23,6 +23,8 @@ import {
   getSessionTranscript,
   getSessionTasks,
   getProjectStatus,
+  getSessionNote,
+  getDailyNote,
 } from "../db/queries.js";
 import { getDb } from "../db/index.js";
 
@@ -178,6 +180,7 @@ export function createKeddyMcpServer(options?: { agentTools?: boolean }): McpSer
         })),
         exchanges: exchanges.map((e) => ({
           index: e.exchange_index,
+          timestamp: e.timestamp,
           prompt: e.user_prompt.substring(0, 500),
           response_preview: (e.assistant_response || "").substring(0, 300),
           tools: e.tool_call_count,
@@ -330,7 +333,7 @@ export function createKeddyMcpServer(options?: { agentTools?: boolean }): McpSer
       if (exchanges.length === 0) return textResult("No exchanges in range.");
 
       const transcript = exchanges.map((e) => {
-        let text = `--- Exchange #${e.exchange_index} ---\n`;
+        let text = `--- Exchange #${e.exchange_index} (${e.timestamp}) ---\n`;
         text += `**User:** ${e.user_prompt}\n`;
         if (e.assistant_response) text += `\n**Claude:** ${e.assistant_response}\n`;
         if (e.tool_call_count > 0) text += `\n(${e.tool_call_count} tool calls)\n`;
@@ -479,23 +482,29 @@ export function createKeddyMcpServer(options?: { agentTools?: boolean }): McpSer
         const tasks = getSessionTasks(session.id);
         const compactions = getSessionCompactionEvents(session.id);
 
-        const timeline: Array<{ exchange: number; type: string; label: string }> = [];
+        // Batch query exchange timestamps for timeline enrichment
+        const exchangeTs = db.prepare(
+          "SELECT exchange_index, timestamp FROM exchanges WHERE session_id = ? ORDER BY exchange_index",
+        ).all(session.id) as Array<{ exchange_index: number; timestamp: string }>;
+        const tsMap = new Map(exchangeTs.map(e => [e.exchange_index, e.timestamp]));
+
+        const timeline: Array<{ exchange: number; type: string; label: string; timestamp: string | null }> = [];
 
         for (const ms of milestones) {
-          timeline.push({ exchange: ms.exchange_index, type: ms.milestone_type, label: ms.description });
+          timeline.push({ exchange: ms.exchange_index, type: ms.milestone_type, label: ms.description, timestamp: tsMap.get(ms.exchange_index) || null });
         }
         for (const plan of plans) {
-          timeline.push({ exchange: plan.exchange_index_start, type: "plan", label: `Plan v${plan.version} (${plan.status})${plan.user_feedback ? " — feedback: " + plan.user_feedback.substring(0, 100) : ""}` });
+          timeline.push({ exchange: plan.exchange_index_start, type: "plan", label: `Plan v${plan.version} (${plan.status})${plan.user_feedback ? " — feedback: " + plan.user_feedback.substring(0, 100) : ""}`, timestamp: tsMap.get(plan.exchange_index_start) || null });
         }
         for (const c of compactions) {
-          timeline.push({ exchange: c.exchange_index, type: "compaction", label: `Context compacted (${c.exchanges_before}→${c.exchanges_after} exchanges)` });
+          timeline.push({ exchange: c.exchange_index, type: "compaction", label: `Context compacted (${c.exchanges_before}→${c.exchanges_after} exchanges)`, timestamp: tsMap.get(c.exchange_index) || null });
         }
 
         const interrupts = db.prepare(
           "SELECT exchange_index FROM exchanges WHERE session_id = ? AND is_interrupt = 1 ORDER BY exchange_index",
         ).all(session.id) as Array<{ exchange_index: number }>;
         for (const intr of interrupts) {
-          timeline.push({ exchange: intr.exchange_index, type: "interrupt", label: "User interrupted" });
+          timeline.push({ exchange: intr.exchange_index, type: "interrupt", label: "User interrupted", timestamp: tsMap.get(intr.exchange_index) || null });
         }
 
         timeline.sort((a, b) => a.exchange - b.exchange);
@@ -550,7 +559,7 @@ export function createKeddyMcpServer(options?: { agentTools?: boolean }): McpSer
             version: p.version,
             status: p.status,
             feedback: p.user_feedback,
-            text_preview: p.plan_text.substring(0, 300),
+            text_preview: p.plan_text.substring(0, 1500),
             ...(forkIdx != null && p.exchange_index_start < forkIdx ? { inherited: true } : {}),
           })),
           tasks: tasks.map((t: any) => ({ subject: t.subject, status: t.status })),
@@ -611,6 +620,7 @@ export function createKeddyMcpServer(options?: { agentTools?: boolean }): McpSer
             }
             return {
               index: r.exchange_index,
+              timestamp: r.timestamp,
               prompt: r.user_prompt.split("\n")[0].substring(0, maxLen),
               ...(responsePreview ? { response: responsePreview } : {}),
               tools: r.tool_call_count,
@@ -624,6 +634,63 @@ export function createKeddyMcpServer(options?: { agentTools?: boolean }): McpSer
       } catch (err) {
         return textResult(`Error: ${err}`);
       }
+    },
+  );
+
+  // Tool: Get session note
+  server.tool(
+    "keddy_get_session_note",
+    "Read the latest generated session note for a session. Returns the AI-generated analysis including content, model used, cost, and generation timestamp. Use this to understand what a prior session accomplished without reading the full transcript.",
+    {
+      session_id: z.string().describe("The session ID to get the note for"),
+    },
+    async ({ session_id }) => {
+      const session = getSession(session_id);
+      if (!session) return textResult(`Session not found: ${session_id}`);
+
+      const note = getSessionNote(session.id);
+      if (!note) return textResult(`No session note exists for session: ${session_id}`);
+
+      return jsonResult({
+        session_id: session.session_id,
+        session_title: session.title,
+        content: note.content,
+        model: note.model,
+        agent_turns: note.agent_turns,
+        cost_usd: note.cost_usd,
+        generated_at: note.generated_at,
+      });
+    },
+  );
+
+  // Tool: Get daily note
+  server.tool(
+    "keddy_get_daily_note",
+    "Read the latest generated daily note for a specific date. Returns the AI-generated daily synthesis including content, title, model used, and cost. Use this to understand what happened on a previous day or to build continuity across days.",
+    {
+      date: z.string().describe("Date in YYYY-MM-DD format (e.g. '2026-04-03')"),
+    },
+    async ({ date }) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return textResult(`Invalid date format: ${date}. Use YYYY-MM-DD.`);
+      }
+
+      const note = getDailyNote(date);
+      if (!note) return textResult(`No daily note exists for date: ${date}`);
+
+      let sessionIds: string[] = [];
+      try { sessionIds = JSON.parse(note.sessions_json); } catch {}
+
+      return jsonResult({
+        date: note.date,
+        title: (note as any).title || null,
+        content: note.content,
+        sessions_included: sessionIds,
+        model: note.model,
+        agent_turns: note.agent_turns,
+        cost_usd: note.cost_usd,
+        generated_at: note.generated_at,
+      });
     },
   );
 

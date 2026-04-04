@@ -140,6 +140,7 @@ export async function runImport(forceReimport = false): Promise<void> {
           exchange_index: exchange.index,
           user_prompt: exchange.user_prompt,
           assistant_response: exchange.assistant_response,
+          assistant_response_pre: exchange.assistant_response_pre,
           tool_call_count: exchange.tool_calls.length,
           timestamp: exchange.timestamp,
           is_interrupt: exchange.is_interrupt,

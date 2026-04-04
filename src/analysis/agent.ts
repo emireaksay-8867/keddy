@@ -29,7 +29,7 @@ export interface NotesResult {
 }
 
 export interface AgentEvent {
-  type: "status" | "tool_call" | "mcp_connect" | "thinking" | "result" | "error";
+  type: "status" | "tool_call" | "mcp_connect" | "thinking" | "result" | "error" | "text_delta";
   message: string;
   detail?: string;
   timestamp: number;
@@ -37,7 +37,7 @@ export interface AgentEvent {
 
 // ── Lightweight context: ~1-2KB instead of ~100KB ─────────────
 
-function buildLightweightContext(sessionId: string): {
+function buildLightweightContext(sessionId: string, dayScope?: { date: string; fromExchange: number; toExchange: number }): {
   context: string;
   exchangeCount: number;
   effectiveExchangeCount: number;
@@ -57,6 +57,12 @@ function buildLightweightContext(sessionId: string): {
   if (session.git_branch) lines.push(`Branch: ${session.git_branch}`);
   lines.push(`Exchanges: ${session.exchange_count}`);
   lines.push(`Started: ${session.started_at} | Ended: ${session.ended_at || "ongoing"}`);
+
+  // Day scope: focus analysis on a specific date's exchanges
+  if (dayScope) {
+    lines.push(`\nDay scope: analyzing exchanges #${dayScope.fromExchange}–#${dayScope.toExchange} from ${dayScope.date}`);
+    lines.push(`This is one day's portion of a multi-day session. Focus your analysis on these exchanges.`);
+  }
 
   // Fork context: precise exchange boundary instead of vague hint
   const forkIdx = (session as any).fork_exchange_index as number | null;
@@ -84,7 +90,7 @@ function buildLightweightContext(sessionId: string): {
 
   if (relevantPlans.length > 0) {
     lines.push("");
-    lines.push(`Plans: ${relevantPlans.map((p) => `v${p.version}(${p.status}${p.user_feedback ? `, feedback: "${p.user_feedback.substring(0, 80)}"` : ""})`).join(", ")}`);
+    lines.push(`Plans: ${relevantPlans.map((p) => `v${p.version}(${p.status}${p.user_feedback ? `, feedback: "${p.user_feedback.substring(0, 200)}"` : ""})`).join(", ")}`);
   }
 
   if (relevantMilestones.length > 0) {
@@ -137,10 +143,14 @@ function buildLightweightContext(sessionId: string): {
     forkIdx,
   );
 
+  const effectiveCount = dayScope
+    ? (dayScope.toExchange - dayScope.fromExchange + 1)
+    : session.exchange_count - (forkIdx ?? 0);
+
   return {
     context: lines.join("\n"),
     exchangeCount: session.exchange_count,
-    effectiveExchangeCount: session.exchange_count - (forkIdx ?? 0),
+    effectiveExchangeCount: effectiveCount,
     sessionIdInternal: session.id,
     programmaticMermaid,
   };
@@ -148,56 +158,20 @@ function buildLightweightContext(sessionId: string): {
 
 // ── System Prompt ────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a session analyst with access to Keddy MCP tools for reading coding session data.
+const SYSTEM_PROMPT = `You have access to MCP tools for reading coding session data. Use ALL of them — get the session structure, read the full transcript across multiple ranges, pull the plans with their feedback, check the file history for cross-session connections. Spend most of your turns reading before you start writing.
 
-Start by calling keddy_get_session_skeleton to get the session structure and overview.
-Then use keddy_transcript_summary to scan the conversation flow.
-Use keddy_get_transcript for specific exchange ranges you want to read in detail.
+If plans were central to the session, pull the full plan details and explain what evolved and why.
 
-Produce a session note in markdown with these sections:
+Understand what files changed and how those changes connect to the decisions made. If tasks were completed or plans evolved, consider whether the implementation matches the intent. Don't just describe what was discussed — show what actually happened in the code and whether it landed correctly.
 
-## Summary
-What the user was trying to accomplish, what approach was taken, and what the outcome was.
-Ground every statement in specific exchange numbers [#N].
-Quote the user's own words when describing their goals and reasoning.
-Use Claude's responses to understand what was actually done — Claude often summarizes the actions taken.
-But do not treat Claude's stated plans as facts unless they were followed by actual tool execution.
-Read the first few exchanges carefully — the first message may not state the goal directly.
+Then write about it. Whatever structure, format, or depth serves this specific session. Let the content determine the shape.
 
-## Session Flow
-A mermaid diagram (\`\`\`mermaid code block, graph LR format).
-You receive a programmatic diagram as input. Enhance its node labels based on what you learn from reading user prompts — replace file-based labels with what the user was actually trying to do.
-Keep the exchange ranges from the original diagram. Keep node shapes. Only improve labels.
-
-## Files Changed
-List of files that were created or modified (from Write/Edit tool calls that succeeded). Don't include files that were only read.
-
-Rules:
-- Every claim must reference specific exchange numbers [#N]
-- Exchanges marked [COMPACTION SUMMARY] are compressed context, not user conversations
-- Do not label phases as "debugging", "implementing", etc. — describe the specific actions and files
-- If the session is straightforward, keep the note brief
-- Do not add sections beyond these three unless the data clearly warrants it
-- If the session is forked, focus on exchanges AFTER the fork point. Inherited exchanges are context from the parent session — mention the fork briefly in the summary but do not narrate the parent's work
-- Start directly with ## Summary — no preamble`;
+If the session is forked, focus on exchanges after the fork point.
+Exchanges marked [COMPACTION SUMMARY] are compressed context, not conversations.`;
 
 // ── Short session fast path (≤3 exchanges) ───────────────────
 
-const SHORT_SESSION_PROMPT = `You are a session analyst. Produce a brief session note in markdown.
-
-## Summary
-One paragraph: what the user asked for, what happened, what was the outcome.
-Reference exchange numbers [#N].
-
-## Session Flow
-A mermaid diagram (\`\`\`mermaid code block, graph LR format).
-Even for short sessions, show the progression: what was asked → what was done → the result.
-Use 2-3 nodes maximum. Label nodes with what actually happened, not file names.
-
-## Files Changed
-Files created or modified (if any).
-
-Keep it concise. Start directly with ## Summary.`;
+const SHORT_SESSION_PROMPT = `You have access to a coding session transcript. Tell me what happened — what was the goal, what was done, where it ended up. Keep it proportional to the session length.`;
 
 async function generateShortSessionNote(
   sessionId: string,
@@ -213,7 +187,7 @@ async function generateShortSessionNote(
   const exchanges = forkIdx != null ? allExchanges.filter((e) => e.exchange_index >= forkIdx) : allExchanges;
   const transcript = exchanges.map((e) => {
     let text = `#${e.exchange_index} User: ${e.user_prompt}`;
-    if (e.assistant_response) text += `\nClaude: ${e.assistant_response.substring(0, 500)}`;
+    if (e.assistant_response) text += `\nClaude: ${e.assistant_response}`;
     if (e.tool_call_count > 0) text += `\n(${e.tool_call_count} tool calls)`;
     return text;
   }).join("\n\n");
@@ -231,9 +205,9 @@ async function generateShortSessionNote(
   const client = new sdk.default({ apiKey });
   const response = await client.messages.create({
     model: options?.model === "opus" ? "claude-opus-4-6" : options?.model === "haiku" ? "claude-haiku-4-5-20251001" : "claude-sonnet-4-6",
-    max_tokens: 1024,
+    max_tokens: 4096,
     system: SHORT_SESSION_PROMPT,
-    messages: [{ role: "user", content: `Session: ${context}${programmaticMermaid ? `\nProgrammatic diagram (enhance labels):\n\`\`\`mermaid\n${programmaticMermaid}\n\`\`\`` : ""}\n\nTranscript:\n${transcript}` }],
+    messages: [{ role: "user", content: `Session:\n${context}\n\nTranscript:\n${transcript}` }],
   });
 
   const content = response.content[0]?.type === "text" ? response.content[0].text : "";
@@ -252,19 +226,20 @@ async function generateShortSessionNote(
 
 export async function* generateSessionNotesStream(
   sessionId: string,
-  options?: { apiKey?: string; model?: string },
+  options?: { apiKey?: string; model?: string; dayScope?: { date: string; fromExchange: number; toExchange: number } },
 ): AsyncGenerator<AgentEvent, NotesResult> {
   // Phase 1: Build lightweight context
-  yield { type: "status", message: "Reading session data", detail: "Querying local database...", timestamp: Date.now() };
+  const scopeLabel = options?.dayScope ? ` (scoped to ${options.dayScope.date})` : "";
+  yield { type: "status", message: "Reading session data", detail: `Querying local database...${scopeLabel}`, timestamp: Date.now() };
 
-  const data = buildLightweightContext(sessionId);
+  const data = buildLightweightContext(sessionId, options?.dayScope);
   if (!data) throw new Error(`Session not found: ${sessionId}`);
 
   const contextKb = (data.context.length / 1024).toFixed(1);
   yield {
     type: "tool_call",
     message: "Session loaded",
-    detail: `${data.exchangeCount} exchanges, ${contextKb}KB context`,
+    detail: `${data.exchangeCount} exchanges${options?.dayScope ? ` (${data.effectiveExchangeCount} on ${options.dayScope.date})` : ""}, ${contextKb}KB context`,
     timestamp: Date.now(),
   };
 
@@ -304,12 +279,10 @@ export async function* generateSessionNotesStream(
   const env: Record<string, string | undefined> = { ...process.env };
   if (options?.apiKey) env.ANTHROPIC_API_KEY = options.apiKey;
 
-  const prompt = [
-    `Session overview:\n${data.context}`,
-    data.programmaticMermaid
-      ? `\nProgrammatic session flow diagram:\n\`\`\`mermaid\n${data.programmaticMermaid}\n\`\`\`\n\nAnalyze this session using the MCP tools and produce a note. Enhance the diagram labels based on what you learn from reading user prompts.`
-      : `\nAnalyze this session using the MCP tools and produce a note.`,
-  ].join("\n");
+  let prompt = `Here's a coding session I need to understand:\n\n${data.context}\n\nRead through it using the MCP tools and tell me what happened — what was built, what decisions were made, what's the current state of things, and what's unfinished. Write it the way you'd explain it to a developer who needs to pick up where this session left off.`;
+  if (options?.dayScope) {
+    prompt += `\n\nIMPORTANT: This session spans multiple days. Focus ONLY on exchanges #${options.dayScope.fromExchange}–#${options.dayScope.toExchange} which occurred on ${options.dayScope.date}. Use the MCP tools to read this specific range.`;
+  }
 
   let result = "";
   let turns = 0;
@@ -321,7 +294,6 @@ export async function* generateSessionNotesStream(
     options: {
       systemPrompt: SYSTEM_PROMPT,
       model: modelName,
-      effort: "medium",
       mcpServers: {
         keddy: {
           type: "sdk" as const,
@@ -331,8 +303,9 @@ export async function* generateSessionNotesStream(
       },
       strictMcpConfig: true,
       allowedTools: ["mcp__keddy__*"],
-      maxTurns: 10,
-      maxBudgetUsd: 0.50,
+      maxTurns: 15,
+      maxBudgetUsd: 0.75,
+      includePartialMessages: true,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       persistSession: false,
@@ -370,16 +343,24 @@ export async function* generateSessionNotesStream(
       }
     }
 
+    // Streaming text deltas
+    if (message.type === "stream_event") {
+      const event = (message as any).event;
+      if (event?.type === "content_block_delta" && event.delta?.type === "text_delta") {
+        yield { type: "text_delta" as const, message: event.delta.text, timestamp: Date.now() };
+      }
+    }
+
     // Final result
     if (message.type === "result") {
       if (message.subtype === "success") {
         result = message.result || "";
         turns = message.num_turns || 0;
         cost = message.total_cost_usd || 0;
-        if (message.modelUsage) {
-          const models = Object.keys(message.modelUsage);
-          if (models.length > 0) model = models[0];
-        }
+        // Use the model we requested — modelUsage includes internal tool-processing models (haiku)
+        // which can mislead detection. We know what we asked for.
+        const MODEL_IDS: Record<string, string> = { sonnet: "claude-sonnet-4-6", opus: "claude-opus-4-6", haiku: "claude-haiku-4-5" };
+        model = MODEL_IDS[modelName] || modelName;
         yield {
           type: "result",
           message: `Done — ${turns} turn${turns !== 1 ? "s" : ""}, $${cost.toFixed(4)}`,

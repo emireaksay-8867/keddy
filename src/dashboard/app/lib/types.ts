@@ -130,6 +130,7 @@ export interface Exchange {
   exchange_index: number;
   user_prompt: string;
   assistant_response: string;
+  assistant_response_pre: string;
   tool_call_count: number;
   timestamp: string;
   is_interrupt: number;
@@ -297,4 +298,23 @@ export interface DailyData {
     description: string;
   }>;
   note: DailyNote | null;
+  notes: DailyNote[];
+  exchangeRanges?: Record<string, {
+    first_exchange: number;
+    last_exchange: number;
+    day_exchange_count: number;
+  }>;
+  newExchangesSinceNote?: number;
+}
+
+export interface DailyListItem {
+  date: string;
+  session_count: number;
+  total_exchanges: number;
+  note: {
+    id: string;
+    summary: string;
+    model: string | null;
+    generated_at: string;
+  } | null;
 }

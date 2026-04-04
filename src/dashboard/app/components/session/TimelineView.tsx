@@ -131,10 +131,11 @@ function OutcomePills({ pills, expandedSections, onToggle, isInterrupt }: {
       {pills.map((pill, i) => {
         const cfg = PILL_CONFIG[pill.type];
         if (!cfg) return null;
-        const isActive = expandedSections.has(pill.type);
+        const pillKey = `${pill.type}:${i}`;
+        const isActive = expandedSections.has(pillKey);
         const Icon = pill.type === "commit" ? GitCommitHorizontal : pill.type === "push" ? ArrowUp : pill.type === "pr" ? GitPullRequest : pill.type === "branch" ? GitBranch : null;
         return (
-          <button key={i} onClick={() => onToggle(pill.type)}
+          <button key={i} onClick={() => onToggle(pillKey)}
             className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 transition-colors"
             style={{ background: isActive ? cfg.bg.replace("0.12", "0.25").replace("0.06", "0.15").replace("0.10", "0.20") : cfg.bg, color: cfg.color, border: isActive ? `1px solid ${cfg.color}33` : "1px solid transparent" }}>
             {Icon && <Icon size={10} />}
@@ -347,9 +348,17 @@ function DetailToolsSection({ tools, gitDetails, testMilestones }: {
     <div>
       <div className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>Tools ({tools.length})</div>
       <OutcomePills pills={pills} expandedSections={expandedSections} onToggle={toggleSection} />
-      {Array.from(expandedSections).map(type => (
-        <ExpandedToolSection key={type} type={type} tools={tools} gitDetails={gitDetails} testMilestones={testMilestones} onClose={() => toggleSection(type)} />
-      ))}
+      {Array.from(expandedSections).map(key => {
+        const idx = parseInt(key.split(":")[1]);
+        const pill = pills[idx];
+        if (!pill) return null;
+        return (
+          <ExpandedToolSection key={key} type={pill.type} tools={tools}
+            gitDetails={pill.gitDetail ? [pill.gitDetail] : gitDetails}
+            testMilestones={pill.milestone ? [pill.milestone] : testMilestones}
+            onClose={() => toggleSection(key)} />
+        );
+      })}
     </div>
   );
 }
@@ -453,9 +462,17 @@ function PromptCard({ exchange, gitDetails, testMilestones, plans, onViewDetail,
         {(showPills || isInterrupt) && <OutcomePills pills={showPills ? pills : []} expandedSections={expandedSections} onToggle={toggleSection} isInterrupt={isInterrupt} />}
 
         {/* Expanded sections (below pills, on click) */}
-        {showPills && Array.from(expandedSections).map(type => (
-          <ExpandedToolSection key={type} type={type} tools={tools} gitDetails={gitDetails} testMilestones={testMilestones} onClose={() => toggleSection(type)} />
-        ))}
+        {showPills && Array.from(expandedSections).map(key => {
+          const idx = parseInt(key.split(":")[1]);
+          const pill = pills[idx];
+          if (!pill) return null;
+          return (
+            <ExpandedToolSection key={key} type={pill.type} tools={tools}
+              gitDetails={pill.gitDetail ? [pill.gitDetail] : gitDetails}
+              testMilestones={pill.milestone ? [pill.milestone] : testMilestones}
+              onClose={() => toggleSection(key)} />
+          );
+        })}
       </div>
     </div>
   );
