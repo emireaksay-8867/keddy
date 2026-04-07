@@ -142,6 +142,7 @@ export function generateSessionNotesSSE(
   sessionId: string,
   callbacks: {
     onEvent: (event: { type: string; message: string; detail?: string; timestamp: number }) => void;
+    onTextDelta: (text: string) => void;
     onDone: (note: import("./types.js").SessionNote) => void;
     onError: (error: string) => void;
   },
@@ -182,6 +183,8 @@ export function generateSessionNotesSSE(
               callbacks.onDone(parsed.note);
             } else if (parsed.error) {
               callbacks.onError(parsed.error);
+            } else if (parsed.type === "text_delta") {
+              callbacks.onTextDelta(parsed.message);
             } else if (parsed.type) {
               callbacks.onEvent(parsed);
             }
@@ -200,18 +203,24 @@ export function generateSessionNotesSSE(
 
 // --- Daily Notes ---
 
+export async function getDailyList(days?: number) {
+  const params = days ? `?days=${days}` : "";
+  return fetchJson<import("./types.js").DailyListItem[]>(`/daily/list${params}`);
+}
+
 export async function getDailyData(date: string) {
   return fetchJson<import("./types.js").DailyData>(`/daily/${date}/data`);
 }
 
-export async function deleteDailyNote(date: string) {
-  return fetchJson(`/daily/${date}`, { method: "DELETE" });
+export async function deleteDailyNote(date: string, noteId: string) {
+  return fetchJson(`/daily/${date}/notes/${noteId}`, { method: "DELETE" });
 }
 
 export function generateDailyNoteSSE(
   date: string,
   callbacks: {
     onEvent: (event: { type: string; message: string; detail?: string; timestamp: number }) => void;
+    onTextDelta: (text: string) => void;
     onDone: (note: import("./types.js").DailyNote) => void;
     onError: (error: string) => void;
   },
@@ -246,6 +255,7 @@ export function generateDailyNoteSSE(
             const parsed = JSON.parse(data);
             if (parsed.ok && parsed.note) callbacks.onDone(parsed.note);
             else if (parsed.error) callbacks.onError(parsed.error);
+            else if (parsed.type === "text_delta") callbacks.onTextDelta(parsed.message);
             else if (parsed.type) callbacks.onEvent(parsed);
           } catch { /* skip */ }
         }

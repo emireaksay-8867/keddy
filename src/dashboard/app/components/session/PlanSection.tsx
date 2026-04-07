@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { SquareArrowOutUpRight, FileText, GitCommitHorizontal, GitPullRequest } from "lucide-react";
-import type { Plan, Task, Milestone, GitDetail } from "../../lib/types.js";
+import type { Plan, Task, Milestone, GitDetail, Exchange } from "../../lib/types.js";
 
 interface PlanSectionProps {
   plans: Plan[];
@@ -10,7 +10,8 @@ interface PlanSectionProps {
   sessionExchangeCount: number;
   forkExchangeIndex?: number | null;
   onViewPlan: (plan: Plan, compareWithText?: string) => void;
-  onViewInTerminal: (exchangeIndex: number) => void;
+  onViewInTerminal?: (exchangeIndex: number) => void;
+  exchanges?: Exchange[];
 }
 
 function fmtTime(d: string): string {
@@ -205,14 +206,15 @@ function GitItem({ gd }: { gd: GitDetail }) {
 // ── Plan Group Card ────────────────────────────────────────
 
 function PlanGroupCard({
-  group, allPlans, tasks, gitDetails, onViewPlan, onViewInTerminal,
+  group, allPlans, tasks, gitDetails, onViewPlan, onViewInTerminal, planEnterTime,
 }: {
   group: PlanGroup;
   allPlans: Plan[];
   tasks: Task[];
   gitDetails: GitDetail[];
   onViewPlan: (plan: Plan, compareWithText?: string) => void;
-  onViewInTerminal: (exchangeIndex: number) => void;
+  onViewInTerminal?: (exchangeIndex: number) => void;
+  planEnterTime?: string;
 }) {
   const [tasksOpen, setTasksOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -223,7 +225,7 @@ function PlanGroupCard({
   const planTasks = getTasksForPlan(final, allPlans, tasks);
   const completedTasks = planTasks.filter(t => t.status === "completed");
   const planGitDetails = getGitDetailsForPlan(final, allPlans, gitDetails);
-  const time = fmtTime(final.ended_at || final.started_at || final.created_at);
+  const time = planEnterTime ? fmtTime(planEnterTime) : fmtTime(final.created_at);
 
   const hasEntries = entries.length > 0;
 
@@ -291,15 +293,6 @@ function PlanGroupCard({
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {/* Git details */}
-      {planGitDetails.length > 0 && (
-        <div className="px-4 pb-2 -mt-1 flex flex-col gap-1">
-          {planGitDetails.map((gd, i) => (
-            <GitItem key={i} gd={gd} />
-          ))}
         </div>
       )}
 
@@ -394,7 +387,7 @@ function PlanGroupCard({
 
 // ── Main Component ─────────────────────────────────────────
 
-export function PlanSection({ plans, tasks, milestones, gitDetails, sessionExchangeCount, forkExchangeIndex, onViewPlan, onViewInTerminal }: PlanSectionProps) {
+export function PlanSection({ plans, tasks, milestones, gitDetails, sessionExchangeCount, forkExchangeIndex, onViewPlan, onViewInTerminal, exchanges }: PlanSectionProps) {
   if (plans.length === 0) return null;
 
   // Filter out inherited plans (from parent session) and empty drafted plans (abandoned plan mode)
@@ -407,23 +400,63 @@ export function PlanSection({ plans, tasks, milestones, gitDetails, sessionExcha
     ? tasks.filter(t => t.exchange_created >= forkExchangeIndex)
     : tasks;
 
-  if (relevantPlans.length === 0) return null;
+  if (relevantPlans.length === 0) {
+    // Active plan mode with no finalized plan yet
+    const hasDrafted = plans.some(p => p.status === "drafted");
+    if (hasDrafted) {
+      return (
+        <div className="flex flex-col items-center justify-center py-16 gap-3">
+          <div className="text-[40px] opacity-30">{"\u270F\uFE0F"}</div>
+          <div className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>
+            Plan in progress
+          </div>
+          <div className="text-[12px] max-w-[280px] text-center" style={{ color: "var(--text-muted)" }}>
+            Claude is currently in plan mode. The plan will appear here once it's submitted for review.
+          </div>
+        </div>
+      );
+    }
+    return null;
+  }
 
   const groups = groupPlans(relevantPlans);
 
+  // Build plan-version → enter-time lookup by scanning tool calls
+  // This finds the actual exchange where EnterPlanMode ran (not the plans table index which can be wrong)
+  const planEnterTimes = new Map<number, string>(); // plan version index (0-based) → timestamp
+  if (exchanges) {
+    let enterCount = 0;
+    for (const ex of exchanges) {
+      for (const tc of (ex as any).tool_calls || []) {
+        if (tc.tool_name === "EnterPlanMode" && ex.timestamp) {
+          planEnterTimes.set(enterCount, ex.timestamp);
+          enterCount++;
+        }
+      }
+    }
+  }
+
   return (
     <div className="mb-4">
-      {groups.map((group, i) => (
-        <PlanGroupCard
-          key={i}
-          group={group}
-          allPlans={relevantPlans}
-          tasks={relevantTasks}
-          gitDetails={gitDetails}
-          onViewPlan={onViewPlan}
-          onViewInTerminal={onViewInTerminal}
-        />
-      ))}
+      {groups.map((group, i) => {
+        // Find the enter time for this group's first plan version (0-based index into EnterPlanMode calls)
+        const firstVersion = group.entries.length > 0
+          ? Math.min(group.final.version, ...group.entries.map(e => e.plan.version))
+          : group.final.version;
+        const enterTime = planEnterTimes.get(firstVersion - 1); // version is 1-based, map is 0-based
+        return (
+          <PlanGroupCard
+            key={i}
+            group={group}
+            allPlans={relevantPlans}
+            tasks={relevantTasks}
+            gitDetails={gitDetails}
+            onViewPlan={onViewPlan}
+            onViewInTerminal={onViewInTerminal}
+            planEnterTime={enterTime}
+          />
+        );
+      })}
     </div>
   );
 }

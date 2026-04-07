@@ -267,6 +267,7 @@ sessionsRoutes.get("/", (c) => {
           exchange_index: exchange.index,
           user_prompt: exchange.user_prompt,
           assistant_response: exchange.assistant_response,
+          assistant_response_pre: exchange.assistant_response_pre,
           tool_call_count: exchange.tool_calls.length,
           timestamp: exchange.timestamp,
           is_interrupt: exchange.is_interrupt,
@@ -1153,10 +1154,12 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
                 // UPDATE existing exchange — it might have been captured with incomplete response
                 // Never overwrite a non-empty response with an empty one (race condition protection)
                 const safeResponse = (exchange.assistant_response ?? "") || (existing as any).assistant_response || "";
+                const safeResponsePre = (exchange.assistant_response_pre ?? "") || (existing as any).assistant_response_pre || "";
                 const safeToolCount = exchange.tool_calls.length || (existing as any).tool_call_count || 0;
                 db.prepare(`
                   UPDATE exchanges SET
                     assistant_response = ?,
+                    assistant_response_pre = ?,
                     tool_call_count = ?,
                     is_interrupt = ?,
                     model = COALESCE(?, model),
@@ -1170,6 +1173,7 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
                   WHERE id = ?
                 `).run(
                   safeResponse,
+                  safeResponsePre,
                   safeToolCount,
                   exchange.is_interrupt ? 1 : 0,
                   exchange.model ?? null,

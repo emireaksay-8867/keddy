@@ -198,6 +198,7 @@ export function insertExchange(data: {
   exchange_index: number;
   user_prompt: string;
   assistant_response?: string;
+  assistant_response_pre?: string;
   tool_call_count?: number;
   timestamp?: string;
   duration_ms?: number | null;
@@ -230,18 +231,19 @@ export function insertExchange(data: {
 
   const id = randomUUID();
   db.prepare(`
-    INSERT INTO exchanges (id, session_id, exchange_index, user_prompt, assistant_response,
+    INSERT INTO exchanges (id, session_id, exchange_index, user_prompt, assistant_response, assistant_response_pre,
       tool_call_count, timestamp, duration_ms, is_interrupt, is_compact_summary, metadata,
       model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
       stop_reason, has_thinking, permission_mode, is_sidechain, entrypoint, cwd, git_branch,
       turn_duration_ms)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.session_id,
     data.exchange_index,
     data.user_prompt,
     data.assistant_response ?? "",
+    data.assistant_response_pre ?? "",
     data.tool_call_count ?? 0,
     data.timestamp ?? new Date().toISOString(),
     data.duration_ms ?? null,
@@ -1254,31 +1256,110 @@ export function getDailyMilestones(dateStr: string): Array<{
   `).all(dateStr, dateStr) as any[];
 }
 
-export function getDailyNote(dateStr: string): import("../types.js").DailyNote | undefined {
+export function getExchangeRangesByDate(
+  dateStr: string,
+  sessionInternalIds: string[],
+): Record<string, { first_exchange: number; last_exchange: number; day_exchange_count: number }> {
   const db = getDb();
-  return db.prepare("SELECT * FROM daily_notes WHERE date = ?").get(dateStr) as any;
+  const stmt = db.prepare(`
+    SELECT MIN(exchange_index) as first_exchange,
+           MAX(exchange_index) as last_exchange,
+           COUNT(*) as day_exchange_count
+    FROM exchanges
+    WHERE session_id = ? AND date(timestamp) = ?
+  `);
+  const result: Record<string, { first_exchange: number; last_exchange: number; day_exchange_count: number }> = {};
+  for (const id of sessionInternalIds) {
+    const row = stmt.get(id, dateStr) as any;
+    if (row && row.first_exchange != null) {
+      result[id] = {
+        first_exchange: row.first_exchange,
+        last_exchange: row.last_exchange,
+        day_exchange_count: row.day_exchange_count,
+      };
+    }
+  }
+  return result;
 }
 
-export function upsertDailyNote(data: {
+export function getDailyNote(dateStr: string): import("../types.js").DailyNote | undefined {
+  const db = getDb();
+  return db.prepare("SELECT * FROM daily_notes WHERE date = ? ORDER BY generated_at DESC LIMIT 1").get(dateStr) as any;
+}
+
+export function getDailyNotes(dateStr: string): import("../types.js").DailyNote[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM daily_notes WHERE date = ? ORDER BY generated_at DESC").all(dateStr) as any[];
+}
+
+export function insertDailyNote(data: {
   date: string; content: string; sessions_json: string;
-  model?: string | null; agent_turns?: number | null; cost_usd?: number | null;
+  title?: string | null; model?: string | null; agent_turns?: number | null; cost_usd?: number | null;
 }): string {
   const db = getDb();
-  const existing = db.prepare("SELECT id FROM daily_notes WHERE date = ?").get(data.date) as { id: string } | undefined;
-  if (existing) {
-    db.prepare(
-      "UPDATE daily_notes SET content = ?, sessions_json = ?, model = ?, agent_turns = ?, cost_usd = ?, generated_at = datetime('now') WHERE id = ?",
-    ).run(data.content, data.sessions_json, data.model ?? null, data.agent_turns ?? null, data.cost_usd ?? null, existing.id);
-    return existing.id;
-  }
   const id = randomUUID();
   db.prepare(
-    "INSERT INTO daily_notes (id, date, content, sessions_json, model, agent_turns, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).run(id, data.date, data.content, data.sessions_json, data.model ?? null, data.agent_turns ?? null, data.cost_usd ?? null);
+    "INSERT INTO daily_notes (id, date, title, content, sessions_json, model, agent_turns, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(id, data.date, data.title ?? null, data.content, data.sessions_json, data.model ?? null, data.agent_turns ?? null, data.cost_usd ?? null);
   return id;
 }
 
-export function deleteDailyNote(dateStr: string): void {
+export function deleteDailyNote(noteId: string): void {
+  const db = getDb();
+  db.prepare("DELETE FROM daily_notes WHERE id = ?").run(noteId);
+}
+
+export function deleteDailyNotesByDate(dateStr: string): void {
   const db = getDb();
   db.prepare("DELETE FROM daily_notes WHERE date = ?").run(dateStr);
+}
+
+export function getDailyList(days: number = 90): Array<{
+  date: string;
+  session_count: number;
+  total_exchanges: number;
+}> {
+  const db = getDb();
+  return db.prepare(`
+    SELECT date(e.timestamp) as date,
+           COUNT(DISTINCT e.session_id) as session_count,
+           COUNT(*) as total_exchanges
+    FROM exchanges e
+    JOIN sessions s ON e.session_id = s.id
+    WHERE s.exchange_count > 0
+      AND e.timestamp >= datetime('now', ?)
+    GROUP BY date(e.timestamp)
+    ORDER BY date DESC
+  `).all(`-${days} days`) as any[];
+}
+
+export function getDatesWithNotes(days: number = 90): Record<string, {
+  id: string; summary: string; model: string | null; generated_at: string;
+}> {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT id, date, title, content, model, generated_at
+    FROM daily_notes
+    WHERE date >= date('now', ?)
+    ORDER BY generated_at DESC
+  `).all(`-${days} days`) as any[];
+
+  const result: Record<string, any> = {};
+  for (const r of rows) {
+    if (!result[r.date]) {
+      let summary = "";
+      if (r.title) {
+        summary = r.title;
+      } else {
+        const headingMatch = r.content.match(/^##\s+(.+)$/m);
+        if (headingMatch) {
+          summary = headingMatch[1].substring(0, 120);
+        } else {
+          summary = r.content.replace(/[#*_`]/g, "").substring(0, 120);
+        }
+      }
+      result[r.date] = { id: r.id, summary, model: r.model, generated_at: r.generated_at };
+    }
+  }
+  return result;
 }

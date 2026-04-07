@@ -186,6 +186,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
 
   let currentUserPrompt = "";
   let currentAssistantText = "";
+  let currentAssistantTextPre = "";
   let currentTimestamp = "";
   let currentIsCompactSummary = false;
   let pendingToolCalls: ParsedToolCall[] = [];
@@ -332,10 +333,12 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     // Compact summary
     if (role === "user" && entry.isCompactSummary) {
       if (inExchange) {
+        const _r = pendingToolCalls.length === 0 && currentAssistantTextPre && !currentAssistantText;
         exchanges.push({
           index: exchangeIndex,
           user_prompt: currentUserPrompt,
-          assistant_response: currentAssistantText,
+          assistant_response: _r ? currentAssistantTextPre : currentAssistantText,
+          assistant_response_pre: _r ? "" : currentAssistantTextPre,
           tool_calls: pendingToolCalls,
           timestamp: currentTimestamp,
           is_interrupt: false,
@@ -345,6 +348,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
         exchangeIndex++;
         pendingToolCalls = [];
         currentAssistantText = "";
+        currentAssistantTextPre = "";
         resetAssistantAccumulators();
       }
 
@@ -399,10 +403,12 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       // Bug fix 1c: Interrupt-only messages (user hit Esc) — mark previous exchange as interrupted, don't create new one
       if (isInterruptOnly(msgContent)) {
         if (inExchange) {
+          const _r = pendingToolCalls.length === 0 && currentAssistantTextPre && !currentAssistantText;
           exchanges.push({
             index: exchangeIndex,
             user_prompt: currentUserPrompt,
-            assistant_response: currentAssistantText,
+            assistant_response: _r ? currentAssistantTextPre : currentAssistantText,
+            assistant_response_pre: _r ? "" : currentAssistantTextPre,
             tool_calls: pendingToolCalls,
             timestamp: currentTimestamp,
             is_interrupt: true,
@@ -412,6 +418,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
           exchangeIndex++;
           pendingToolCalls = [];
           currentAssistantText = "";
+          currentAssistantTextPre = "";
           resetAssistantAccumulators();
           inExchange = false;
         }
@@ -434,10 +441,16 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     if (role === "user") {
       // If we had a pending exchange without assistant response, save it
       if (inExchange) {
+        // When no tools were called, all text lands in pre — move to main response
+        const finalResponse = pendingToolCalls.length === 0 && currentAssistantTextPre && !currentAssistantText
+          ? currentAssistantTextPre : currentAssistantText;
+        const finalPre = pendingToolCalls.length === 0 && currentAssistantTextPre && !currentAssistantText
+          ? "" : currentAssistantTextPre;
         exchanges.push({
           index: exchangeIndex,
           user_prompt: currentUserPrompt,
-          assistant_response: currentAssistantText,
+          assistant_response: finalResponse,
+          assistant_response_pre: finalPre,
           tool_calls: pendingToolCalls,
           timestamp: currentTimestamp,
           is_interrupt: false,
@@ -447,6 +460,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
         exchangeIndex++;
         pendingToolCalls = [];
         currentAssistantText = "";
+        currentAssistantTextPre = "";
       }
 
       // Build user prompt — include image placeholders alongside text
@@ -501,9 +515,15 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       if (entry.gitBranch) currentExchangeBranch = entry.gitBranch;
       if (entry.isSidechain !== undefined) currentIsSidechain = entry.isSidechain;
 
-      // Accumulate assistant text across multi-turn tool exchanges
+      // Accumulate assistant text — track pre-tool vs post-tool ordering
       if (assistantText) {
-        currentAssistantText += (currentAssistantText ? "\n" : "") + assistantText;
+        if (pendingToolCalls.length === 0) {
+          // No tool calls seen yet — this is pre-tool text
+          currentAssistantTextPre += (currentAssistantTextPre ? "\n" : "") + assistantText;
+        } else {
+          // Tool calls already seen — this is post-tool text
+          currentAssistantText += (currentAssistantText ? "\n" : "") + assistantText;
+        }
       }
 
       // Collect tool calls from this assistant message
@@ -519,10 +539,12 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       // message (line 436), interrupt detection, or end-of-file (line 558).
       if (inExchange && interrupt) {
         // Interrupted — finalize
+        const _r = pendingToolCalls.length === 0 && currentAssistantTextPre && !currentAssistantText;
         exchanges.push({
           index: exchangeIndex,
           user_prompt: currentUserPrompt,
-          assistant_response: currentAssistantText,
+          assistant_response: _r ? currentAssistantTextPre : currentAssistantText,
+          assistant_response_pre: _r ? "" : currentAssistantTextPre,
           tool_calls: [...pendingToolCalls],
           timestamp: currentTimestamp,
           is_interrupt: true,
@@ -532,6 +554,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
         exchangeIndex++;
         pendingToolCalls = [];
         currentAssistantText = "";
+        currentAssistantTextPre = "";
         resetAssistantAccumulators();
         inExchange = false;
       }
@@ -542,10 +565,12 @@ export function parseTranscript(filePath: string): ParsedTranscript {
 
   // Handle trailing exchange without final assistant response
   if (inExchange) {
+    const _r = pendingToolCalls.length === 0 && currentAssistantTextPre && !currentAssistantText;
     exchanges.push({
       index: exchangeIndex,
       user_prompt: currentUserPrompt,
-      assistant_response: currentAssistantText,
+      assistant_response: _r ? currentAssistantTextPre : currentAssistantText,
+      assistant_response_pre: _r ? "" : currentAssistantTextPre,
       tool_calls: pendingToolCalls,
       timestamp: currentTimestamp,
       is_interrupt: false,

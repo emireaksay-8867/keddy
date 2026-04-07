@@ -1,18 +1,15 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { useParams, useNavigate } from "react-router";
-import { getSession, getSessionExchanges, analyzeSession, getConfig, updateConfig, getFileDiffs } from "../lib/api.js";
+import { getSession, getSessionExchanges, analyzeSession, getConfig, updateConfig } from "../lib/api.js";
 import { cleanText } from "../lib/cleanText.js";
 import { useAppContext } from "../App.js";
 import { DetailSplit } from "../components/session/DetailSplit.js";
-import { GitBranch } from "lucide-react";
-import { PlanSection } from "../components/session/PlanSection.js";
-import { FilesSection } from "../components/session/FilesSection.js";
-import { FileDiffs } from "../components/session/FileDiffs.js";
+import { GitBranch, Search } from "lucide-react";
 import { PlanView, parseSections } from "../components/session/PlanView.js";
-import { TimelineView, SessionFlowDiagram } from "../components/session/TimelineView.js";
-import { TerminalView } from "../components/session/TerminalView.js";
+import { TimelineView } from "../components/session/TimelineView.js";
+import { PlansTab } from "../components/session/PlansTab.js";
 import { NotesTab } from "../components/session/NotesTab.js";
-import type { SessionDetail as SessionDetailType, Exchange, Plan, FileDiffEntry } from "../lib/types.js";
+import type { SessionDetail as SessionDetailType, Exchange, Plan } from "../lib/types.js";
 
 // ── Helpers ────────────────────────────────────────────────────
 function trunc(s: string, n: number) { return s.length > n ? s.substring(0, n) + "..." : s; }
@@ -58,7 +55,7 @@ export function SessionDetail() {
   const [session, setSession] = useState<SessionDetailType | null>(null);
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"timeline" | "terminal" | "files" | "notes">("timeline");
+  const [tab, setTab] = useState<"activity" | "plans" | "notes">("activity");
   const [detail, setDetail] = useState<DetailState>(EMPTY_DETAIL);
 
   // AI analysis state (preserved from original)
@@ -77,6 +74,7 @@ export function SessionDetail() {
     try { return (localStorage.getItem("keddy-activity-sort") as "oldest" | "newest") || "oldest"; }
     catch { return "oldest"; }
   });
+  const [searchQuery, setSearchQuery] = useState("");
 
   const fetchData = useCallback(async (initial: boolean) => {
     if (!id) return;
@@ -134,6 +132,15 @@ export function SessionDetail() {
 
   const closeDetail = () => setDetail(EMPTY_DETAIL);
 
+  const scrollToExchange = useCallback((exchangeIndex: number) => {
+    setTab("activity");
+    // Wait for tab switch to render, then scroll
+    requestAnimationFrame(() => {
+      const el = contentRef.current?.querySelector(`[data-exchange-index="${exchangeIndex}"]`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, []);
+
   const handleViewPlan = (plan: Plan, compareWithText?: string) => {
     const time = plan.ended_at || plan.started_at || plan.created_at;
     const fmtDate = time ? new Date(time).toLocaleString("en-US", { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" }) : "";
@@ -180,30 +187,6 @@ export function SessionDetail() {
       </div>,
       plan,
     );
-  };
-
-  const handleViewInTerminal = useCallback((exchangeIndex: number) => {
-    setTab("terminal");
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const el = document.getElementById(`terminal-${exchangeIndex}`);
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-    });
-  }, []);
-
-  const handleViewFile = async (filePath: string) => {
-    if (!session) return;
-    try {
-      const diffs = await getFileDiffs(session.session_id, filePath) as FileDiffEntry[];
-      const fileName = filePath.split("/").pop() || filePath;
-      openDetail(
-        fileName,
-        `${diffs.length} operation${diffs.length !== 1 ? "s" : ""}`,
-        <FileDiffs diffs={diffs} fileName={filePath} />,
-        diffs,
-      );
-    } catch { /* failed to load */ }
   };
 
   if (loading) return <div className="p-8 text-[14px]" style={{ color: "var(--text-muted)" }}>Loading...</div>;
@@ -264,7 +247,7 @@ export function SessionDetail() {
             {analyzing ? (
               <span className="text-[11px]" style={{ color: "var(--accent)" }}>{analyzeStep}</span>
             ) : (
-              <button onClick={runAnalysis} className="text-[11px] px-2.5 py-1 rounded-md hover:brightness-125 transition-colors font-medium" style={{ background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none" }}>
+              <button onClick={runAnalysis} className="text-[11px] px-2.5 py-1 rounded hover:opacity-90 transition-colors font-medium" style={{ background: "var(--accent)", color: "white", border: "none" }}>
                 Keddy Analyze
               </button>
             )}
@@ -282,9 +265,8 @@ export function SessionDetail() {
       {/* Tabs */}
       <div className="flex items-center border-b px-6" style={{ borderColor: "var(--border)" }}>
         {([
-          { key: "timeline" as const, label: "Timeline" },
-          { key: "terminal" as const, label: "Terminal Log" },
-          { key: "files" as const, label: `Files (${session.file_operations?.length || 0})` },
+          { key: "activity" as const, label: "Activity" },
+          { key: "plans" as const, label: "Plans" },
           { key: "notes" as const, label: "Notes" },
         ]).map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} className="px-4 py-2.5 text-[13px] relative font-medium" style={{ color: tab === t.key ? "var(--text-primary)" : "var(--text-muted)" }}>
@@ -298,72 +280,65 @@ export function SessionDetail() {
       <div className={`relative flex-1 overflow-hidden ${detail.open ? "grid grid-cols-2" : ""}`} style={{ minHeight: 0 }}>
         {/* Left: main content */}
         <div className="overflow-y-auto h-full" ref={contentRef}>
-          {tab === "timeline" ? (
+          {/* All tabs rendered but hidden via display:none — preserves scroll position + expand state */}
+          <div style={{ display: tab === "activity" ? undefined : "none" }}>
             <div>
-              {/* Session Flow — top-level overview */}
-              <div className="px-6 pt-5">
-                <SessionFlowDiagram sessionId={session.session_id} />
-              </div>
-
-              {/* Plans */}
-              {session.plans.length > 0 && (
-                <div className="px-6 pb-3">
-                  <div className="text-[12px] font-semibold mb-2" style={{ color: "var(--text-muted)" }}>Plans</div>
-                  <PlanSection
-                    plans={session.plans}
-                    tasks={session.tasks}
-                    milestones={session.milestones}
-                    gitDetails={session.git_details || []}
-                    sessionExchangeCount={session.exchange_count}
-                    forkExchangeIndex={session.fork_exchange_index}
-                    onViewPlan={handleViewPlan}
-                    onViewInTerminal={handleViewInTerminal}
+              {/* Search + sort controls */}
+              <div className="mx-6 mt-5 mb-3 flex items-center gap-2">
+                <div
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-shadow focus-within:shadow-[0_0_0_2px_rgba(56,139,253,0.75)]"
+                  style={{ background: "rgba(255,255,255,0.09)", width: 220 }}
+                >
+                  <Search size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Escape") { setSearchQuery(""); (e.target as HTMLInputElement).blur(); } }}
+                    placeholder="Search exchanges..."
+                    className="text-xs flex-1 min-w-0 outline-none bg-transparent"
+                    style={{ color: "var(--text-primary)" }}
                   />
                 </div>
-              )}
-
-              {/* Activity heading + sort toggle */}
-              <div className="mx-6 mb-3 flex items-center gap-2">
-                <div className="text-[12px] font-semibold" style={{ color: "var(--text-muted)" }}>Activity</div>
                 <button
                   onClick={() => {
                     const next = timelineSortOrder === "oldest" ? "newest" : "oldest";
                     setTimelineSortOrder(next);
                     try { localStorage.setItem("keddy-activity-sort", next); } catch {}
                   }}
-                  className="text-[10px] font-medium px-1.5 py-0.5 rounded transition-colors"
+                  className="text-[10px] font-medium px-1.5 py-0.5 rounded transition-colors shrink-0"
                   style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}>
                   {timelineSortOrder === "oldest" ? "\u2193 Oldest" : "\u2191 Newest"}
                 </button>
               </div>
-              {/* Activity timeline — git events appear as milestones inline here */}
               <TimelineView
                 session={session}
                 exchanges={exchanges}
                 onViewPlan={handleViewPlan}
                 onViewGroup={(title, subtitle, content, rawData) => openDetail(title, subtitle, content, rawData)}
                 sortOrder={timelineSortOrder}
+                searchQuery={searchQuery}
               />
             </div>
-          ) : tab === "terminal" ? (
-            <TerminalView
-              exchanges={exchanges}
-              milestones={session.milestones}
-              compactionEvents={session.compaction_events}
-              forkExchangeIndex={session.fork_exchange_index}
-              parentTitle={session.parent_title}
-              forkChildren={session.fork_children}
-            />
-          ) : tab === "files" ? (
-            <div className="px-6 py-5">
-              <FilesSection
-                fileOps={session.file_operations || []}
-                onViewFile={handleViewFile}
+          </div>
+          <div style={{ display: tab === "plans" ? undefined : "none" }}>
+            <div className="px-6 py-4">
+              <PlansTab
+                plans={session.plans || []}
+                tasks={session.tasks || []}
+                milestones={session.milestones || []}
+                gitDetails={session.git_details || []}
+                sessionExchangeCount={session.exchange_count}
+                forkExchangeIndex={session.fork_exchange_index}
+                onViewPlan={handleViewPlan}
+                exchanges={exchanges}
+                onViewInActivity={scrollToExchange}
               />
             </div>
-          ) : (
-            <NotesTab sessionId={id!} />
-          )}
+          </div>
+          <div style={{ display: tab === "notes" ? undefined : "none", height: "100%" }}>
+            <NotesTab sessionId={id!} exchanges={exchanges} />
+          </div>
         </div>
 
         {/* Right: detail split */}
@@ -378,7 +353,7 @@ export function SessionDetail() {
         )}
 
         {/* New exchanges notification — floating over scroll area */}
-        {newExchangeCount > 0 && tab === "timeline" && timelineSortOrder === "oldest" && (
+        {newExchangeCount > 0 && tab === "activity" && timelineSortOrder === "oldest" && (
           <div
             className="absolute bottom-4 flex justify-center pointer-events-none z-10"
             style={{ left: 0, right: detail.open ? "50%" : 0 }}

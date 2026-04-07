@@ -175,7 +175,8 @@ export function initSchema(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS daily_notes (
       id TEXT PRIMARY KEY,
-      date TEXT NOT NULL UNIQUE,
+      date TEXT NOT NULL,
+      title TEXT,
       content TEXT NOT NULL,
       sessions_json TEXT NOT NULL DEFAULT '[]',
       model TEXT,
@@ -250,6 +251,13 @@ export function initSchema(db: Database.Database): void {
     );
   `);
 
+  // Migration: add assistant_response_pre column for text ordering
+  try {
+    db.exec(`ALTER TABLE exchanges ADD COLUMN assistant_response_pre TEXT DEFAULT ''`);
+  } catch {
+    // Column already exists — safe to ignore
+  }
+
   // Migration: deduplicate compaction_events for existing databases
   // The UNIQUE constraint only applies to newly created tables, so we
   // need to clean up duplicates in existing databases manually.
@@ -273,5 +281,41 @@ export function initSchema(db: Database.Database): void {
     }
   } catch {
     // Table may not exist yet on first run — safe to ignore
+  }
+
+  // Migration: remove UNIQUE constraint on daily_notes.date to allow version history
+  try {
+    const hasUnique = db.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'daily_notes'
+    `).get() as { sql: string } | undefined;
+    if (hasUnique?.sql?.includes("UNIQUE")) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS daily_notes_new (
+          id TEXT PRIMARY KEY,
+          date TEXT NOT NULL,
+          title TEXT,
+          content TEXT NOT NULL,
+          sessions_json TEXT NOT NULL DEFAULT '[]',
+          model TEXT,
+          agent_turns INTEGER,
+          cost_usd REAL,
+          generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO daily_notes_new (id, date, content, sessions_json, model, agent_turns, cost_usd, generated_at)
+          SELECT id, date, content, sessions_json, model, agent_turns, cost_usd, generated_at FROM daily_notes;
+        DROP TABLE daily_notes;
+        ALTER TABLE daily_notes_new RENAME TO daily_notes;
+        CREATE INDEX IF NOT EXISTS idx_daily_notes_date ON daily_notes(date);
+      `);
+    }
+  } catch {
+    // Safe to ignore on first run
+  }
+
+  // Migration: add title column to daily_notes
+  try {
+    db.exec(`ALTER TABLE daily_notes ADD COLUMN title TEXT`);
+  } catch {
+    // Column already exists
   }
 }

@@ -36,6 +36,18 @@
   --user-accent: #6366f1;
   --user-bubble-bg: #2a2a4a;
   --claude-accent: #10b981;
+
+  /* Claude Code terminal-exact colors (from source theme.ts dark theme) */
+  --cc-success: rgb(78,186,101);
+  --cc-error: rgb(255,107,128);
+  --cc-dim: rgb(153,153,153);
+  --cc-subtle: rgb(80,80,80);
+  --cc-user-bg: rgb(55,55,55);
+  --cc-bash-border: rgb(253,93,177);
+  --cc-diff-added-bg: rgb(34,92,43);
+  --cc-diff-removed-bg: rgb(122,41,54);
+  --cc-diff-added-word: rgb(56,166,96);
+  --cc-diff-removed-word: rgb(179,89,107);
 }
 
 * { box-sizing: border-box; }

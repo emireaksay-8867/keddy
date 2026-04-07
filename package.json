@@ -53,10 +53,13 @@
     "@hono/node-server": "^1.13.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "better-sqlite3": "^11.10.0",
+    "diff": "^8.0.4",
     "geist": "^1.7.0",
     "hono": "^4.6.0",
     "lucide-react": "^1.0.1",
     "open": "^10.1.0",
+    "prism-react-renderer": "^2.4.1",
+    "svg-pan-zoom": "^3.6.2",
     "zod": "^3.25.0"
   },
   "devDependencies": {

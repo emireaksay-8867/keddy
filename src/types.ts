@@ -185,6 +185,7 @@ export interface ParsedExchange {
   index: number;
   user_prompt: string;
   assistant_response: string;
+  assistant_response_pre: string;
   tool_calls: ParsedToolCall[];
   timestamp: string;
   is_interrupt: boolean;
