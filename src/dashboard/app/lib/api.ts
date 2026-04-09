@@ -69,6 +69,21 @@ export async function getConfig() {
   return fetchJson("/config");
 }
 
+export async function getSystemInfo() {
+  return fetchJson<{
+    version: string;
+    hooksInstalled: boolean;
+    hookDetails: Record<string, boolean>;
+    dbPath: string;
+    github: string;
+    npm: string;
+  }>("/system");
+}
+
+export async function clearAllData() {
+  return fetchJson("/data", { method: "DELETE" });
+}
+
 export async function updateConfig(config: unknown) {
   return fetchJson("/config", {
     method: "PUT",

@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { getDailyNote, getDailyNotes, insertDailyNote, deleteDailyNote, getExchangeRangesByDate, getDailyList, getDatesWithNotes } from "../../db/queries.js";
+import { getDailyNote, getDailyNotes, insertDailyNote, deleteDailyNote, getExchangeRangesByDate, getDailyList, getDatesWithNotes, getSessionMilestones, getSessionPlans } from "../../db/queries.js";
+import { getDb } from "../../db/index.js";
 import { loadConfig } from "../../cli/config.js";
 import { generateDailyNotesStream, getDailyData } from "../../analysis/daily-agent.js";
+import { computeOutcomes, extractPlanTitle } from "./sessions.js";
 
 export const dailyRoutes = new Hono();
 
@@ -22,6 +24,7 @@ dailyRoutes.get("/:date/data", (c) => {
 
   const data = getDailyData(date);
   const notes = getDailyNotes(date);
+  const db = getDb();
 
   // Compute exchange ranges for day-slicing (keyed by external session_id)
   const ranges = getExchangeRangesByDate(date, data.sessions.map((s: any) => s.id));
@@ -30,12 +33,57 @@ dailyRoutes.get("/:date/data", (c) => {
     if (ranges[(s as any).id]) exchangeRanges[s.session_id] = ranges[(s as any).id];
   }
 
+  // Enrich sessions with outcomes, plans, fork info (matches sessions list endpoint)
+  const enrichedSessions = data.sessions.map((s: any) => {
+    const milestones = getSessionMilestones(s.id);
+    const plans = getSessionPlans(s.id);
+    const forkIdx = s.fork_exchange_index ?? null;
+
+    const ownMilestones = forkIdx != null
+      ? milestones.filter((m: any) => m.exchange_index >= forkIdx)
+      : milestones;
+    const outcomes = computeOutcomes(ownMilestones);
+
+    const ownPlans = forkIdx != null
+      ? plans.filter((p: any) => p.exchange_index_start >= forkIdx)
+      : plans;
+    const latestPlan = ownPlans.find((p: any) => p.status === "implemented")
+      ?? ownPlans.find((p: any) => p.status === "approved")
+      ?? null;
+
+    let parentTitle: string | null = null;
+    let parentSessionId: string | null = null;
+    if (s.forked_from) {
+      try {
+        const forkData = JSON.parse(s.forked_from);
+        if (forkData.sessionId) {
+          parentSessionId = forkData.sessionId;
+          const parent = db.prepare("SELECT title FROM sessions WHERE session_id = ?").get(forkData.sessionId) as { title: string | null } | undefined;
+          parentTitle = parent?.title ?? null;
+        }
+      } catch {}
+    }
+
+    return {
+      ...s,
+      outcomes,
+      latest_plan: latestPlan ? {
+        version: latestPlan.version,
+        status: latestPlan.status,
+        total_versions: ownPlans.length,
+        plan_title: extractPlanTitle(latestPlan.plan_text),
+      } : null,
+      forked_from: s.forked_from ?? null,
+      fork_exchange_index: forkIdx,
+      parent_title: parentTitle,
+      parent_session_id: parentSessionId,
+    };
+  });
+
   // Count exchanges on this date that happened after the latest note
   let newExchangesSinceNote = 0;
   const latestNote = notes[0];
   if (latestNote) {
-    const { getDb } = require("../../db/index.js");
-    const db = getDb();
     const row = db.prepare(`
       SELECT COUNT(*) as cnt FROM exchanges e
       JOIN sessions s ON e.session_id = s.id
@@ -44,7 +92,7 @@ dailyRoutes.get("/:date/data", (c) => {
     newExchangesSinceNote = row?.cnt || 0;
   }
 
-  return c.json({ ...data, notes, note: notes[0] || null, date, exchangeRanges, newExchangesSinceNote });
+  return c.json({ ...data, sessions: enrichedSessions, notes, note: notes[0] || null, date, exchangeRanges, newExchangesSinceNote });
 });
 
 // POST /daily/:date/generate — AI daily note via SSE

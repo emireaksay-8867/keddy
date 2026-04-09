@@ -258,6 +258,13 @@ export function initSchema(db: Database.Database): void {
     // Column already exists — safe to ignore
   }
 
+  // Migration: add content_blocks column for ordered conversation flow
+  try {
+    db.exec(`ALTER TABLE exchanges ADD COLUMN content_blocks TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists — safe to ignore
+  }
+
   // Migration: deduplicate compaction_events for existing databases
   // The UNIQUE constraint only applies to newly created tables, so we
   // need to clean up duplicates in existing databases manually.

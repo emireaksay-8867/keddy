@@ -348,9 +348,16 @@ export function extractGitMilestones(
         { cwd: projectPath, timeout: 5000, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
       ).trim();
       if (reflog) {
+        const sinceDate = new Date(since);
+        const untilDate = new Date(until);
         for (const line of reflog.split("\n")) {
           if (!line.includes("push") && !line.includes("update by push")) continue;
-          // reflog entries with push indicate a push happened
+          // Parse timestamp from reflog %gd: "ref@{YYYY-MM-DD HH:MM:SS +ZZZZ}"
+          const dateMatch = line.match(/@\{([^}]+)\}/);
+          if (dateMatch) {
+            const entryDate = new Date(dateMatch[1]);
+            if (entryDate < sinceDate || entryDate > untilDate) continue;
+          }
           const hasPushMilestone = milestones.some(m => m.milestone_type === "push");
           if (!hasPushMilestone) {
             milestones.push({
@@ -359,7 +366,7 @@ export function extractGitMilestones(
               description: "Pushed (detected from git)",
               metadata: { source: "git" },
             });
-            break; // one push milestone is enough
+            break;
           }
         }
       }

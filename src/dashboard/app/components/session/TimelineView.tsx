@@ -541,7 +541,7 @@ function useExchangeSummary(exchange: Exchange) {
       toolStats = sorted.map(([name, count]) => `${name} ${count}`).join(" \u00B7 ");
     }
 
-    const hasContent = (blocks && blocks.length > 0) || tools.length > 0;
+    const hasContent = (blocks && blocks.length > 0) || tools.length > 0 || !!exchange.assistant_response || !!exchange.assistant_response_pre;
     const toolMap = new Map(tools.map(tc => [tc.tool_use_id || tc.id, tc]));
 
     return { summaryText, toolStats, hasContent, blocks, tools, toolMap };

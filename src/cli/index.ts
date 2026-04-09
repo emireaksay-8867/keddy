@@ -35,6 +35,11 @@ async function main(): Promise<void> {
       await runImport(true);
       break;
     }
+    case "backfill": {
+      const { runBackfill } = await import("./backfill.js");
+      await runBackfill();
+      break;
+    }
     case "version":
     case "--version":
     case "-v":
@@ -64,6 +69,7 @@ Usage:
   keddy config     Read/write configuration
   keddy import     Import historical sessions
   keddy reimport   Re-import all sessions (refresh data)
+  keddy backfill   Backfill content_blocks for old exchanges
   keddy version    Show version
   keddy help       Show this help
 

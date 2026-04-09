@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { ParsedExchange, ParsedToolCall, ParsedTranscript } from "../types.js";
+import type { ParsedExchange, ParsedToolCall, ParsedTranscript, ContentBlockRef } from "../types.js";
 
 // Types for JSONL entries
 interface JsonlEntry {
@@ -190,6 +190,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
   let currentTimestamp = "";
   let currentIsCompactSummary = false;
   let pendingToolCalls: ParsedToolCall[] = [];
+  let currentContentBlocks: ContentBlockRef[] = [];
   let exchangeIndex = 0;
   let inExchange = false;
 
@@ -212,6 +213,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
   let currentExchangeCwd: string | null = null;
   let currentExchangeBranch: string | null = null;
   let sessionEntrypoint: string | null = null;
+  let currentTurnDuration: number | null = null;
 
   /** Build the facts-first fields object for exchange pushes */
   function factsFields() {
@@ -228,6 +230,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       entrypoint: currentEntrypoint,
       cwd: currentExchangeCwd,
       git_branch: currentExchangeBranch,
+      turn_duration_ms: currentTurnDuration,
     };
   }
 
@@ -240,6 +243,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
     currentCacheWriteTokens = null;
     currentStopReason = null;
     currentHasThinking = false;
+    currentContentBlocks = [];
   }
 
   for (const entry of entries) {
@@ -312,11 +316,10 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       continue;
     }
 
-    // Turn duration — link to most recently completed exchange
+    // Turn duration — belongs to the CURRENT exchange being accumulated (not the previous one).
+    // This entry appears after the assistant response but before the next user message.
     if (entry.type === "system" && entry.subtype === "turn_duration" && entry.durationMs) {
-      if (exchanges.length > 0) {
-        exchanges[exchanges.length - 1].turn_duration_ms = entry.durationMs;
-      }
+      currentTurnDuration = entry.durationMs;
       continue;
     }
 
@@ -343,6 +346,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
           timestamp: currentTimestamp,
           is_interrupt: false,
           is_compact_summary: currentIsCompactSummary,
+          content_blocks: currentContentBlocks.length > 0 ? [...currentContentBlocks] : undefined,
           ...factsFields(),
         });
         exchangeIndex++;
@@ -413,6 +417,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
             timestamp: currentTimestamp,
             is_interrupt: true,
             is_compact_summary: currentIsCompactSummary,
+            content_blocks: currentContentBlocks.length > 0 ? [...currentContentBlocks] : undefined,
             ...factsFields(),
           });
           exchangeIndex++;
@@ -455,6 +460,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
           timestamp: currentTimestamp,
           is_interrupt: false,
           is_compact_summary: currentIsCompactSummary,
+          content_blocks: currentContentBlocks.length > 0 ? [...currentContentBlocks] : undefined,
           ...factsFields(),
         });
         exchangeIndex++;
@@ -486,6 +492,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       if (entry.gitBranch) currentExchangeBranch = entry.gitBranch;
       if (entry.isSidechain !== undefined) currentIsSidechain = entry.isSidechain;
       resetAssistantAccumulators();
+      currentTurnDuration = null;
 
       continue;
     }
@@ -496,6 +503,19 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       const toolUses = extractToolUses(msgContent);
       const interrupt = isInterrupt(msgContent);
       const hasThinking = Array.isArray(msgContent) && msgContent.some((b) => b.type === "thinking");
+
+      // Build ordered content blocks — preserves the exact sequence of events
+      if (Array.isArray(msgContent)) {
+        for (const block of msgContent) {
+          if (block.type === "thinking") {
+            currentContentBlocks.push({ type: "thinking" });
+          } else if (block.type === "text" && block.text?.trim()) {
+            currentContentBlocks.push({ type: "text", text: block.text });
+          } else if (block.type === "tool_use" && block.id) {
+            currentContentBlocks.push({ type: "tool_use", tool_use_id: block.id });
+          }
+        }
+      }
 
       // Facts-first: extract metadata from assistant entry (last-wins for multi-block turns)
       if (entry.message?.model) currentModel = entry.message.model;
@@ -549,6 +569,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
           timestamp: currentTimestamp,
           is_interrupt: true,
           is_compact_summary: currentIsCompactSummary,
+          content_blocks: currentContentBlocks.length > 0 ? [...currentContentBlocks] : undefined,
           ...factsFields(),
         });
         exchangeIndex++;
@@ -575,6 +596,7 @@ export function parseTranscript(filePath: string): ParsedTranscript {
       timestamp: currentTimestamp,
       is_interrupt: false,
       is_compact_summary: currentIsCompactSummary,
+      content_blocks: currentContentBlocks.length > 0 ? [...currentContentBlocks] : undefined,
       ...factsFields(),
     });
   }

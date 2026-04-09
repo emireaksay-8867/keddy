@@ -17,6 +17,7 @@ import {
   getSessionTranscript,
 } from "../db/queries.js";
 import { createKeddyMcpServer } from "../mcp/tools.js";
+import { loadConfig } from "../cli/config.js";
 import { generateSessionMermaid } from "./mermaid-generator.js";
 import type { MermaidGroup } from "./mermaid-generator.js";
 
@@ -162,9 +163,18 @@ const SYSTEM_PROMPT = `You have access to MCP tools for reading coding session d
 
 If plans were central to the session, pull the full plan details and explain what evolved and why.
 
-Understand what files changed and how those changes connect to the decisions made. If tasks were completed or plans evolved, consider whether the implementation matches the intent. Don't just describe what was discussed — show what actually happened in the code and whether it landed correctly.
+Understand what files changed and how those changes connect to the decisions made. When referencing specific files, use the file search tool to verify what was actually touched — don't infer file names from conversation context alone. If tasks were completed or plans evolved, consider whether the implementation matches the intent. Don't just describe what was discussed — show what actually happened in the code and whether it landed correctly.
 
-Then write about it. Whatever structure, format, or depth serves this specific session. Let the content determine the shape.
+Go deep on problems. When something broke, failed, or didn't work as expected, investigate the transcript thoroughly:
+- What were the exact symptoms? (error messages, unexpected behavior, what the user saw)
+- What debugging was attempted? What approaches were tried and ruled out?
+- Where did the investigation stop? What's the last known state of the problem?
+- If a fix was attempted but didn't resolve it, explain what the fix was and why it fell short.
+This is the most important part of a handoff — someone continuing this session needs to know exactly what failed, what was already tried, and where to pick up debugging. Don't summarize failures vaguely ("it didn't work"). Be specific.
+
+When something was built or deployed, distinguish between "it compiled" and "the user confirmed it works." A passing build doesn't mean the feature renders correctly or behaves as intended. Check if subsequent exchanges confirm it's working, report a problem, or never tested it. Flag unverified changes as unverified.
+
+Then write about it. Whatever structure, format, or depth serves this specific session. Let the content determine the shape. Spend more depth on what's unfinished or broken — that's where the next session starts.
 
 If the session is forked, focus on exchanges after the fork point.
 Exchanges marked [COMPACTION SUMMARY] are compressed context, not conversations.`;
@@ -204,7 +214,7 @@ async function generateShortSessionNote(
 
   const client = new sdk.default({ apiKey });
   const response = await client.messages.create({
-    model: options?.model === "opus" ? "claude-opus-4-6" : options?.model === "haiku" ? "claude-haiku-4-5-20251001" : "claude-sonnet-4-6",
+    model: (() => { const c = loadConfig(); const m = options?.model || c.notes?.sessionModel || c.notes?.model || "sonnet"; return m === "opus" ? "claude-opus-4-6" : m === "haiku" ? "claude-haiku-4-5-20251001" : "claude-sonnet-4-6"; })(),
     max_tokens: 4096,
     system: SHORT_SESSION_PROMPT,
     messages: [{ role: "user", content: `Session:\n${context}\n\nTranscript:\n${transcript}` }],
@@ -270,7 +280,8 @@ export async function* generateSessionNotesStream(
     throw new Error("Claude Agent SDK not installed. Run: npm install @anthropic-ai/claude-agent-sdk");
   }
 
-  const modelName = options?.model || "sonnet";
+  const cfg = loadConfig();
+  const modelName = options?.model || cfg.notes?.sessionModel || cfg.notes?.model || "sonnet";
   yield { type: "status", message: "Starting analysis agent", detail: `${modelName}, in-process MCP`, timestamp: Date.now() };
 
   // Create in-process MCP server (no subprocess, no stdio handshake)
@@ -279,7 +290,7 @@ export async function* generateSessionNotesStream(
   const env: Record<string, string | undefined> = { ...process.env };
   if (options?.apiKey) env.ANTHROPIC_API_KEY = options.apiKey;
 
-  let prompt = `Here's a coding session I need to understand:\n\n${data.context}\n\nRead through it using the MCP tools and tell me what happened — what was built, what decisions were made, what's the current state of things, and what's unfinished. Write it the way you'd explain it to a developer who needs to pick up where this session left off.`;
+  let prompt = `Here's a coding session I need to understand:\n\n${data.context}\n\nRead through it using the MCP tools and tell me what happened — what was built, what decisions were made, what's the current state of things, and what's unfinished. If anything broke or didn't work, dig into the transcript to find the exact errors, what was tried to fix it, and where that investigation landed. Write it the way you'd explain it to a developer who's about to continue this exact work — they need enough detail to start immediately without re-reading the transcript.`;
   if (options?.dayScope) {
     prompt += `\n\nIMPORTANT: This session spans multiple days. Focus ONLY on exchanges #${options.dayScope.fromExchange}–#${options.dayScope.toExchange} which occurred on ${options.dayScope.date}. Use the MCP tools to read this specific range.`;
   }

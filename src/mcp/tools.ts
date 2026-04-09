@@ -637,6 +637,10 @@ export function createKeddyMcpServer(options?: { agentTools?: boolean }): McpSer
     },
   );
 
+  } // end agentTools
+
+  // ── Note retrieval tools (available to all MCP clients) ──────
+
   // Tool: Get session note
   server.tool(
     "keddy_get_session_note",
@@ -693,8 +697,6 @@ export function createKeddyMcpServer(options?: { agentTools?: boolean }): McpSer
       });
     },
   );
-
-  } // end agentTools
 
   return server;
 }

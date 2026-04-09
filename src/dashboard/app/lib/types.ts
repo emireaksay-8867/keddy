@@ -131,6 +131,7 @@ export interface Exchange {
   user_prompt: string;
   assistant_response: string;
   assistant_response_pre: string;
+  content_blocks?: string | null;
   tool_call_count: number;
   timestamp: string;
   is_interrupt: number;
@@ -152,8 +153,15 @@ export interface Exchange {
   turn_duration_ms: number | null;
 }
 
+export interface ContentBlockRef {
+  type: "text" | "tool_use" | "thinking";
+  text?: string;
+  tool_use_id?: string;
+}
+
 export interface ToolCall {
   id: string;
+  tool_use_id: string;
   tool_name: string;
   tool_input: string;
   tool_result: string | null;
@@ -270,6 +278,7 @@ export interface RawToolCall {
 export interface DailyNote {
   id: string;
   date: string;
+  title: string | null;
   content: string;
   sessions_json: string;
   model: string | null;
@@ -289,6 +298,21 @@ export interface DailyData {
     started_at: string;
     ended_at: string | null;
     exchange_count: number;
+    outcomes?: {
+      has_commits: boolean;
+      git_ops: Array<"push" | "pull">;
+      has_pr: boolean;
+    };
+    latest_plan?: {
+      version: number;
+      status: string;
+      total_versions: number;
+      plan_title: string | null;
+    } | null;
+    forked_from?: string | null;
+    fork_exchange_index?: number | null;
+    parent_title?: string | null;
+    parent_session_id?: string | null;
   }>;
   milestones: Array<{
     session_id: string;

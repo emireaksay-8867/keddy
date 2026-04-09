@@ -27,6 +27,7 @@ import {
   upsertSessionNote,
 } from "../db/queries.js";
 import { generateSessionNotesStream } from "./agent.js";
+import { loadConfig } from "../cli/config.js";
 import { createKeddyMcpServer } from "../mcp/tools.js";
 import type { AgentEvent } from "./agent.js";
 import type { Session } from "../types.js";
@@ -159,7 +160,9 @@ Write about this day. Whatever structure, format, or depth serves it best.
 Let the content determine the shape. Connect sessions that relate to each other.
 Reference sessions as [session N].
 Use timestamps to understand the day — when sessions started, ended, gaps, pacing — and let that shape how you explain what happened.
-When files changed or plans evolved, understand what the changes actually do and whether they match the intent. Connect the code changes to the decisions that drove them.
+When files changed or plans evolved, understand what the changes actually do and whether they match the intent. When referencing specific files, use the file search tool to verify what was actually touched — don't infer file names from conversation context alone. Connect the code changes to the decisions that drove them.
+When sessions hit problems — things that broke, failed, or didn't work as expected — carry that depth through. The session notes may already detail exact errors, debugging attempts, and where investigations stopped. Preserve that specificity in the daily note. If something is unfinished or broken at end of day, that's the most important thing for tomorrow's context.
+When changes were built or deployed, distinguish between "compiled successfully" and "user confirmed it works." A passing build doesn't mean the feature renders or behaves correctly. If session notes or transcripts show user confirmation, say so. If they don't, flag it as unverified.
 If a previous day's note is provided, show how today connects to or continues from it.
 Start directly with the content — no preamble.
 At the very end, after the full analysis, write a single line: TITLE: <short title that captures the day's theme>`;
@@ -311,7 +314,7 @@ export async function* generateDailyNotesStream(
     const notePromises = missingSessions.map(async ({ session, index }) => {
       const result = await consumeSessionNoteGenerator(session.session_id, {
         apiKey: options?.apiKey,
-        model: options?.model || "sonnet",
+        model: options?.model || (() => { const c = loadConfig(); return c.notes?.dailyModel || c.notes?.model || "sonnet"; })(),
       });
       return { index, session, result };
     });
@@ -372,7 +375,7 @@ export async function* generateDailyNotesStream(
 
       const gen = generateSessionNotesStream(s.session_id, {
         apiKey: options?.apiKey,
-        model: options?.model || "sonnet",
+        model: options?.model || (() => { const c = loadConfig(); return c.notes?.dailyModel || c.notes?.model || "sonnet"; })(),
         dayScope: { date: dateStr, fromExchange: range.first_exchange, toExchange: range.last_exchange },
       });
 
@@ -427,7 +430,7 @@ export async function* generateDailyNotesStream(
   const keddyServer = createKeddyMcpServer({ agentTools: true });
   const queryOptions: any = {
     systemPrompt: buildDailySystemPrompt(),
-    model: options?.model || "sonnet",
+    model: options?.model || (() => { const c = loadConfig(); return c.notes?.dailyModel || c.notes?.model || "sonnet"; })(),
     mcpServers: {
       keddy: { type: "sdk" as const, name: "keddy", instance: keddyServer },
     },
@@ -491,7 +494,7 @@ export async function* generateDailyNotesStream(
         cost = message.total_cost_usd || 0;
         // Use the model we requested — modelUsage includes internal tool-processing models (haiku)
         const MODEL_IDS: Record<string, string> = { sonnet: "claude-sonnet-4-6", opus: "claude-opus-4-6", haiku: "claude-haiku-4-5" };
-        const requestedModel = options?.model || "sonnet";
+        const requestedModel = options?.model || (() => { const c = loadConfig(); return c.notes?.dailyModel || c.notes?.model || "sonnet"; })();
         model = MODEL_IDS[requestedModel] || requestedModel;
         totalCost += cost;
         totalTurns += turns;
