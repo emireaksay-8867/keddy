@@ -22,7 +22,7 @@ import {
 } from "../../db/queries.js";
 import { getDb } from "../../db/index.js";
 
-function extractPlanTitle(planText: string): string | null {
+export function extractPlanTitle(planText: string): string | null {
   if (!planText) return null;
   // Try markdown heading first
   for (const line of planText.split("\n")) {
@@ -52,7 +52,7 @@ function extractPlanTitle(planText: string): string | null {
 }
 
 /** Compute outcomes from milestones — shared between list and detail endpoints */
-function computeOutcomes(milestones: Array<{ milestone_type: string; exchange_index: number }>) {
+export function computeOutcomes(milestones: Array<{ milestone_type: string; exchange_index: number }>) {
   const gitOps: Array<{ type: "push" | "pull"; idx: number }> = [];
   for (const m of milestones) {
     if (m.milestone_type === "push") gitOps.push({ type: "push", idx: m.exchange_index });
@@ -285,6 +285,7 @@ sessionsRoutes.get("/", (c) => {
           cwd: exchange.cwd,
           git_branch: exchange.git_branch,
           turn_duration_ms: exchange.turn_duration_ms,
+          content_blocks: exchange.content_blocks ? JSON.stringify(exchange.content_blocks) : null,
         });
         for (const tc of exchange.tool_calls) {
           const enriched = extractToolCallFields(tc.name, tc.input);
@@ -1137,7 +1138,9 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
         const endedMs = session.ended_at ? new Date(session.ended_at).getTime() : 0;
         if (mtime - endedMs > 2000) {
           const existingExchanges = getSessionExchanges(session.id);
-          const sinceIndex = Math.max(0, existingExchanges.length - 1);
+          // Re-process last 3 exchanges — catches content_blocks partially captured
+          // by Stop hook due to JSONL flush timing. length > SQL guard prevents regression.
+          const sinceIndex = Math.max(0, existingExchanges.length - 3);
 
           let latestExchanges;
           try {
@@ -1151,11 +1154,12 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
               const existing = existingExchanges.find((e: any) => e.exchange_index === exchange.index);
 
               if (existing) {
-                // UPDATE existing exchange — it might have been captured with incomplete response
-                // Never overwrite a non-empty response with an empty one (race condition protection)
-                const safeResponse = (exchange.assistant_response ?? "") || (existing as any).assistant_response || "";
-                const safeResponsePre = (exchange.assistant_response_pre ?? "") || (existing as any).assistant_response_pre || "";
-                const safeToolCount = exchange.tool_calls.length || (existing as any).tool_call_count || 0;
+                // UPDATE existing exchange — it might have been captured with incomplete response.
+                // Use ?? to preserve empty strings (valid: means no post-tool text) while
+                // falling back only when the parser returns null/undefined.
+                const safeResponse = exchange.assistant_response ?? (existing as any).assistant_response ?? "";
+                const safeResponsePre = exchange.assistant_response_pre ?? (existing as any).assistant_response_pre ?? "";
+                const safeToolCount = exchange.tool_calls.length;
                 db.prepare(`
                   UPDATE exchanges SET
                     assistant_response = ?,
@@ -1169,7 +1173,10 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
                     cache_write_tokens = COALESCE(?, cache_write_tokens),
                     stop_reason = COALESCE(?, stop_reason),
                     has_thinking = COALESCE(?, has_thinking),
-                    turn_duration_ms = COALESCE(?, turn_duration_ms)
+                    turn_duration_ms = COALESCE(?, turn_duration_ms),
+                    content_blocks = CASE
+                      WHEN ? IS NOT NULL AND (content_blocks IS NULL OR length(?) > length(content_blocks))
+                      THEN ? ELSE content_blocks END
                   WHERE id = ?
                 `).run(
                   safeResponse,
@@ -1184,6 +1191,9 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
                   exchange.stop_reason ?? null,
                   exchange.has_thinking ? 1 : null,
                   exchange.turn_duration_ms ?? null,
+                  exchange.content_blocks ? JSON.stringify(exchange.content_blocks) : null,
+                  exchange.content_blocks ? JSON.stringify(exchange.content_blocks) : null,
+                  exchange.content_blocks ? JSON.stringify(exchange.content_blocks) : null,
                   existing.id,
                 );
 
@@ -1212,6 +1222,7 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
                   exchange_index: exchange.index,
                   user_prompt: exchange.user_prompt,
                   assistant_response: exchange.assistant_response,
+                  assistant_response_pre: exchange.assistant_response_pre,
                   tool_call_count: exchange.tool_calls.length,
                   timestamp: exchange.timestamp,
                   is_interrupt: exchange.is_interrupt,
@@ -1229,6 +1240,7 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
                   cwd: exchange.cwd,
                   git_branch: exchange.git_branch,
                   turn_duration_ms: exchange.turn_duration_ms,
+                  content_blocks: exchange.content_blocks ? JSON.stringify(exchange.content_blocks) : null,
                 });
 
                 for (const tc of exchange.tool_calls) {
@@ -1246,6 +1258,42 @@ sessionsRoutes.get("/:id/exchanges", (c) => {
                 }
               }
             }
+
+            // Healing pass: fix exchanges with tool_calls but missing content_blocks.
+            // These are exchanges captured partially by Stop hook (JSONL not fully flushed)
+            // and never re-visited because they fell outside the re-parse window.
+            // Runs every poll cycle but the query returns 0 rows once healed — near-zero cost.
+            try {
+              const staleRows = db.prepare(`
+                SELECT exchange_index FROM exchanges
+                WHERE session_id = ? AND tool_call_count > 0
+                  AND (content_blocks IS NULL OR content_blocks = 'null' OR content_blocks = '[]')
+              `).all(session.id) as Array<{ exchange_index: number }>;
+
+              if (staleRows.length > 0) {
+                const earliestStale = Math.min(...staleRows.map(e => e.exchange_index));
+                if (earliestStale < sinceIndex) {
+                  let healExchanges;
+                  try {
+                    healExchanges = parseLatestExchanges(session.jsonl_path, earliestStale);
+                  } catch { healExchanges = null; }
+
+                  if (healExchanges) {
+                    for (const exchange of healExchanges) {
+                      const cbJson = exchange.content_blocks ? JSON.stringify(exchange.content_blocks) : null;
+                      if (!cbJson) continue;
+                      db.prepare(`
+                        UPDATE exchanges SET
+                          content_blocks = CASE
+                            WHEN ? IS NOT NULL AND (content_blocks IS NULL OR length(?) > length(content_blocks))
+                            THEN ? ELSE content_blocks END
+                        WHERE session_id = ? AND exchange_index = ?
+                      `).run(cbJson, cbJson, cbJson, session.id, exchange.index);
+                    }
+                  }
+                }
+              }
+            } catch { /* non-critical — normal sync already handled recent exchanges */ }
 
             // Extract milestones from ALL exchanges in DB (not just tail) —
             // catches commits/pushes from any exchange, even if older than sinceIndex
@@ -1370,6 +1418,7 @@ sessionsRoutes.post("/:id/sync", (c) => {
         exchange_index: exchange.index,
         user_prompt: exchange.user_prompt,
         assistant_response: exchange.assistant_response,
+        assistant_response_pre: exchange.assistant_response_pre,
         tool_call_count: exchange.tool_calls.length,
         timestamp: exchange.timestamp,
         is_interrupt: exchange.is_interrupt,
@@ -1387,6 +1436,7 @@ sessionsRoutes.post("/:id/sync", (c) => {
         cwd: exchange.cwd,
         git_branch: exchange.git_branch,
         turn_duration_ms: exchange.turn_duration_ms,
+        content_blocks: exchange.content_blocks ? JSON.stringify(exchange.content_blocks) : null,
       });
       for (const tc of exchange.tool_calls) {
         try {

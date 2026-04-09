@@ -17,6 +17,12 @@ function getDefaultConfig(): KeddyConfig {
         decisionExtraction: { enabled: true, model: "haiku" },
       },
     },
+    notes: {
+      sessionModel: "sonnet",
+      dailyModel: "sonnet",
+      autoSessionNotes: false,
+      autoDailyNotes: false,
+    },
   };
 }
 
@@ -36,6 +42,10 @@ export function loadConfig(): KeddyConfig {
           ...defaults.analysis.features,
           ...(raw.analysis?.features ?? {}),
         },
+      },
+      notes: {
+        ...defaults.notes,
+        ...(raw.notes ?? {}),
       },
     };
   } catch {

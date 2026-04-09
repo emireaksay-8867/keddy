@@ -18,7 +18,7 @@ import {
 import { parseTranscript, parseLatestExchanges } from "./parser.js";
 import { extractPlans } from "./plans.js";
 import { extractActivityGroups, deriveDisplayType } from "./activity-groups.js";
-import { extractMilestones, extractGitMilestones } from "./milestones.js";
+import { extractMilestones } from "./milestones.js";
 import { deriveTitle } from "./titles.js";
 
 interface HookStdin {
@@ -146,10 +146,11 @@ async function handleStop(input: HookStdin): Promise<void> {
     if (!sessionRow) return;
 
     const existingExchanges = getSessionExchanges(sessionRow.id);
-    // Re-process the last existing exchange to catch continuation text
-    // (Stop fires mid-exchange during tool use — first fire inserts partial response,
-    //  subsequent fires need to UPDATE with accumulated text from parser)
-    const sinceIndex = Math.max(0, existingExchanges.length - 1);
+    // Re-process the last 3 exchanges to catch content_blocks that were partially
+    // captured due to JSONL flush timing. The parser always reads the full JSONL —
+    // sinceIndex only controls which parsed exchanges we UPDATE in the DB.
+    // The length > SQL guard prevents regression of already-good data.
+    const sinceIndex = Math.max(0, existingExchanges.length - 3);
 
     const latestExchanges = parseLatestExchanges(
       input.transcript_path,
@@ -162,18 +163,22 @@ async function handleStop(input: HookStdin): Promise<void> {
       const existing = existingExchanges.find((e: any) => e.exchange_index === exchange.index);
 
       if (existing) {
-        // UPDATE existing exchange with more complete data (continuation text after tool calls)
-        // Never overwrite a non-empty response with an empty one (race condition protection:
-        // live sync can INSERT an exchange with empty response before the assistant finishes,
-        // and if the Stop hook fails to update, the response is permanently lost)
-        const safeResponse = exchange.assistant_response || (existing as any).assistant_response || "";
-        const safeResponsePre = exchange.assistant_response_pre || (existing as any).assistant_response_pre || "";
-        const safeToolCount = exchange.tool_calls.length || (existing as any).tool_call_count || 0;
+        // UPDATE existing exchange with more complete data from parser.
+        // The parser reads the append-only JSONL, so its output is always >= previous parse.
+        // Use ?? to preserve empty strings (valid: means no post-tool text) while
+        // falling back only when the parser returns null/undefined.
+        const safeResponse = exchange.assistant_response ?? (existing as any).assistant_response ?? "";
+        const safeResponsePre = exchange.assistant_response_pre ?? (existing as any).assistant_response_pre ?? "";
+        const safeToolCount = exchange.tool_calls.length;
+        const contentBlocksJson = exchange.content_blocks ? JSON.stringify(exchange.content_blocks) : null;
         db.prepare(`
           UPDATE exchanges SET
             assistant_response = ?,
             assistant_response_pre = ?,
             tool_call_count = ?,
+            content_blocks = CASE
+              WHEN ? IS NOT NULL AND (content_blocks IS NULL OR length(?) > length(content_blocks))
+              THEN ? ELSE content_blocks END,
             model = COALESCE(?, model),
             input_tokens = COALESCE(?, input_tokens),
             output_tokens = COALESCE(?, output_tokens),
@@ -187,6 +192,9 @@ async function handleStop(input: HookStdin): Promise<void> {
           safeResponse,
           safeResponsePre,
           safeToolCount,
+          contentBlocksJson,
+          contentBlocksJson,
+          contentBlocksJson,
           exchange.model,
           exchange.input_tokens,
           exchange.output_tokens,
@@ -241,6 +249,7 @@ async function handleStop(input: HookStdin): Promise<void> {
           cwd: exchange.cwd,
           git_branch: exchange.git_branch,
           turn_duration_ms: exchange.turn_duration_ms,
+          content_blocks: exchange.content_blocks ? JSON.stringify(exchange.content_blocks) : null,
         });
 
         for (const tc of exchange.tool_calls) {
@@ -513,6 +522,30 @@ async function handleStop(input: HookStdin): Promise<void> {
     } catch {
       // Non-critical
     }
+
+    // Delayed re-parse: the JSONL may not be fully flushed to disk when the Stop
+    // hook fires. Wait 1.5s and re-parse to catch any late-flushed entries.
+    // Only updates content_blocks (text/tool ordering) — the most timing-sensitive field.
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        try {
+          const freshExchanges = parseLatestExchanges(input.transcript_path, sinceIndex);
+          const db2 = getDb();
+          for (const exchange of freshExchanges) {
+            const contentBlocksJson = exchange.content_blocks ? JSON.stringify(exchange.content_blocks) : null;
+            if (!contentBlocksJson) continue;
+            db2.prepare(`
+              UPDATE exchanges SET
+                content_blocks = CASE
+                  WHEN ? IS NOT NULL AND (content_blocks IS NULL OR length(?) > length(content_blocks))
+                  THEN ? ELSE content_blocks END
+              WHERE session_id = ? AND exchange_index = ?
+            `).run(contentBlocksJson, contentBlocksJson, contentBlocksJson, sessionRow.id, exchange.index);
+          }
+        } catch { /* non-critical — SessionEnd handles full re-parse */ }
+        resolve();
+      }, 1500);
+    });
   } finally {
     closeDb();
   }
@@ -594,6 +627,7 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
         exchange_index: exchange.index,
         user_prompt: exchange.user_prompt,
         assistant_response: exchange.assistant_response,
+        assistant_response_pre: exchange.assistant_response_pre,
         tool_call_count: exchange.tool_calls.length,
         timestamp: exchange.timestamp,
         is_interrupt: exchange.is_interrupt,
@@ -611,6 +645,7 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
         cwd: exchange.cwd,
         git_branch: exchange.git_branch,
         turn_duration_ms: exchange.turn_duration_ms,
+        content_blocks: exchange.content_blocks ? JSON.stringify(exchange.content_blocks) : null,
       });
 
       for (const tc of exchange.tool_calls) {
@@ -684,19 +719,13 @@ async function handleSessionEnd(input: HookStdin): Promise<void> {
 
     const milestones = extractMilestones(transcript.exchanges);
 
-    // Also capture commits from git history (made outside Claude — terminal, GitKraken, etc.)
-    const existingCommitMessages = new Set(
-      milestones.filter(m => m.milestone_type === "commit").map(m => m.description),
-    );
-    const gitMilestones = extractGitMilestones(
-      session.project_path,
-      session.started_at,
-      transcript.ended_at ?? session.ended_at ?? null,
-      existingCommitMessages,
-    );
-    const allMilestones = [...milestones, ...gitMilestones];
+    // Git-detection from reflog/log is disabled — it produced false positives from
+    // stash entries (git log --all includes refs/stash) and cross-session attribution
+    // (pushes from overlapping sessions within the same time window).
+    // Tool-call-based extractMilestones() is reliable: correct exchange_index,
+    // no cross-session issues, and covers all git operations done through Claude.
 
-    for (const milestone of allMilestones) {
+    for (const milestone of milestones) {
       insertMilestone({
         session_id: session.id,
         milestone_type: milestone.milestone_type,

@@ -173,6 +173,12 @@ export interface SessionLink {
 
 // --- Parser Types ---
 
+export interface ContentBlockRef {
+  type: "text" | "tool_use" | "thinking";
+  text?: string;         // for type === "text"
+  tool_use_id?: string;  // for type === "tool_use"
+}
+
 export interface ParsedToolCall {
   name: string;
   input: unknown;
@@ -186,6 +192,7 @@ export interface ParsedExchange {
   user_prompt: string;
   assistant_response: string;
   assistant_response_pre: string;
+  content_blocks?: ContentBlockRef[];
   tool_calls: ParsedToolCall[];
   timestamp: string;
   is_interrupt: boolean;
@@ -310,9 +317,18 @@ export interface AnalysisConfig {
   };
 }
 
+export interface NotesConfig {
+  model?: string; // legacy single model, kept for backward compat
+  sessionModel: string;
+  dailyModel: string;
+  autoSessionNotes: boolean;
+  autoDailyNotes: boolean;
+}
+
 export interface KeddyConfig {
   dbPath?: string;
   analysis: AnalysisConfig;
+  notes: NotesConfig;
 }
 
 // --- Session Notes (Agent SDK analysis) ---

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, Children, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { getSessionNotes, generateSessionNotesSSE, deleteSessionNote } from "../../lib/api.js";
+import { getSessionNotes, generateSessionNotesSSE, deleteSessionNote, getConfig } from "../../lib/api.js";
 import type { SessionNote } from "../../lib/types.js";
 
 // ── Mermaid Diagram Renderer ─────────────────────────────────
@@ -317,6 +317,14 @@ export function NotesTab({ sessionId, exchanges }: NotesTabProps) {
   const [model, setModel] = useState<"haiku" | "sonnet" | "opus">("sonnet");
   const cancelRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Load default model from config
+  useEffect(() => {
+    getConfig().then((c: any) => {
+      const m = c?.notes?.sessionModel || c?.notes?.model;
+      if (m) setModel(m);
+    }).catch(() => {});
+  }, []);
 
   const fetchNotes = useCallback(async () => {
     try {

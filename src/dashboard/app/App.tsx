@@ -5,7 +5,6 @@ import { SessionDetail } from "./pages/SessionDetail.js";
 import { Settings } from "./pages/Settings.js";
 import { DailyList } from "./pages/DailyList.js";
 import { DailyNotes } from "./pages/DailyNotes.js";
-import { LandingPage } from "./pages/LandingPage.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { getProjects, getStats } from "./lib/api.js";
 import type { Stats } from "./lib/types.js";
@@ -62,7 +61,6 @@ export function App() {
     >
       <BrowserRouter>
         <Routes>
-          <Route path="/landing" element={<LandingPage />} />
           <Route path="/*" element={
             <div className="flex h-full">
               <Sidebar />

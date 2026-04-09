@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useParams, useNavigate, useSearchParams } from "react-router";
-import { getDailyData, generateDailyNoteSSE, deleteDailyNote } from "../lib/api.js";
+import { getDailyData, generateDailyNoteSSE, deleteDailyNote, getConfig } from "../lib/api.js";
 import type { DailyData } from "../lib/types.js";
 import { MarkdownWithMermaid, ActivityFeed } from "../components/session/NotesTab.js";
+import { SessionRow, resolveRepoName } from "../components/SessionRow.js";
 import { CalendarDays, Trash2 } from "lucide-react";
 
 function formatDate(d: Date): string {
@@ -17,17 +18,6 @@ function fullDateLabel(dateStr: string): string {
   if (dateStr === formatDate(today)) return "Today, " + d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
   if (dateStr === formatDate(yesterday)) return "Yesterday, " + d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
   return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-}
-
-function formatDuration(start: string, end: string | null): string {
-  if (!end) return "";
-  const ms = new Date(end).getTime() - new Date(start).getTime();
-  if (ms < 60000) return "<1m";
-  const mins = Math.floor(ms / 60000);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  const rem = mins % 60;
-  return rem > 0 ? `${hours}h ${rem}m` : `${hours}h`;
 }
 
 function CalendarDropdown({ selected, onChange, onClose }: { selected: string; onChange: (d: string) => void; onClose: () => void }) {
@@ -82,12 +72,25 @@ export function DailyNotes() {
   const [generatingDate, setGeneratingDate] = useState<string | null>(null);
   const [events, setEvents] = useState<Array<{ type: string; message: string; detail?: string; timestamp: number }>>([]);
   const [calendarOpen, setCalendarOpen] = useState(false);
-  const [model, setModel] = useState<"haiku" | "sonnet" | "opus">("sonnet");
+  const modelParam = searchParams.get("model");
+  const [model, setModel] = useState<"haiku" | "sonnet" | "opus">(
+    modelParam === "opus" || modelParam === "haiku" ? modelParam : "sonnet"
+  );
   const [streamingText, setStreamingText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [selectedNoteIdx, setSelectedNoteIdx] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+
+  // Load default model from config (if no URL param override)
+  useEffect(() => {
+    if (!modelParam) {
+      getConfig().then((c: any) => {
+        const m = c?.notes?.dailyModel || c?.notes?.model;
+        if (m) setModel(m);
+      }).catch(() => {});
+    }
+  }, [modelParam]);
 
   // Fetch data for selected date
   useEffect(() => {
@@ -216,37 +219,19 @@ export function DailyNotes() {
           <div className="mt-4 space-y-4">
             {/* ZONE 1: Session List */}
             <section>
-              <h2 className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>
+              <h2 className="text-[11px] font-semibold mb-2" style={{ color: "var(--text-muted)", letterSpacing: "0.02em" }}>
                 {sessionsLabel} <span className="font-normal">({sessionCount})</span>
               </h2>
               <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
-                {data.sessions.map((s, i) => {
-                  const title = s.title || s.session_id.substring(0, 16);
-                  const project = s.project_path.split("/").pop();
-                  const duration = formatDuration(s.started_at, s.ended_at);
-                  const dayRange = data.exchangeRanges?.[s.session_id];
-                  const exchLabel = dayRange && dayRange.day_exchange_count < s.exchange_count
-                    ? `${dayRange.day_exchange_count} of ${s.exchange_count} exch`
-                    : `${s.exchange_count} exch`;
-                  return (
-                    <Link key={s.session_id} to={`/sessions/${s.session_id}`}
-                      className={`flex items-center px-4 py-2.5 transition-colors hover:bg-[var(--bg-hover)]${i < sessionCount - 1 ? " border-b" : ""}`}
-                      style={{ borderColor: i < sessionCount - 1 ? "var(--border)" : undefined }}>
-                      <span className="text-[11px] font-mono shrink-0 w-5" style={{ color: "var(--text-muted)" }}>{i + 1}</span>
-                      <span className="text-[13px] truncate flex-1"
-                        style={{ color: "var(--text-primary)", fontFamily: "'Geist Mono', 'JetBrains Mono', 'SF Mono', monospace" }}>
-                        {title}
-                      </span>
-                      <span className="text-[11px] px-2 py-0.5 rounded ml-2"
-                        style={{ border: "1px solid var(--border-bright)", color: "var(--text-secondary)" }}>
-                        {project}
-                      </span>
-                      <span className="text-[11px] tabular-nums ml-3" style={{ color: "var(--text-muted)" }}>
-                        {exchLabel}{duration ? ` · ${duration}` : ""}
-                      </span>
-                    </Link>
-                  );
-                })}
+                {data.sessions.map((s, i) => (
+                  <SessionRow
+                    key={s.session_id}
+                    session={s as any}
+                    showProject={true}
+                    repoName={resolveRepoName(s.project_path)}
+                    isLast={i === sessionCount - 1}
+                  />
+                ))}
               </div>
             </section>
 
@@ -380,6 +365,11 @@ export function DailyNotes() {
                     </div>
                   </div>
                   <div className="md-content px-1">
+                    {note.title && (
+                      <h1 className="text-[18px] font-semibold mb-3" style={{ color: "var(--text-primary)" }}>
+                        {note.title}
+                      </h1>
+                    )}
                     <MarkdownWithMermaid content={note.content} />
                   </div>
                 </section>

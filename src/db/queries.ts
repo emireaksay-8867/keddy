@@ -219,6 +219,7 @@ export function insertExchange(data: {
   cwd?: string | null;
   git_branch?: string | null;
   turn_duration_ms?: number | null;
+  content_blocks?: string | null;
 }): string {
   const db = getDb();
 
@@ -235,8 +236,8 @@ export function insertExchange(data: {
       tool_call_count, timestamp, duration_ms, is_interrupt, is_compact_summary, metadata,
       model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
       stop_reason, has_thinking, permission_mode, is_sidechain, entrypoint, cwd, git_branch,
-      turn_duration_ms)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      turn_duration_ms, content_blocks)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.session_id,
@@ -263,6 +264,7 @@ export function insertExchange(data: {
     data.cwd ?? null,
     data.git_branch ?? null,
     data.turn_duration_ms ?? null,
+    data.content_blocks ?? null,
   );
   return id;
 }
