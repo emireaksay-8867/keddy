@@ -24,6 +24,22 @@ function DayRow({ item, isLast, defaultModel }: { item: DailyListItem; isLast: b
   const [model, setModel] = useState<"haiku" | "sonnet" | "opus">(defaultModel as any || "sonnet");
   const borderStyle = isLast ? "1px solid transparent" : "1px solid rgba(255,255,255,0.06)";
 
+  // Today, no activity captured yet (synthetic row — see DailyList useEffect below)
+  if (item.session_count === 0 && !item.note) {
+    return (
+      <Link to={`/daily/${item.date}`}
+        className="flex items-center px-5 py-2 transition-colors hover:bg-[var(--bg-hover)]"
+        style={{ borderBottom: borderStyle }}>
+        <div className="flex-1 min-w-0 flex items-center gap-3">
+          <p className="text-[13px] font-medium shrink-0" style={{ color: "var(--text-primary)" }}>No exchanges yet</p>
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            Start a Claude Code session to see activity here
+          </span>
+        </div>
+      </Link>
+    );
+  }
+
   if (item.note) {
     return (
       <Link to={`/daily/${item.date}`}
@@ -142,7 +158,13 @@ export function DailyList() {
 
   useEffect(() => {
     getDailyList(365)
-      .then(setItems)
+      .then((data) => {
+        const todayStr = new Date().toISOString().split("T")[0];
+        if (!data.some((d) => d.date === todayStr)) {
+          data = [{ date: todayStr, session_count: 0, total_exchanges: 0, note: null }, ...data];
+        }
+        setItems(data);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);

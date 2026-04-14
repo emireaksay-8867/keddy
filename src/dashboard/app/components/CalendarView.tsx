@@ -92,10 +92,24 @@ function CalendarDayCell({ dateStr, label, item, isToday, isFuture, isOutside, d
     );
   }
 
+  // Today, no activity captured yet
+  if (isToday) {
+    return (
+      <Link to={`/daily/${dateStr}`}
+        className="flex flex-col p-2 min-h-[120px] gap-1.5 transition-colors hover:brightness-110"
+        style={cellStyle}>
+        <span className="text-[12px] tabular-nums" style={{ color: "var(--text-primary)", fontWeight: 600 }}>{label}</span>
+        <span className="text-[10px] leading-tight" style={{ color: "var(--text-muted)" }}>
+          No exchanges yet
+        </span>
+      </Link>
+    );
+  }
+
   // Empty / future / outside
   return (
     <div className="flex flex-col p-2 min-h-[120px]" style={cellStyle}>
-      <span className="text-[12px] tabular-nums" style={{ color: isOutside ? "var(--text-muted)" : isFuture ? "var(--text-muted)" : "var(--text-tertiary)", fontWeight: isToday ? 600 : 400 }}>
+      <span className="text-[12px] tabular-nums" style={{ color: isOutside ? "var(--text-muted)" : isFuture ? "var(--text-muted)" : "var(--text-tertiary)", fontWeight: 400 }}>
         {label}
       </span>
     </div>
