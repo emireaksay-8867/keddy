@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1000" role="img" aria-label="Keddy architecture: You interact with Claude Code; Claude Code sends session hooks to Keddy's session reader, which writes to a local database. The database serves both MCP tools that Claude can call, and a dashboard you open in your browser.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2100 1000" role="img" aria-label="Keddy architecture: You interact with Claude Code; Claude Code sends session hooks to Keddy's session reader, which writes to a local database. The database serves both MCP tools that Claude can call, and a dashboard you open in your browser.">
   <defs>
     <style>
       .box { fill: none; stroke: #111111; stroke-width: 2; }
@@ -23,64 +23,64 @@
   <text x="180" y="662" text-anchor="middle" class="label label-box">You</text>
 
   <!-- ============ You <-> Claude Code (prompts / responses) ============ -->
-  <line x1="262" y1="540" x2="338" y2="540" class="arrow" marker-end="url(#arrowhead)" marker-start="url(#arrowhead)"/>
-  <text x="300" y="522" text-anchor="middle" class="label-arrow">prompts</text>
-  <text x="300" y="568" text-anchor="middle" class="label-arrow">responses</text>
+  <line x1="262" y1="540" x2="438" y2="540" class="arrow" marker-end="url(#arrowhead)" marker-start="url(#arrowhead)"/>
+  <text x="350" y="522" text-anchor="middle" class="label-arrow">prompts</text>
+  <text x="350" y="568" text-anchor="middle" class="label-arrow">responses</text>
 
   <!-- ================= CLAUDE CODE ================= -->
-  <rect x="340" y="460" width="260" height="160" rx="12" class="box"/>
-  <!-- Claude sparkle (Anthropic 4-pointed star, vertical-stretched) -->
-  <path d="M 470 478 L 478 495 L 495 503 L 478 511 L 470 528 L 462 511 L 445 503 L 462 495 Z" fill="#111111"/>
-  <text x="470" y="580" text-anchor="middle" class="label label-box">Claude Code</text>
+  <rect x="440" y="460" width="260" height="160" rx="12" class="box"/>
+  <!-- Anthropic sparkle -->
+  <path d="M 570 478 L 578 495 L 595 503 L 578 511 L 570 528 L 562 511 L 545 503 L 562 495 Z" fill="#111111"/>
+  <text x="570" y="580" text-anchor="middle" class="label label-box">Claude Code</text>
 
-  <!-- ============ Claude Code -> Session reader (session hooks) — L-path ============ -->
-  <path d="M 600 510 L 700 510 L 700 210 L 818 210" class="arrow" marker-end="url(#arrowhead)"/>
-  <text x="769" y="196" text-anchor="middle" class="label-arrow">session hooks</text>
+  <!-- ============ Session hooks (Claude Code -> Session reader inside Keddy) ============ -->
+  <path d="M 700 510 L 860 510 L 860 210 L 1088 210" class="arrow" marker-end="url(#arrowhead)"/>
+  <text x="780" y="498" text-anchor="middle" class="label-arrow">session hooks</text>
 
-  <!-- ============ Tools for Claude -> Claude Code (tool calls) — L-path ============ -->
-  <path d="M 820 650 L 700 650 L 700 580 L 602 580" class="arrow" marker-end="url(#arrowhead)"/>
-  <text x="651" y="568" text-anchor="middle" class="label-arrow">tool calls</text>
+  <!-- ============ Tool calls (Tools for Claude -> Claude Code) ============ -->
+  <path d="M 1090 650 L 860 650 L 860 580 L 702 580" class="arrow" marker-end="url(#arrowhead)"/>
+  <text x="975" y="678" text-anchor="middle" class="label-arrow">tool calls</text>
 
   <!-- ================= KEDDY CONTAINER ================= -->
-  <rect x="780" y="60" width="940" height="900" rx="16" class="box"/>
-  <text x="820" y="110" class="label label-title">Keddy</text>
+  <rect x="1050" y="60" width="1000" height="900" rx="16" class="box"/>
+  <text x="1090" y="110" class="label label-title">Keddy</text>
 
   <!-- Session reader -->
-  <rect x="820" y="160" width="860" height="100" rx="12" class="box"/>
-  <text x="1250" y="205" text-anchor="middle" class="label label-box">Session reader</text>
-  <text x="1250" y="238" text-anchor="middle" class="label label-sub">reads every session as it happens</text>
+  <rect x="1090" y="160" width="920" height="100" rx="12" class="box"/>
+  <text x="1550" y="205" text-anchor="middle" class="label label-box">Session reader</text>
+  <text x="1550" y="238" text-anchor="middle" class="label label-sub">reads every session as it happens</text>
 
   <!-- Arrow down: Session reader -> Local database -->
-  <line x1="1250" y1="262" x2="1250" y2="298" class="arrow" marker-end="url(#arrowhead)"/>
+  <line x1="1550" y1="262" x2="1550" y2="298" class="arrow" marker-end="url(#arrowhead)"/>
 
   <!-- Local database -->
-  <rect x="820" y="300" width="860" height="100" rx="12" class="box"/>
-  <text x="1250" y="345" text-anchor="middle" class="label label-box">Local database</text>
-  <text x="1250" y="378" text-anchor="middle" class="label label-sub">every session, searchable — on your machine</text>
+  <rect x="1090" y="300" width="920" height="100" rx="12" class="box"/>
+  <text x="1550" y="345" text-anchor="middle" class="label label-box">Local database</text>
+  <text x="1550" y="378" text-anchor="middle" class="label label-sub">every session, searchable — on your machine</text>
 
-  <!-- Split: Local database -> Tools for Claude and Dashboard -->
-  <line x1="1250" y1="402" x2="1250" y2="426" class="arrow"/>
-  <line x1="1020" y1="426" x2="1480" y2="426" class="arrow"/>
-  <line x1="1020" y1="426" x2="1020" y2="448" class="arrow" marker-end="url(#arrowhead)"/>
-  <line x1="1480" y1="426" x2="1480" y2="448" class="arrow" marker-end="url(#arrowhead)"/>
+  <!-- Split from Local database -> Tools for Claude + Dashboard -->
+  <line x1="1550" y1="402" x2="1550" y2="426" class="arrow"/>
+  <line x1="1310" y1="426" x2="1790" y2="426" class="arrow"/>
+  <line x1="1310" y1="426" x2="1310" y2="448" class="arrow" marker-end="url(#arrowhead)"/>
+  <line x1="1790" y1="426" x2="1790" y2="448" class="arrow" marker-end="url(#arrowhead)"/>
 
   <!-- Tools for Claude -->
-  <rect x="820" y="450" width="400" height="410" rx="12" class="box"/>
-  <text x="1020" y="494" text-anchor="middle" class="label label-box">Tools for Claude</text>
+  <rect x="1090" y="450" width="440" height="410" rx="12" class="box"/>
+  <text x="1310" y="494" text-anchor="middle" class="label label-box">Tools for Claude</text>
   <g class="tool-list">
-    <text x="855" y="540">search past sessions</text>
-    <text x="855" y="575">pull a full session</text>
-    <text x="855" y="610">pull plan history</text>
-    <text x="855" y="645">recent activity</text>
-    <text x="855" y="680">read exchanges</text>
-    <text x="855" y="715">find by file</text>
-    <text x="855" y="750">project status</text>
+    <text x="1125" y="540">search past sessions</text>
+    <text x="1125" y="575">pull a full session</text>
+    <text x="1125" y="610">pull plan history</text>
+    <text x="1125" y="645">recent activity</text>
+    <text x="1125" y="680">read exchanges</text>
+    <text x="1125" y="715">find by file</text>
+    <text x="1125" y="750">project status</text>
   </g>
 
   <!-- Dashboard -->
-  <rect x="1280" y="450" width="400" height="150" rx="12" class="box"/>
-  <text x="1480" y="500" text-anchor="middle" class="label label-box">Dashboard</text>
-  <text x="1480" y="533" text-anchor="middle" class="label label-sub">open in your browser</text>
-  <text x="1480" y="570" text-anchor="middle" class="label-arrow" style="font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;">localhost:3737</text>
+  <rect x="1570" y="450" width="440" height="150" rx="12" class="box"/>
+  <text x="1790" y="500" text-anchor="middle" class="label label-box">Dashboard</text>
+  <text x="1790" y="533" text-anchor="middle" class="label label-sub">open in your browser</text>
+  <text x="1790" y="570" text-anchor="middle" class="label-arrow" style="font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;">localhost:3737</text>
 
 </svg>
