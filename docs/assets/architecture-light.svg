@@ -66,15 +66,15 @@
 
   <!-- Tools for Claude -->
   <rect x="1040" y="450" width="450" height="410" rx="12" class="box"/>
-  <text x="1265" y="494" text-anchor="middle" class="label label-box">Tools for Claude</text>
+  <text x="1265" y="494" text-anchor="middle" class="label label-box">MCP Server</text>
   <g class="tool-list">
-    <text x="1075" y="555">search past sessions</text>
-    <text x="1075" y="595">pull a full session</text>
-    <text x="1075" y="635">pull plan history</text>
-    <text x="1075" y="675">recent activity</text>
-    <text x="1075" y="715">read exchanges</text>
-    <text x="1075" y="755">find by file</text>
-    <text x="1075" y="795">project status</text>
+    <text x="1075" y="555">keddy_search_sessions</text>
+    <text x="1075" y="595">keddy_get_session</text>
+    <text x="1075" y="635">keddy_get_plans</text>
+    <text x="1075" y="675">keddy_recent_activity</text>
+    <text x="1075" y="715">keddy_get_transcript</text>
+    <text x="1075" y="755">keddy_search_by_file</text>
+    <text x="1075" y="795">keddy_project_status</text>
   </g>
 
   <!-- Dashboard -->
