@@ -9,6 +9,7 @@
       .label-title { font-size: 40px; font-weight: 600; letter-spacing: -0.02em; }
       .label-arrow { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; font-size: 24px; font-weight: 500; fill: #a855f7; }
       .tool-list { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 22px; fill: #111111; opacity: 0.88; }
+      .capability-list { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; font-size: 22px; fill: #111111; opacity: 0.85; }
       .arrow { stroke: #111111; stroke-width: 2; fill: none; }
     </style>
     <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
@@ -78,9 +79,15 @@
   </g>
 
   <!-- Dashboard -->
-  <rect x="1530" y="450" width="450" height="150" rx="12" class="box"/>
-  <text x="1755" y="500" text-anchor="middle" class="label label-box">Dashboard</text>
-  <text x="1755" y="533" text-anchor="middle" class="label label-sub">open in your browser</text>
-  <text x="1755" y="570" text-anchor="middle" class="label-arrow" style="font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;">localhost:3737</text>
+  <rect x="1530" y="450" width="450" height="410" rx="12" class="box"/>
+  <text x="1755" y="494" text-anchor="middle" class="label label-box">Dashboard</text>
+  <g class="capability-list">
+    <text x="1565" y="555">exchange search</text>
+    <text x="1565" y="595">session timelines</text>
+    <text x="1565" y="635">plan versions</text>
+    <text x="1565" y="675">session notes</text>
+    <text x="1565" y="715">daily notes</text>
+  </g>
+  <text x="1755" y="820" text-anchor="middle" class="label-arrow" style="font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;">localhost:3737</text>
 
 </svg>
