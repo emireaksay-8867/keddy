@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/assets/logo.jpg" width="140" alt="Keddy">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <img src="docs/assets/logo-light.svg" width="200" alt="Keddy">
+  </picture>
 </p>
 
 <h3 align="center">Session intelligence for agentic development.</h3>
