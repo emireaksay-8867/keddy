@@ -49,14 +49,14 @@
   <text x="1040" y="110" class="label label-title">Keddy</text>
 
   <rect x="1040" y="160" width="960" height="100" rx="12" class="box"/>
-  <text x="1520" y="205" text-anchor="middle" class="label label-box">Session parsing</text>
+  <text x="1520" y="205" text-anchor="middle" class="label label-box">Session Parsing</text>
   <text x="1520" y="238" text-anchor="middle" class="label label-sub">deterministic · real-time · no AI</text>
 
   <line x1="1520" y1="262" x2="1520" y2="298" class="arrow" marker-end="url(#arrowhead)"/>
 
   <rect x="1040" y="300" width="960" height="100" rx="12" class="box"/>
-  <text x="1520" y="345" text-anchor="middle" class="label label-box">Local database</text>
-  <text x="1520" y="378" text-anchor="middle" class="label label-sub">every session, searchable — on your machine</text>
+  <text x="1520" y="345" text-anchor="middle" class="label label-box">Local Database</text>
+  <text x="1520" y="378" text-anchor="middle" class="label label-sub">local · searchable · yours</text>
 
   <line x1="1520" y1="402" x2="1520" y2="426" class="arrow"/>
   <line x1="1265" y1="426" x2="1755" y2="426" class="arrow"/>

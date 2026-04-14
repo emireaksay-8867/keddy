@@ -47,7 +47,7 @@
 
   <!-- Session reader -->
   <rect x="1040" y="160" width="960" height="100" rx="12" class="box"/>
-  <text x="1520" y="205" text-anchor="middle" class="label label-box">Session parsing</text>
+  <text x="1520" y="205" text-anchor="middle" class="label label-box">Session Parsing</text>
   <text x="1520" y="238" text-anchor="middle" class="label label-sub">deterministic · real-time · no AI</text>
 
   <!-- Arrow down: Session reader -> Local database -->
@@ -55,8 +55,8 @@
 
   <!-- Local database -->
   <rect x="1040" y="300" width="960" height="100" rx="12" class="box"/>
-  <text x="1520" y="345" text-anchor="middle" class="label label-box">Local database</text>
-  <text x="1520" y="378" text-anchor="middle" class="label label-sub">every session, searchable — on your machine</text>
+  <text x="1520" y="345" text-anchor="middle" class="label label-box">Local Database</text>
+  <text x="1520" y="378" text-anchor="middle" class="label label-sub">local · searchable · yours</text>
 
   <!-- Split -->
   <line x1="1520" y1="402" x2="1520" y2="426" class="arrow"/>
