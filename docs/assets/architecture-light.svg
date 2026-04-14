@@ -82,11 +82,11 @@
   <rect x="1530" y="450" width="450" height="410" rx="12" class="box"/>
   <text x="1755" y="494" text-anchor="middle" class="label label-box">Dashboard</text>
   <g class="capability-list">
-    <text x="1755" y="555" text-anchor="middle">exchange search</text>
-    <text x="1755" y="595" text-anchor="middle">session timelines</text>
-    <text x="1755" y="635" text-anchor="middle">plan versions</text>
-    <text x="1755" y="675" text-anchor="middle">session notes</text>
-    <text x="1755" y="715" text-anchor="middle">daily notes</text>
+    <text x="1755" y="580" text-anchor="middle">exchange search</text>
+    <text x="1755" y="620" text-anchor="middle">session timelines</text>
+    <text x="1755" y="660" text-anchor="middle">plan versions</text>
+    <text x="1755" y="700" text-anchor="middle">session notes</text>
+    <text x="1755" y="740" text-anchor="middle">daily notes</text>
   </g>
   <text x="1755" y="820" text-anchor="middle" class="label-arrow" style="font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;">localhost:3737</text>
 
