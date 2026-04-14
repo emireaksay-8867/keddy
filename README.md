@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<h3 align="center">Session intelligence for agentic development.</h3>
+<h3 align="center">Session Intelligence for your coding agent.</h3>
 
 <p align="center">
   Recall any past session in seconds. Stop losing hours digging through raw JSONL.
