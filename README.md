@@ -27,18 +27,6 @@ Every agentic session leaves a JSONL trail — plans iterated, files touched, pa
 - You reach back through a **local dashboard** — timelines, plan versions, and milestones, all in your browser at `localhost:3737`.
 - **Nothing leaves your machine.** No telemetry, no cloud sync; optional AI analysis uses your own API key.
 
-## Quick start
-
-```bash
-npm install -g keddy
-keddy init
-keddy open
-```
-
-Or run once without installing: `npx keddy init`
-
-`keddy init` installs four Claude Code hooks, creates a local database at `~/.keddy/keddy.db`, and registers the MCP server. Every session you run in Claude Code from that point forward is captured automatically.
-
 ## How it works
 
 <picture>
@@ -56,6 +44,18 @@ Four Claude Code hooks feed a local session reader that parses the transcript an
 | `SessionEnd` | Async, fires when the session ends | Full transcript parse, plan versions, milestones, optional AI analysis |
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the deeper technical breakdown.
+
+## Quick start
+
+```bash
+npm install -g keddy
+keddy init
+keddy open
+```
+
+Or run once without installing: `npx keddy init`
+
+`keddy init` installs four Claude Code hooks, creates a local database at `~/.keddy/keddy.db`, and registers the MCP server. Every session you run in Claude Code from that point forward is captured automatically.
 
 ## The dashboard
 
