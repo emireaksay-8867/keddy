@@ -23,7 +23,10 @@
 
 Every agentic session leaves a JSONL trail — plans iterated, files touched, paths tried. You *can* dig through it. It costs hours, burns tokens, and the answer usually isn't right. Keddy captures every session automatically and turns it into an index you and your agent can actually use.
 
-Keddy runs locally. It captures every Claude Code session through hooks, parses the transcripts as they happen, and stores everything in a local database. From there you get two ways to reach back in: **MCP tools your agent can call** (so Claude pulls past context on demand) and a **local dashboard** (so you navigate timelines, plans, and milestones in your browser). No data leaves your machine.
+- Keddy **captures every Claude Code session** through hooks and parses the transcripts as they happen, indexing everything into a local database on your machine.
+- Your agent reaches back in through **MCP tools** — any past session, plan, or file history, pulled on demand without re-explaining.
+- You reach back through a **local dashboard** — timelines, plan versions, and milestones, all in your browser at `localhost:3737`.
+- **Nothing leaves your machine.** No telemetry, no cloud sync; optional AI analysis uses your own API key.
 
 ## Quick start
 
