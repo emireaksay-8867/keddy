@@ -19,10 +19,6 @@
   <img src="https://img.shields.io/badge/status-pre--1.0-yellow?style=flat-square" alt="Status: pre-1.0">
 </p>
 
-<p align="center">
-  <img src="docs/assets/hero-placeholder.png" width="880" alt="Keddy dashboard">
-</p>
-
 ---
 
 Every agentic session leaves a JSONL trail — plans iterated, files touched, paths tried. You *can* dig through it. It costs hours, burns tokens, and the answer usually isn't right. Keddy captures every session automatically and turns it into an index you and your agent can actually use.
