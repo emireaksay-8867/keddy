@@ -4,11 +4,11 @@
     <style>
       .box { fill: none; stroke: #111111; stroke-width: 2; }
       .label { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; fill: #111111; }
-      .label-box { font-size: 26px; font-weight: 500; }
-      .label-sub { font-size: 16px; font-weight: 400; opacity: 0.6; }
-      .label-title { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; }
+      .label-box { font-size: 32px; font-weight: 500; }
+      .label-sub { font-size: 20px; font-weight: 400; opacity: 0.6; }
+      .label-title { font-size: 40px; font-weight: 600; letter-spacing: -0.02em; }
       .label-arrow { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; font-size: 24px; font-weight: 500; fill: #a855f7; }
-      .tool-list { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 17px; fill: #111111; opacity: 0.88; }
+      .tool-list { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 22px; fill: #111111; opacity: 0.88; }
       .arrow { stroke: #111111; stroke-width: 2; fill: none; }
     </style>
     <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
@@ -68,13 +68,13 @@
   <rect x="1040" y="450" width="450" height="410" rx="12" class="box"/>
   <text x="1265" y="494" text-anchor="middle" class="label label-box">Tools for Claude</text>
   <g class="tool-list">
-    <text x="1075" y="540">search past sessions</text>
-    <text x="1075" y="575">pull a full session</text>
-    <text x="1075" y="610">pull plan history</text>
-    <text x="1075" y="645">recent activity</text>
-    <text x="1075" y="680">read exchanges</text>
-    <text x="1075" y="715">find by file</text>
-    <text x="1075" y="750">project status</text>
+    <text x="1075" y="555">search past sessions</text>
+    <text x="1075" y="595">pull a full session</text>
+    <text x="1075" y="635">pull plan history</text>
+    <text x="1075" y="675">recent activity</text>
+    <text x="1075" y="715">read exchanges</text>
+    <text x="1075" y="755">find by file</text>
+    <text x="1075" y="795">project status</text>
   </g>
 
   <!-- Dashboard -->
