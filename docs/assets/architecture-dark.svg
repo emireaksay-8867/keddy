@@ -1,87 +1,89 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-label="Keddy architecture: You interact with Claude Code; Claude Code sends session hooks to Keddy's session reader, which writes to a local database. The database serves both MCP tools that Claude can call, and a dashboard you open in your browser.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1000" role="img" aria-label="Keddy architecture: You interact with Claude Code; Claude Code sends session hooks to Keddy's session reader, which writes to a local database. The database serves both MCP tools that Claude can call, and a dashboard you open in your browser.">
   <defs>
     <style>
       .bg { fill: #0d1117; }
       .box { fill: none; stroke: #e5e7eb; stroke-width: 2; }
       .label { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; fill: #e5e7eb; }
-      .label-box { font-size: 22px; font-weight: 500; }
-      .label-sub { font-size: 14px; font-weight: 400; opacity: 0.55; }
-      .label-title { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; }
-      .label-arrow { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; font-size: 14px; font-weight: 500; fill: #c084fc; }
-      .tool-list { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 14px; fill: #e5e7eb; opacity: 0.85; }
+      .label-box { font-size: 26px; font-weight: 500; }
+      .label-sub { font-size: 16px; font-weight: 400; opacity: 0.55; }
+      .label-title { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; }
+      .label-arrow { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; font-size: 20px; font-weight: 500; fill: #c084fc; }
+      .tool-list { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 17px; fill: #e5e7eb; opacity: 0.85; }
       .arrow { stroke: #e5e7eb; stroke-width: 2; fill: none; }
     </style>
-    <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#e5e7eb"/>
     </marker>
   </defs>
 
-  <rect x="0" y="0" width="1600" height="900" class="bg"/>
+  <rect x="0" y="0" width="1800" height="1000" class="bg"/>
 
   <!-- ================= YOU ================= -->
-  <rect x="80" y="400" width="140" height="140" rx="12" class="box"/>
-  <circle cx="150" cy="450" r="18" fill="none" stroke="#e5e7eb" stroke-width="2"/>
-  <path d="M 120 510 Q 150 478 180 510" fill="none" stroke="#e5e7eb" stroke-width="2"/>
-  <text x="150" y="580" text-anchor="middle" class="label label-box">You</text>
+  <rect x="100" y="460" width="160" height="160" rx="12" class="box"/>
+  <circle cx="180" cy="515" r="22" fill="none" stroke="#e5e7eb" stroke-width="2"/>
+  <path d="M 142 588 Q 180 545 218 588" fill="none" stroke="#e5e7eb" stroke-width="2"/>
+  <text x="180" y="662" text-anchor="middle" class="label label-box">You</text>
 
-  <!-- ============ You <-> Claude Code ============ -->
-  <line x1="232" y1="470" x2="308" y2="470" class="arrow" marker-end="url(#arrowhead)" marker-start="url(#arrowhead)"/>
-  <text x="270" y="454" text-anchor="middle" class="label-arrow">prompts</text>
-  <text x="270" y="494" text-anchor="middle" class="label-arrow">responses</text>
+  <!-- ============ You <-> Claude Code (prompts / responses) ============ -->
+  <line x1="262" y1="540" x2="338" y2="540" class="arrow" marker-end="url(#arrowhead)" marker-start="url(#arrowhead)"/>
+  <text x="300" y="522" text-anchor="middle" class="label-arrow">prompts</text>
+  <text x="300" y="568" text-anchor="middle" class="label-arrow">responses</text>
 
   <!-- ================= CLAUDE CODE ================= -->
-  <rect x="320" y="400" width="220" height="140" rx="12" class="box"/>
-  <text x="430" y="478" text-anchor="middle" class="label label-box">Claude Code</text>
+  <rect x="340" y="460" width="260" height="160" rx="12" class="box"/>
+  <!-- Claude sparkle (Anthropic 4-pointed star, vertical-stretched) -->
+  <path d="M 470 478 L 478 495 L 495 503 L 478 511 L 470 528 L 462 511 L 445 503 L 462 495 Z" fill="#e5e7eb"/>
+  <text x="470" y="580" text-anchor="middle" class="label label-box">Claude Code</text>
 
-  <!-- ============ Claude Code -> Keddy (hooks) ============ -->
-  <line x1="542" y1="445" x2="678" y2="445" class="arrow" marker-end="url(#arrowhead)"/>
-  <text x="610" y="432" text-anchor="middle" class="label-arrow">session hooks</text>
+  <!-- ============ Claude Code -> Session reader (session hooks) — L-path ============ -->
+  <path d="M 600 510 L 700 510 L 700 210 L 818 210" class="arrow" marker-end="url(#arrowhead)"/>
+  <text x="769" y="196" text-anchor="middle" class="label-arrow">session hooks</text>
 
-  <!-- ============ Keddy -> Claude Code (tool calls) ============ -->
-  <line x1="678" y1="495" x2="542" y2="495" class="arrow" marker-end="url(#arrowhead)"/>
-  <text x="610" y="515" text-anchor="middle" class="label-arrow">tool calls</text>
+  <!-- ============ Tools for Claude -> Claude Code (tool calls) — L-path ============ -->
+  <path d="M 820 650 L 700 650 L 700 580 L 602 580" class="arrow" marker-end="url(#arrowhead)"/>
+  <text x="651" y="568" text-anchor="middle" class="label-arrow">tool calls</text>
 
   <!-- ================= KEDDY CONTAINER ================= -->
-  <rect x="680" y="80" width="840" height="740" rx="16" class="box"/>
-  <text x="712" y="118" class="label label-title">Keddy</text>
+  <rect x="780" y="60" width="940" height="900" rx="16" class="box"/>
+  <text x="820" y="110" class="label label-title">Keddy</text>
 
   <!-- Session reader -->
-  <rect x="720" y="160" width="760" height="90" rx="12" class="box"/>
-  <text x="1100" y="200" text-anchor="middle" class="label label-box">Session reader</text>
-  <text x="1100" y="228" text-anchor="middle" class="label label-sub">reads every session as it happens</text>
+  <rect x="820" y="160" width="860" height="100" rx="12" class="box"/>
+  <text x="1250" y="205" text-anchor="middle" class="label label-box">Session reader</text>
+  <text x="1250" y="238" text-anchor="middle" class="label label-sub">reads every session as it happens</text>
 
   <!-- Arrow down: Session reader -> Local database -->
-  <line x1="1100" y1="252" x2="1100" y2="296" class="arrow" marker-end="url(#arrowhead)"/>
+  <line x1="1250" y1="262" x2="1250" y2="298" class="arrow" marker-end="url(#arrowhead)"/>
 
   <!-- Local database -->
-  <rect x="720" y="300" width="760" height="90" rx="12" class="box"/>
-  <text x="1100" y="340" text-anchor="middle" class="label label-box">Local database</text>
-  <text x="1100" y="368" text-anchor="middle" class="label label-sub">every session, searchable — on your machine</text>
+  <rect x="820" y="300" width="860" height="100" rx="12" class="box"/>
+  <text x="1250" y="345" text-anchor="middle" class="label label-box">Local database</text>
+  <text x="1250" y="378" text-anchor="middle" class="label label-sub">every session, searchable — on your machine</text>
 
   <!-- Split: Local database -> Tools for Claude and Dashboard -->
-  <line x1="1100" y1="392" x2="1100" y2="418" class="arrow"/>
-  <line x1="900" y1="418" x2="1300" y2="418" class="arrow"/>
-  <line x1="900" y1="418" x2="900" y2="448" class="arrow" marker-end="url(#arrowhead)"/>
-  <line x1="1300" y1="418" x2="1300" y2="448" class="arrow" marker-end="url(#arrowhead)"/>
+  <line x1="1250" y1="402" x2="1250" y2="426" class="arrow"/>
+  <line x1="1020" y1="426" x2="1480" y2="426" class="arrow"/>
+  <line x1="1020" y1="426" x2="1020" y2="448" class="arrow" marker-end="url(#arrowhead)"/>
+  <line x1="1480" y1="426" x2="1480" y2="448" class="arrow" marker-end="url(#arrowhead)"/>
 
   <!-- Tools for Claude -->
-  <rect x="720" y="452" width="360" height="330" rx="12" class="box"/>
-  <text x="900" y="492" text-anchor="middle" class="label label-box">Tools for Claude</text>
+  <rect x="820" y="450" width="400" height="410" rx="12" class="box"/>
+  <text x="1020" y="494" text-anchor="middle" class="label label-box">Tools for Claude</text>
   <g class="tool-list">
-    <text x="752" y="535">search past sessions</text>
-    <text x="752" y="565">pull a full session</text>
-    <text x="752" y="595">pull plan history</text>
-    <text x="752" y="625">recent activity</text>
-    <text x="752" y="655">read exchanges</text>
-    <text x="752" y="685">find by file</text>
-    <text x="752" y="715">project status</text>
+    <text x="855" y="540">search past sessions</text>
+    <text x="855" y="575">pull a full session</text>
+    <text x="855" y="610">pull plan history</text>
+    <text x="855" y="645">recent activity</text>
+    <text x="855" y="680">read exchanges</text>
+    <text x="855" y="715">find by file</text>
+    <text x="855" y="750">project status</text>
   </g>
 
   <!-- Dashboard -->
-  <rect x="1120" y="452" width="360" height="130" rx="12" class="box"/>
-  <text x="1300" y="492" text-anchor="middle" class="label label-box">Dashboard</text>
-  <text x="1300" y="522" text-anchor="middle" class="label label-sub">open in your browser</text>
-  <text x="1300" y="554" text-anchor="middle" class="label-arrow" style="font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;">localhost:3737</text>
+  <rect x="1280" y="450" width="400" height="150" rx="12" class="box"/>
+  <text x="1480" y="500" text-anchor="middle" class="label label-box">Dashboard</text>
+  <text x="1480" y="533" text-anchor="middle" class="label label-sub">open in your browser</text>
+  <text x="1480" y="570" text-anchor="middle" class="label-arrow" style="font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;">localhost:3737</text>
 
 </svg>
