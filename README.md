@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.jpg" width="140" alt="Keddy">
+</p>
+
 <h3 align="center">Session intelligence for agentic development.</h3>
 
 <p align="center">
