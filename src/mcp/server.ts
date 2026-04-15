@@ -11,7 +11,7 @@ import { createKeddyMcpServer } from "./tools.js";
 
 async function main() {
   initDb();
-  const server = createKeddyMcpServer();
+  const server = createKeddyMcpServer({ agentTools: true });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
