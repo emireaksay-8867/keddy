@@ -57,97 +57,95 @@ Or run once without installing: `npx keddy init`
 
 `keddy init` installs four Claude Code hooks, creates a local database at `~/.keddy/keddy.db`, and registers the MCP server. Every session you run in Claude Code from that point forward is captured automatically.
 
-## The dashboard
-
-`keddy open` launches a local dashboard at `http://localhost:3737`. It serves a read-only view of everything Keddy has captured.
-
-- **Sessions list** — every session across every project, with live search and filter by project
-- **Session detail** — three tabs: Activity (timeline of exchanges with segments, plans, milestones), Plans (full plan version history with approval/rejection feedback), Notes (AI-generated retrospective if enabled)
-- **Daily notes** — per-day synthesis of everything you worked on, bridging sessions
-- **Full-text search** — across all prompts and responses, powered by SQLite FTS5
-- **Live polling** — active sessions update in real time while you watch
-
-The dashboard is a React SPA served by a Hono API. It reads from the same `~/.keddy/keddy.db` that the capture pipeline writes to.
-
 ## MCP tools
 
-Keddy registers itself as an MCP server during `keddy init`, giving Claude seven tools it can call to pull context from your past sessions.
+Keddy registers as an MCP server during `keddy init`, giving Claude tools to reach back into your history. Together they cover everything an agent needs: **find** something across any session, **read** it in detail, and **understand** any context — a session, an exchange, a plan, a file.
 
-| Tool | What it does |
+| Tool | Purpose |
 |---|---|
-| `keddy_search_sessions` | Full-text search across every session's prompts and responses. Filter by project, days, or result limit. |
-| `keddy_get_session` | Pull a full session — every exchange, plan version, milestone, and tool call. Returns large payloads (up to ~100KB). |
-| `keddy_get_plans` | Pull plan version history with status, feedback, and exchange ranges. |
-| `keddy_recent_activity` | Cross-project summary of the last N days — sessions, tokens, errors, files. |
-| `keddy_get_transcript` | Read specific exchanges in full, both prompts and Claude's responses. Scope with `from`/`to` exchange indices. |
-| `keddy_search_by_file` | Find every session that touched a given file path. |
-| `keddy_project_status` | Current state of a project — active plan, pending tasks, recent milestones, top files. |
+| `keddy_search_sessions` | full-text search across sessions |
+| `keddy_get_session` | full session payload |
+| `keddy_get_plans` | plan version history |
+| `keddy_recent_activity` | last N days summary |
+| `keddy_get_transcript` | specific exchanges in detail |
+| `keddy_search_by_file` | sessions that touched a file |
+| `keddy_project_status` | current state of a project |
+| `keddy_get_session_skeleton` | session outline (3–5KB) |
+| `keddy_transcript_summary` | conversation outline (5–8KB) |
+| `keddy_get_session_note` | retrieve a session's handoff note |
+| `keddy_get_daily_note` | retrieve a day's synthesis note |
 
-Example prompts that would trigger these tools:
+Example prompts:
 
-> "What did I try last week on the auth refactor?" → `keddy_search_sessions`
-> "Show me the history of `src/auth.ts` across my sessions." → `keddy_search_by_file`
-> "What's the current state of this project before I start?" → `keddy_project_status`
+> "Read my last session through Keddy and continue where I left off."
+> "Pull the plan history for this project before we start."
+> "Check which approaches I tried for auth last week."
+> "Get the exchange where I decided on the JWT approach."
 
-<details>
-<summary><b>Agent-mode tools (advanced)</b></summary>
+## The dashboard
 
-<br>
+`keddy open` launches Keddy's local interface at `localhost:3737`. It's a read-only React SPA where every session lives in a searchable list — open any one to see its exchanges, plan history, and notes. Full-text search runs across every prompt and response. Active sessions update live as they run.
 
-Four additional tools become available when `agentTools: true` is set in config. These return smaller payloads optimized for programmatic use by sub-agents:
+## Exchanges
 
-| Tool | What it does |
-|---|---|
-| `keddy_get_session_skeleton` | 3–5KB session outline: events, tasks, error counts, top files — before deep diving |
-| `keddy_transcript_summary` | 5–8KB conversation outline: first line of each prompt with tool counts |
-| `keddy_get_session_note` | Retrieve the latest AI-generated session note for a session, if one exists |
-| `keddy_get_daily_note` | Retrieve the daily synthesis note for a given date |
+Exchanges are the turn-by-turn record of every session — every user prompt, every Claude response, every tool call, rendered as a navigable timeline. Equipped with this timeline, you can walk through any session one turn at a time: the moment you asked a question, the moment Claude pivoted, the exact tool error that triggered a retry. No scrolling a raw transcript.
 
-</details>
+The timeline surfaces segments (planning, implementing, debugging, testing), plan transitions, git events, and compaction points inline — so the session's shape is visible, not just its content.
 
-## Session notes and daily notes
+## Plans
 
-When you enable AI analysis, Keddy can automatically generate two kinds of notes.
+Plans are the versioned history of every plan your agent drafted, revised, or rejected — with the exact feedback you gave each time. Equipped with this history, you can see how a plan evolved from draft to implementation: which approach you tried first, why you rejected it, what the next version corrected, which version finally got approved and built. It's the record that would otherwise live only in a scroll-through transcript.
 
-**Session notes** are per-session retrospectives. When a session ends, Keddy launches an agent with access to the session's data through MCP. The agent produces a written summary of what actually happened — not just what was discussed — and a mermaid diagram of the session's flow. Short sessions (≤3 exchanges) use a direct Haiku call; longer sessions use the Agent SDK with Sonnet.
-
-**Daily notes** synthesize every session from a given day into a single narrative. They bridge work across sessions so you can tell someone (or yourself, tomorrow) what you actually shipped.
-
-Both are opt-in and off by default. See *Optional AI analysis* below for setup.
+Plans show status transitions (drafted → rejected → revised → approved → implemented), your feedback at each rejection, and the tasks created and completed under each approved plan. Pullable through `keddy_get_plans`.
 
 ## Optional AI analysis
 
-Keddy is designed to be useful without any AI. Every core feature — capture, search, segment detection, plan tracking, milestone extraction — runs programmatically on your machine with zero API calls.
-
-AI analysis is an opt-in layer on top. Enable it only if you want session notes, daily notes, or AI-generated titles. You bring your own API key.
+Keddy's core — capture, full-text search, plan tracking, git events — runs programmatically. AI is an opt-in layer for session notes, daily notes, activity analysis, and session titles. Bring your own key.
 
 ```bash
 keddy config set analysis.enabled true
 keddy config set analysis.apiKey sk-ant-...
 ```
 
+Your key stays in `~/.keddy/config.json`. Supports Anthropic or any OpenAI-compatible endpoint.
+
+<details>
+<summary><b>Models used for each feature</b></summary>
+
+<br>
+
 | Feature | Default model | What it produces |
 |---|---|---|
-| Session notes | Claude Sonnet | Per-session retrospective + mermaid diagram |
+| Session notes | Claude Sonnet | Full per-session write-up |
 | Daily notes | Claude Sonnet | Per-day synthesis across sessions |
+| Activity analysis | Claude Sonnet | Per-section breakdowns within a session |
 | Session titles | Claude Haiku | Descriptive session titles |
-| Segment summaries | Claude Haiku | Short summaries of each activity segment |
-| Decision extraction | Claude Haiku | Key technical decisions surfaced from exchanges |
+| Segment summaries | Claude Haiku | Short summaries of activity segments |
+| Decision extraction | Claude Haiku | Key technical decisions surfaced |
 
-Supported providers: Anthropic (direct) and any OpenAI-compatible endpoint (set `analysis.baseUrl`). Each feature can be toggled and its model overridden independently.
+Each feature can be toggled and its model overridden independently.
 
-## What Keddy indexes
+</details>
 
-Every session is parsed into structured data automatically — no AI required for any of this.
+## Session notes
 
-| Indexed | How |
-|---|---|
-| **Every exchange** — prompts, responses, tool calls, errors, tokens, timing | Parsed from JSONL via the four Claude Code hooks |
-| **Every plan version** — full text, approval status, rejection feedback, version history | `EnterPlanMode` / `ExitPlanMode` tool detection |
-| **Every milestone** — commits, pushes, pull requests, branches, test runs | Regex over bash tool inputs and outputs |
-| **Every segment** — planning / implementing / testing / debugging / exploring / discussion / pivot / deploying | Classifier over tool-usage patterns per exchange |
-| **Every compaction event** — before/after exchange counts, optional summary | `PostCompact` hook |
-| **Full-text search** | SQLite FTS5 virtual table auto-synced via triggers |
+Session notes are detailed written write-ups of any session, generated on demand by an AI agent with full access to Keddy's MCP tools. Equipped with these notes, you or your agent can understand what happened in a session end-to-end — what got built, what broke, what's still unfinished — without replaying the transcript. They stay useful at any distance from the work: during a session to clarify the plan, after it ends to capture what landed, weeks later when someone (or past-you) has to pick up where it stopped.
+
+The agent reads through your local database via in-process MCP — pulling plans with feedback, specific transcript ranges, file histories — and lets the session's content decide the shape. A debugging chronology for one session. A plan-decision log for another. A short wrap-up for a three-exchange session. No template.
+
+Opt-in — bring your own API key.
+
+## Daily notes
+
+Daily notes are one written narrative of an entire day's work, synthesized across every session you ran. Equipped with a daily note, you get the complete story of a day — what shipped, what didn't, what's still in flight — without reading session notes individually. You can pull yesterday's, last Tuesday's, or any past day's from the dashboard or through MCP.
+
+Before synthesizing the day, Keddy backfills any missing session notes for it — in parallel, so it stays fast. The daily note is always complete, even for days you never opened the dashboard.
+
+## Activity analysis
+
+Activity analysis breaks a session into its natural pieces — planning, implementing, testing, debugging, pivots — and writes a detailed summary for each. Equipped with these section summaries, you can scan a long session the way you'd scan chapters of a book, jumping straight to the part that matters: a specific plan iteration, the moment an approach changed, a long debugging detour. They complement session notes — where a session note tells the overall story, activity analysis gives per-phase depth.
+
+The agent uses the same Agent SDK + MCP pattern as session notes, with Keddy's detected boundaries as context rather than a required grouping. The agent decides how to carve the session and writes each piece freely.
 
 ## CLI reference
 
