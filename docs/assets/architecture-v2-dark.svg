@@ -6,7 +6,7 @@
       .box { fill: none; stroke: #e5e7eb; stroke-width: 2; }
       .label { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; fill: #e5e7eb; }
       .label-box { font-size: 32px; font-weight: 500; }
-      .label-sub { font-size: 20px; font-weight: 400; opacity: 0.55; }
+      .label-sub { font-size: 24px; font-weight: 400; opacity: 0.55; }
       .label-title { font-size: 40px; font-weight: 600; letter-spacing: -0.02em; }
       .label-arrow { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; font-size: 24px; font-weight: 500; fill: #c084fc; }
       .tool-list { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 22px; fill: #e5e7eb; opacity: 0.85; }
