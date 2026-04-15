@@ -30,8 +30,8 @@ Every agentic session leaves a JSONL trail — plans iterated, files touched, pa
 ## How Keddy Works
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-v2-dark.svg">
-  <img src="docs/assets/architecture-v2-light.svg" alt="Keddy architecture" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-v3-dark.svg">
+  <img src="docs/assets/architecture-v3-light.svg" alt="Keddy architecture" width="100%">
 </picture>
 
 Four Claude Code hooks feed a local session reader that parses the transcript and writes to a SQLite database on your machine. The database serves two surfaces: MCP tools Claude can call to pull context, and a dashboard you open in your browser to review sessions visually.
