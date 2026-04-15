@@ -78,13 +78,13 @@
 
   <rect x="1530" y="450" width="450" height="410" rx="12" class="box"/>
   <text x="1755" y="494" text-anchor="middle" class="label label-box">Dashboard</text>
+  <text x="1755" y="525" text-anchor="middle" style="font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 20px; font-weight: 500; fill: #c084fc;">localhost:3737</text>
   <g class="capability-list">
-    <text x="1755" y="545" text-anchor="middle">exchange search</text>
-    <text x="1755" y="600" text-anchor="middle">session timelines</text>
-    <text x="1755" y="655" text-anchor="middle">plan versions</text>
-    <text x="1755" y="710" text-anchor="middle">session notes</text>
-    <text x="1755" y="765" text-anchor="middle">daily notes</text>
+    <text x="1755" y="590" text-anchor="middle">exchange search</text>
+    <text x="1755" y="640" text-anchor="middle">session timelines</text>
+    <text x="1755" y="690" text-anchor="middle">plan versions</text>
+    <text x="1755" y="740" text-anchor="middle">session notes</text>
+    <text x="1755" y="790" text-anchor="middle">daily notes</text>
   </g>
-  <text x="1755" y="820" text-anchor="middle" class="label-arrow" style="font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;">localhost:3737</text>
 
 </svg>
